@@ -275,9 +275,21 @@ export function createSettingsRoutedHostConnector(
     localHostConsecutiveFailures = 0;
     localHostBreakerOpenUntilMs = 0;
   };
+  const localAdminBoxIsDocker = (env: NodeJS.ProcessEnv = process.env): boolean => env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase() === "docker";
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
       if (isLocalAdminEnabled()) {
+        if (localAdminBoxIsDocker()) {
+          // The computer is the Docker VM; a Mac-side host process, if any,
+          // must not keep the gateway port.
+          stopLocalAdminHost();
+          try {
+            return await ensureLocalDockerBox(settings.settingsPath, undefined);
+          } catch (error) {
+            appendLocalIntercept({ kind: "docker", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+            throw error;
+          }
+        }
         if (Date.now() < localHostBreakerOpenUntilMs) {
           const message = `Local admin host circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
           appendLocalIntercept({ kind: "local-host", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
@@ -318,9 +330,15 @@ export function createSettingsRoutedHostConnector(
     ...(remote.issueLocalExecDaemonCredential == null ? {} : { issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote) }),
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
-      if (isLocalAdminEnabled()) {
+      if (isLocalAdminEnabled() && !localAdminBoxIsDocker()) {
         stopLocalAdminHost();
         resetLocalHostBreaker();
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
+      if (isLocalAdminEnabled() && localAdminBoxIsDocker()) {
+        const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
+        if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
         await localConnect();
         return { status: "started-untrackable" };
       }
@@ -337,6 +355,7 @@ export function createSettingsRoutedHostConnector(
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
         resetLocalHostBreaker();
+        if (localAdminBoxIsDocker()) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
         await localConnect();
         return { status: "started-untrackable" };
       }

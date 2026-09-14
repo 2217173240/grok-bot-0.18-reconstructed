@@ -158,6 +158,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
   assert.match(localDocker, /export function resolveDockerHost/);
   assert.match(localDocker, /ensureLocalAdminHost/);
+  // SAND_LOCAL_ADMIN_BOX=docker routes the local-admin computer to the Docker VM.
+  assert.match(localDocker, /SAND_LOCAL_ADMIN_BOX\?\.trim\(\)\.toLowerCase\(\) === "docker"/);
+  assert.match(localDocker, /stopLocalAdminHost\(\);/);
+  // Local admin never mints official credentials.
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
+  // Plugins without OAuth: mcp-servers.json feeds the MCP definition source.
+  assert.match(await readFile(path.join(repoRoot, "source/host/extensions/mcp/mcp-service.ts"), "utf8"), /readLocalMcpServersConfig\(getSandRootDir\(\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/mcp/local-mcp-servers.ts"), "utf8"), /mcp-servers\.json/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/cursor-backend/cursor-inference.ts"), "utf8"), /Cursor inference is unavailable in local admin mode/);
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /blocked-fetch/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/main.ts"), "utf8"), /password-store", "basic"/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/secrets/secret-store.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return false;/);
