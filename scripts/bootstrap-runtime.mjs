@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, copyFile, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -34,13 +34,18 @@ async function downloadDmg() {
   }
 
   if (await exists(archivedDmg)) {
-    const archivedDigest = await sha256(archivedDmg);
-    if (archivedDigest !== dmgSha256) {
-      throw new Error(`Archived DMG checksum mismatch: expected ${dmgSha256}, got ${archivedDigest}. Run git lfs pull before bootstrapping.`);
+    const archivedInfo = await stat(archivedDmg);
+    // Git LFS pointers are ~130 bytes. Hashing them is not a DMG mismatch.
+    if (archivedInfo.size >= 1000) {
+      const archivedDigest = await sha256(archivedDmg);
+      if (archivedDigest !== dmgSha256) {
+        throw new Error(`Archived DMG checksum mismatch: expected ${dmgSha256}, got ${archivedDigest}. Run git lfs pull before bootstrapping.`);
+      }
+      console.log(`Using archived release ${archivedDmg}`);
+      await copyFile(archivedDmg, cachedDmg);
+      return;
     }
-    console.log(`Using archived release ${archivedDmg}`);
-    await copyFile(archivedDmg, cachedDmg);
-    return;
+    console.log(`Archived DMG at ${archivedDmg} is an LFS pointer (${archivedInfo.size} bytes); downloading the live sand/ artifact.`);
   }
 
   console.log(`Downloading ${dmgUrl}`);
