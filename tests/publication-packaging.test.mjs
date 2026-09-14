@@ -79,7 +79,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /"127\.0\.0\.1:1340:1340"/);
   assert.match(localDocker, /SAND_BOX_AUTO_UPDATE=0/);
   assert.match(localDocker, /dst=\/home\/box\/sand-host\/host-main\.cjs,readonly/);
-  assert.match(localDocker, /\.getBoxRuntime\(\) === "local-docker" \? await localConnect\(\) : await remote\.connect\(\)/);
+  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(inference, /recordInferenceUsage\(provider/);
   assert.match(inference, /routerSettings\.getInferenceProvider\(\)/);
   assert.match(inference, /typeof extendedUsage\.then === "function"/);
@@ -144,4 +144,9 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(secretsIpc, /await persistBoxSecretsSnapshot\([\s\S]*?await deps\.setBoxSecrets/);
   assert.match(secretsIpc, /errorClass: "box_unreachable"/);
   assert.match(coordinator, /unlink\(temporary\)/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin.ts"), "utf8"), /SAND_LOCAL_ADMIN_ENV = "SAND_LOCAL_ADMIN"/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/account/cursor-auth.ts"), "utf8"), /if \(this\.localAdminEnabled\)/);
+  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
+  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| remote\.issueInferenceCredential == null/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /SAND_LOCAL_ADMIN forbids EnsureSandBox/);
 });

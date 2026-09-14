@@ -11,6 +11,7 @@ import { coerceToEnabledTrack, isSandUpdateTrack, type SandUpdateTrack } from ".
 import { isSandAgentModelSelection, type SandAgentModelSelection } from "../../agents/sand-agent-model.js";
 import { emptySandInferenceRouterUsage, isSandInferenceProvider, type SandInferenceProvider, type SandInferenceRouterUsage } from "../../inference-router.js";
 import { DEFAULT_SAND_BOX_RUNTIME, isSandBoxRuntime, type SandBoxRuntime } from "../../box-runtime.js";
+import { isLocalAdminEnabled } from "../local-admin.js";
 
 export const SETTINGS_VERSION = 1;
 export const SAND_DOWNGRADE_MAX_FAST_MIGRATION_ID = "downgrade-persisted-max-fast";
@@ -112,8 +113,14 @@ export class SandSettingsStore {
   setAutoUpdateWhenIdleOptIn(value: boolean): void { this.update((s) => ({ ...s, autoUpdateWhenIdleOptIn: value })); }
   getThemePreference(): SandThemePreference { return this.load().themePreference ?? DEFAULT_SAND_THEME_PREFERENCE; }
   setThemePreference(value: SandThemePreference): void { this.update((s) => ({ ...s, themePreference: value })); }
-  getBoxRuntime(): SandBoxRuntime { return this.load().boxRuntime ?? DEFAULT_SAND_BOX_RUNTIME; }
-  setBoxRuntime(value: SandBoxRuntime): void { this.update((s) => ({ ...s, boxRuntime: value })); }
+  getBoxRuntime(): SandBoxRuntime {
+    if (isLocalAdminEnabled()) return "local-docker";
+    return this.load().boxRuntime ?? DEFAULT_SAND_BOX_RUNTIME;
+  }
+  setBoxRuntime(value: SandBoxRuntime): void {
+    if (isLocalAdminEnabled() && value === "remote") throw new Error("SAND_LOCAL_ADMIN cannot use Cursor's remote computer.");
+    this.update((s) => ({ ...s, boxRuntime: value }));
+  }
   getEgressTunnelEnabled(): boolean { return this.load().egressTunnelEnabled; }
   setEgressTunnelEnabled(value: boolean): void { this.update((s) => ({ ...s, egressTunnelEnabled: value })); }
   getWebauthnProxyEnabled(): boolean { return this.load().webauthnProxyEnabled; }
