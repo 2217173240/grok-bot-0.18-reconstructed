@@ -1,5 +1,9 @@
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import { isLocalAdminEnabled } from "../local-admin.js";
+import { getSandRootDir } from "../../../host/host-paths.js";
 
 // Zero-OAuth plugin surface for local admin: MCP server definitions live in a
 // file next to settings.json instead of Cursor's dashboard. The shape mirrors
@@ -53,4 +57,47 @@ export async function readLocalMcpServersConfig(
     const raw = await readFileImpl(join(sandRootDir, filename), "utf8");
     return parseLocalMcpServersConfig(raw);
   } catch { return null; }
+}
+
+// One swap shared by the host-side and desktop-side MCP managers: under local
+// admin the definition source is the local file and the dashboard display
+// provider is dropped so the manager falls back to runtime rows.
+export interface McpProviderSources { readonly accountConfigProvider?: (() => Promise<unknown>) | undefined; readonly accountServersProvider?: (() => Promise<unknown>) | undefined }
+
+export function applyLocalAdminMcpSources(sources: McpProviderSources): McpProviderSources {
+  if (!isLocalAdminEnabled()) return sources;
+  const result: McpProviderSources = { ...sources, accountConfigProvider: async () => await readLocalMcpServersConfig(getSandRootDir()) };
+  delete (result as { accountServersProvider?: unknown }).accountServersProvider;
+  return result;
+}
+
+// Account-writer implementation backed by mcp-servers.json so UI add/remove
+// of local servers works with no dashboard. Marketplace plugin mutation is
+// refused honestly instead of calling the official backend.
+export interface LocalMcpServersFileWriterDeps {
+  readonly readFile?: (path: string, encoding: "utf8") => string;
+  readonly writeFile?: (path: string, data: string) => void;
+  readonly rename?: (from: string, to: string) => void;
+}
+
+export function createLocalMcpServersFileWriter(sandRootDir: string, deps: LocalMcpServersFileWriterDeps = {}) {
+  const readFileImpl = deps.readFile ?? ((path, encoding) => readFileSync(path, encoding));
+  const writeFileImpl = deps.writeFile ?? ((path, data) => writeFileSync(path, data, { encoding: "utf8", mode: 0o600 }));
+  const renameImpl = deps.rename ?? renameSync;
+  const target = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
+  const readConfig = (): LocalMcpRuntimeConfig => {
+    try { return parseLocalMcpServersConfig(readFileImpl(target, "utf8")); } catch { return { mcpServers: {} }; }
+  };
+  return {
+    async getConfigForEdit() { return { config: readConfig(), serverIdsByName: {} as Readonly<Record<string, bigint>> }; },
+    async setConfig(config: { mcpServers?: unknown }) {
+      const servers = typeof config.mcpServers === "object" && config.mcpServers != null ? config.mcpServers as Record<string, LocalMcpServerConfig> : {};
+      const temporary = `${target}.${process.pid}.tmp`;
+      writeFileImpl(temporary, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);
+      renameImpl(temporary, target);
+    },
+    async installPlugin() { throw new Error("Marketplace plugins need a Cursor account. Add local MCP servers to mcp-servers.json instead."); },
+    async updatePluginInstall() { throw new Error("Marketplace plugins need a Cursor account. Add local MCP servers to mcp-servers.json instead."); },
+    async uninstallPlugin() { throw new Error("Marketplace plugins need a Cursor account. Remove local MCP servers from mcp-servers.json instead."); },
+  };
 }
