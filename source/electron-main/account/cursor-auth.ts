@@ -15,6 +15,7 @@ import { deleteSecret, isEncryptedStorageAvailable, readSecret, waitForEncrypted
 import { reportSessionEvent, type SessionRefreshFailure, type SessionSignoutCause } from "./session-funnel-telemetry.js";
 import { reportSigninLogin, reportSigninSignout, signinSignoutCause } from "./signin-funnel-telemetry.js";
 import { resolveAuthRedirectTarget } from "../auth/auth-callback-registration.js";
+import { createLocalAdminAccessToken, isLocalAdminEnabled, LOCAL_ADMIN_AUTH_ID, localAdminProfile } from "../../shared/node/local-admin.js";
 
 export const ACCESS_TOKEN_SECRET_KEY = "cursor-access-token";
 export const REFRESH_TOKEN_SECRET_KEY = "cursor-refresh-token";
@@ -180,6 +181,7 @@ export interface SandCursorAuthServiceOptions {
   readonly reportFailure?: (operation: string, error: unknown) => void;
   readonly now?: () => number;
   readonly getBackendUrl?: () => string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 const defaultSecrets: CursorSecretStore = {
@@ -203,9 +205,21 @@ export class SandCursorAuthService {
   private keychainUnavailableReported = false;
   private signoutSettled = false;
   private reportedLoggedOutStatus: SandAuthStatus = LOGGED_OUT_STATUS;
+  private localAdminAccessToken: string | undefined;
 
   constructor(private readonly options: SandCursorAuthServiceOptions) {
     this.secrets = options.secrets ?? defaultSecrets;
+  }
+  private get env(): NodeJS.ProcessEnv { return this.options.env ?? process.env; }
+  private get localAdminEnabled(): boolean { return isLocalAdminEnabled(this.env); }
+  private localAdminToken(): string {
+    this.localAdminAccessToken ??= createLocalAdminAccessToken(this.env);
+    return this.localAdminAccessToken;
+  }
+  private localAdminLoggedInStatus(): SandAuthStatus {
+    const profile = localAdminProfile(this.env);
+    this.profileCache.set(LOCAL_ADMIN_AUTH_ID, profile);
+    return this.withProfile(createLoggedInStatus(this.localAdminToken()));
   }
   private get credentialUseRevoked(): boolean { return this.credentialState !== "active"; }
   private get credentialsRevoked(): boolean { return this.credentialState === "revoked"; }
@@ -236,6 +250,7 @@ export class SandCursorAuthService {
   subscribe(listener: (status: SandAuthStatus) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
   async getStatus(): Promise<SandAuthStatus> {
+    if (this.localAdminEnabled && this.credentialState === "active") return this.localAdminLoggedInStatus();
     const operationEpoch = this.authOperationEpoch;
     if (this.credentialsRetainedAfterFailedLogout) return RETAINED_AFTER_FAILED_LOGOUT_STATUS;
     if (this.credentialsRevoked) return this.reportedLoggedOutStatus;
@@ -262,6 +277,10 @@ export class SandCursorAuthService {
     const next = await this.getStatus(); this.emitStatus(next); return next;
   }
   private async ensureProfile(authId: string, operationEpoch: number): Promise<void> {
+    if (this.localAdminEnabled) {
+      this.profileCache.set(authId, localAdminProfile(this.env));
+      return;
+    }
     if (!this.isCurrentAuthOperation(operationEpoch) || this.options.fetchProfile == null || this.profileCache.has(authId)) return;
     let pending = this.profilePromises.get(authId);
     if (pending == null || pending.operationEpoch !== operationEpoch) { pending = { operationEpoch, promise: this.options.fetchProfile((options) => this.getValidAccessToken(options)) }; this.profilePromises.set(authId, pending); }
@@ -275,15 +294,36 @@ export class SandCursorAuthService {
     const status = this.withProfile(base); this.emitStatus(status); return status;
   }
   async getValidAccessToken(options?: { readonly backendUrl?: string }): Promise<string> {
+    if (this.localAdminEnabled) {
+      if (this.credentialUseRevoked) throw new SandAuthSignInRequiredError();
+      return this.localAdminToken();
+    }
     const operationEpoch = this.authOperationEpoch; if (this.credentialUseRevoked) throw new SandAuthSignInRequiredError();
     const backendUrl = options?.backendUrl ?? DEFAULT_CURSOR_BACKEND_URL;
     const [accessToken, refreshToken] = await Promise.all([this.secrets.readSecret(ACCESS_TOKEN_SECRET_KEY), this.secrets.readSecret(REFRESH_TOKEN_SECRET_KEY)]);
     if (!this.isCurrentAuthOperation(operationEpoch) || this.credentialUseRevoked || accessToken == null || refreshToken == null) throw new SandAuthSignInRequiredError();
     return shouldRefreshAccessToken(backendUrl, accessToken) ? await this.refreshAccessToken({ backendUrl, operationEpoch, refreshToken }) : accessToken;
   }
-  async peekAccessToken(): Promise<string | null> { if (this.credentialUseRevoked) return null; const [access, refresh] = await Promise.all([this.secrets.readSecret(ACCESS_TOKEN_SECRET_KEY), this.secrets.readSecret(REFRESH_TOKEN_SECRET_KEY)]); return this.credentialUseRevoked || access == null || refresh == null ? null : access; }
-  async exportTokens(): Promise<CursorTokens | null> { if (this.credentialUseRevoked) return null; const [accessToken, refreshToken] = await Promise.all([this.secrets.readSecret(ACCESS_TOKEN_SECRET_KEY), this.secrets.readSecret(REFRESH_TOKEN_SECRET_KEY)]); return this.credentialUseRevoked || accessToken == null || refreshToken == null ? null : { accessToken, refreshToken }; }
+  async peekAccessToken(): Promise<string | null> {
+    if (this.localAdminEnabled) return this.credentialUseRevoked ? null : this.localAdminToken();
+    if (this.credentialUseRevoked) return null; const [access, refresh] = await Promise.all([this.secrets.readSecret(ACCESS_TOKEN_SECRET_KEY), this.secrets.readSecret(REFRESH_TOKEN_SECRET_KEY)]); return this.credentialUseRevoked || access == null || refresh == null ? null : access;
+  }
+  async exportTokens(): Promise<CursorTokens | null> {
+    if (this.localAdminEnabled) {
+      if (this.credentialUseRevoked) return null;
+      const token = this.localAdminToken();
+      return { accessToken: token, refreshToken: token };
+    }
+    if (this.credentialUseRevoked) return null; const [accessToken, refreshToken] = await Promise.all([this.secrets.readSecret(ACCESS_TOKEN_SECRET_KEY), this.secrets.readSecret(REFRESH_TOKEN_SECRET_KEY)]); return this.credentialUseRevoked || accessToken == null || refreshToken == null ? null : { accessToken, refreshToken };
+  }
   async login(): Promise<SandAuthStatus> {
+    if (this.localAdminEnabled) {
+      this.abortActiveLogin();
+      this.advanceAuthOperationEpoch();
+      this.credentialState = "active";
+      this.reportedLoggedOutStatus = LOGGED_OUT_STATUS;
+      return await this.emitLoggedIn(this.localAdminToken(), this.authOperationEpoch);
+    }
     this.abortActiveLogin(); const operationEpoch = this.advanceAuthOperationEpoch(); const controller = new AbortController(); this.loginAbortController = controller;
     try { return await this.runLogin(controller.signal, operationEpoch); } finally { if (this.loginAbortController === controller) this.loginAbortController = undefined; }
   }
@@ -335,6 +375,7 @@ export class SandCursorAuthService {
   private noteRefreshSettled(operationEpoch: number, rescued: boolean): void { if (!this.isCurrentAuthOperation(operationEpoch)) return; const streak = this.refreshFailureStreak; if (streak?.operationEpoch === operationEpoch) { this.refreshFailureStreak = undefined; reportSessionEvent({ phase: "refresh_recovered", consecutiveFailures: streak.count, degradedMs: (this.options.now ?? Date.now)() - streak.startedAtMs }); } if (rescued) reportSessionEvent({ phase: "rotation_rescued" }); }
   private async refreshAccessToken(args: { backendUrl: string; operationEpoch: number; refreshToken: string }): Promise<string> { const active = this.refreshPromises.get(args.refreshToken); if (active != null) return await active; const promise = this.runRefreshAccessToken(args); this.refreshPromises.set(args.refreshToken, promise); try { return await promise; } finally { if (this.refreshPromises.get(args.refreshToken) === promise) this.refreshPromises.delete(args.refreshToken); } }
   private async runRefreshAccessToken(args: { backendUrl: string; operationEpoch: number; refreshToken: string }): Promise<string> {
+    if (this.localAdminEnabled) throw new Error("SAND_LOCAL_ADMIN forbids Cursor token refresh.");
     const policyHeaders = await (this.options.policyHeaders?.() ?? Promise.resolve({})); this.assertCurrentAuthOperation(args.operationEpoch); let response: Response;
     try { response = await (this.options.fetchOAuthToken ?? fetch)(new URL("/oauth/token", args.backendUrl), { method: "POST", body: JSON.stringify({ client_id: getAuthClientId(args.backendUrl), grant_type: "refresh_token", refresh_token: args.refreshToken }), headers: { "content-type": "application/json", ...policyHeaders } }); } catch (error) { this.noteRefreshFailure(args.operationEpoch, { kind: "network", errno: findSystemErrno(error) ?? "E_OTHER" }); throw error; }
     this.assertCurrentAuthOperation(args.operationEpoch); if (!response.ok) { this.noteRefreshFailure(args.operationEpoch, { kind: "http_status", httpStatus: response.status }); this.advanceAuthOperationEpoch(); this.credentialState = "revoked"; this.reportedLoggedOutStatus = SIGN_IN_CONFIRMATION_FAILED_STATUS; this.profileCache.clear(); this.emitStatus(SIGN_IN_CONFIRMATION_FAILED_STATUS); throw new SandAuthSignInExpiredError(); }
