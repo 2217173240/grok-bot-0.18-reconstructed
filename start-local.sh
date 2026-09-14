@@ -48,6 +48,15 @@ except Exception:
 PY
 }
 
+# Mirror the connector's Colima discovery so docker CLI works from this shell.
+resolve_docker_host() {
+  [ -n "${DOCKER_HOST:-}" ] && return 0
+  for socket in /var/run/docker.sock "$HOME"/.colima/docker.sock "$HOME"/.colima/*/docker.sock; do
+    if [ -S "$socket" ]; then export DOCKER_HOST="unix://$socket"; return 0; fi
+  done
+  return 1
+}
+
 health_ok() {
   local token
   token="$(gateway_token)"
@@ -142,8 +151,13 @@ do_start() {
   # Mac-side host process. Docker (Colima) must be running; the connector
   # discovers Colima sockets on its own.
   if [ "${GROKBOT_BOX:-}" = "docker" ]; then
+    resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
+    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
     export SAND_LOCAL_ADMIN_BOX=docker
+    echo docker > "$DATA_ROOT/box-mode"
     say "computer: Docker VM (SAND_LOCAL_ADMIN_BOX=docker)"
+  else
+    echo mac > "$DATA_ROOT/box-mode"
   fi
 
   # Launch the binary directly — `open` would strip the environment.
@@ -191,6 +205,15 @@ do_stop() {
     kill "$hpid" 2>/dev/null || true
   fi
   rm -f "$PID_FILE"
+  # A Docker computer outlives the app by design (restart: unless-stopped) and
+  # keeps the published gateway port; remove it so the next Mac-host start is
+  # not blocked. Named volumes persist the workspace.
+  if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac)" = "docker" ]; then
+    resolve_docker_host || true
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
+      docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace volumes persist)"
+    fi
+  fi
   say "note: the detached local-exec-daemon is left running by design; it reattaches on next start"
 }
 
@@ -198,6 +221,10 @@ do_status() {
   local pid hpid token
   pid="$(app_pid)"; hpid="$(host_pid)"
   say "data root:   $DATA_ROOT"
+  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac-host) (GROKBOT_BOX=docker to switch)"
+  if [ -f "$DATA_ROOT/mcp-servers.json" ]; then
+    say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"
+  fi
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
   if [ -n "$hpid" ]; then say "host:        running (pid $hpid)"; else say "host:        not running"; fi
   if pgrep -f "dist/local-exec-daemon/main\.cjs" >/dev/null 2>&1; then
