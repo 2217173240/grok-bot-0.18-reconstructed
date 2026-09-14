@@ -19,6 +19,7 @@ import {
 import type { SandWindowPlacement, WindowStatePersistenceWindow } from "./window-state-persistence.js";
 import { createElectronMainProductionComposition, type ElectronMainProductionBindings } from "./main-production-services.js";
 import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
+import { installLocalAdminNetworkIntercept } from "../shared/node/local-admin-intercept.js";
 
 export interface PreventableEvent {
   preventDefault(): void;
@@ -233,6 +234,7 @@ export function isSameDocumentNavigation(target: string, current: string): boole
 export function startElectronMain(deps: ElectronMainDependencies): ElectronMainRuntime {
   const platform = deps.platform ?? process.platform;
   const env = deps.env ?? process.env;
+  installLocalAdminNetworkIntercept(env);
   configureDesktopEnvironment({
     env,
     isPackaged: deps.app.isPackaged,

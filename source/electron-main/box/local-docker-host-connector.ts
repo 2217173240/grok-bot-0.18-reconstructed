@@ -11,6 +11,8 @@ import type { RecreateResult } from "./box-recreate-commands.js";
 import type { SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
+import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
+import { ensureLocalAdminHost, stopLocalAdminHost } from "./local-admin-host.js";
 
 export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
@@ -259,11 +261,26 @@ export function createSettingsRoutedHostConnector(
 ): SandRemoteHostConnector {
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
-      const issued = isLocalAdminEnabled() || remote.issueInferenceCredential == null ? undefined : await Promise.race([
+      if (isLocalAdminEnabled()) {
+        const token = await readOrCreateToken(settings.settingsPath);
+        const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
+        try {
+          return await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+        } catch (error) {
+          appendLocalIntercept({ kind: "local-host", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+          throw error;
+        }
+      }
+      const issued = remote.issueInferenceCredential == null ? undefined : await Promise.race([
         remote.issueInferenceCredential(),
         new Promise<undefined>((resolve) => setTimeout(resolve, OPTIONAL_CREDENTIAL_TIMEOUT_MS)),
       ]);
-      return await ensureLocalDockerBox(settings.settingsPath, issued);
+      try {
+        return await ensureLocalDockerBox(settings.settingsPath, issued);
+      } catch (error) {
+        appendLocalIntercept({ kind: "docker", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     })().finally(() => { ensureInFlight = undefined; });
     return ensureInFlight;
   };
@@ -272,6 +289,11 @@ export function createSettingsRoutedHostConnector(
     ...(remote.issueLocalExecDaemonCredential == null ? {} : { issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote) }),
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
+      if (isLocalAdminEnabled()) {
+        stopLocalAdminHost();
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
       if (settings.getBoxRuntime() !== "local-docker") {
         if (remote.recreate == null) throw new Error("Remote computer recreation is unavailable.");
         return await remote.recreate(args);
@@ -282,6 +304,11 @@ export function createSettingsRoutedHostConnector(
       return { status: "started-untrackable" };
     },
     forceRecreate: async (): Promise<RecreateResult> => {
+      if (isLocalAdminEnabled()) {
+        stopLocalAdminHost();
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
       if (settings.getBoxRuntime() !== "local-docker") {
         if (remote.forceRecreate == null) return { status: "rejected", reason: "Remote computer reset is unavailable." };
         return await remote.forceRecreate();

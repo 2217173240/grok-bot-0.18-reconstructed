@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -98,6 +98,31 @@ test("local admin forbids production Cursor RPC and remote box", async () => {
     await admin.dispose();
     await settingsLoaded.dispose();
     await broker.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("local admin intercept blocks Cursor production fetches and records them", async () => {
+  const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-intercept-"));
+  const previous = process.env.SAND_LOCAL_ADMIN;
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  const originalFetch = globalThis.fetch;
+  process.env.SAND_LOCAL_ADMIN = "1";
+  process.env.SAND_DATA_ROOT = root;
+  try {
+    loaded.module.installLocalAdminNetworkIntercept(process.env);
+    await assert.rejects(() => fetch("https://api2.cursor.sh/aiserver.v1.PrivacyService/GetPrivacyMode"), /blocked fetch/);
+    const log = await readFile(path.join(root, "local-intercept.jsonl"), "utf8");
+    assert.match(log, /blocked-fetch/);
+    assert.match(log, /api2\.cursor\.sh/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previous == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previous;
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    await loaded.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });

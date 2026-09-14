@@ -147,8 +147,10 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin.ts"), "utf8"), /SAND_LOCAL_ADMIN_ENV = "SAND_LOCAL_ADMIN"/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/account/cursor-auth.ts"), "utf8"), /if \(this\.localAdminEnabled\)/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
-  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| remote\.issueInferenceCredential == null/);
+  assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
   assert.match(localDocker, /export function resolveDockerHost/);
+  assert.match(localDocker, /ensureLocalAdminHost/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /blocked-fetch/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/main.ts"), "utf8"), /password-store", "basic"/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/secrets/secret-store.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return false;/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /SAND_LOCAL_ADMIN forbids EnsureSandBox/);
