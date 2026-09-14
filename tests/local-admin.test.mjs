@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -99,6 +99,23 @@ test("local admin forbids production Cursor RPC and remote box", async () => {
     await settingsLoaded.dispose();
     await broker.dispose();
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("docker CLI uses an existing Colima socket when DOCKER_HOST is unset", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  try {
+    const home = await mkdtemp(path.join(os.tmpdir(), "grok-colima-home-"));
+    const socket = path.join(home, ".colima", "finonelib", "docker.sock");
+    await mkdir(path.dirname(socket), { recursive: true });
+    await writeFile(socket, "");
+    const resolved = loaded.module.resolveDockerHost({}, home);
+    assert.equal(resolved, `unix://${socket}`);
+    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///tmp/explicit.sock" }, home);
+    assert.equal(explicit, "unix:///tmp/explicit.sock");
+    await rm(home, { recursive: true, force: true });
+  } finally {
+    await loaded.dispose();
   }
 });
 

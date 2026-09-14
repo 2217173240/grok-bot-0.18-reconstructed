@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -32,9 +33,33 @@ interface CommandResult { readonly ok: boolean; readonly output: string }
 interface InferenceCredential { readonly accessToken: string; readonly backendUrl: string; readonly expiresAtMs: number }
 interface LocalHostBundle { readonly path: string; readonly sha256: string; readonly boxExecDaemonPath: string; readonly boxExecDaemonSha256: string }
 
+export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
+  const configured = env.DOCKER_HOST?.trim();
+  if (configured != null && configured.length > 0) return configured;
+  const sockets = [
+    "/var/run/docker.sock",
+    join(homeDir, ".colima", "docker.sock"),
+    join(homeDir, ".colima", "default", "docker.sock"),
+  ];
+  try {
+    for (const profile of readdirSync(join(homeDir, ".colima"))) {
+      sockets.push(join(homeDir, ".colima", profile, "docker.sock"));
+    }
+  } catch {}
+  for (const socket of sockets) {
+    if (existsSync(socket)) return `unix://${socket}`;
+  }
+  return undefined;
+}
+
+function dockerSpawnEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const dockerHost = resolveDockerHost(env);
+  return dockerHost == null || env.DOCKER_HOST?.trim() ? env : { ...env, DOCKER_HOST: dockerHost };
+}
+
 function runDocker(args: readonly string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn("docker", [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", [...args], { stdio: ["ignore", "pipe", "pipe"], env: dockerSpawnEnv() });
     let output = "";
     const append = (chunk: Buffer): void => { output += chunk.toString(); if (output.length > 200_000) output = output.slice(-200_000); };
     child.stdout?.on("data", append);
