@@ -38,7 +38,7 @@ export interface BoxSecretsPushReport {
   readonly secretCount?: number;
   readonly applied?: boolean;
   readonly scope?: { readonly accountScope?: string | undefined };
-  readonly errorClass?: "keychain_locked" | "other" | "host_unreachable";
+  readonly errorClass?: "keychain_locked" | "other" | "host_unreachable" | "box_unreachable";
 }
 
 export function createBoxSecretsPush(deps: {
@@ -75,7 +75,7 @@ export function createBoxSecretsPush(deps: {
       deps.report({ outcome: "ok", trigger, accountScope: snapshot.accountScope, departing, secretCount: sentCount, applied: status.isApplied === true });
       return { ok: true };
     } catch (error) {
-      deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "host_unreachable", secretCount: sentCount });
+      deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "box_unreachable", secretCount: sentCount });
       return { ok: false, error };
     }
   };

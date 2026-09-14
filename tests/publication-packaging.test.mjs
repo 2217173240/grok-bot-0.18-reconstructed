@@ -116,7 +116,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /\.map\(projectInferenceRouterTranscriptEntry\)/);
   assert.match(coordinator, /readonly richText\?: string/);
   assert.match(coordinator, /richText: entry\.richText/);
-  assert.match(coordinator, /setTimeout\(resolve, 1_200\)/);
+  assert.doesNotMatch(coordinator, /setTimeout\(resolve, 1_200\)/);
   assert.match(coordinator, /method === "reactToMessage"/);
   assert.match(coordinator, /reaction\.by === "me"/);
   assert.match(coordinator, /currentActivity: \{ kind: "thinking" \}/);
@@ -135,9 +135,13 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(inferenceRouter, /routedProviderToolSteps/);
   assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
   assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
+  assert.match(providers, /codexExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
+  assert.match(providers, /openRouterExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
   assert.match(codexDirect, /type: "tool-call"/);
   assert.match(codexDirect, /SimplePromptToolExecutor/);
   assert.match(secretsIpc, /persistBoxSecretsSnapshot/);
   assert.match(secretsIpc, /macSecretsPath/);
   assert.match(secretsIpc, /await persistBoxSecretsSnapshot\([\s\S]*?await deps\.setBoxSecrets/);
+  assert.match(secretsIpc, /errorClass: "box_unreachable"/);
+  assert.match(coordinator, /unlink\(temporary\)/);
 });

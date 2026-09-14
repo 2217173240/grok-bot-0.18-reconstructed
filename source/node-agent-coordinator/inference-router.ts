@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { runRoutedProviderText } from "../host/extensions/inference/provider-session.js";
@@ -67,8 +67,12 @@ export function createCoordinatorInferenceRouter(options: {
   const persist = async (store: Store): Promise<void> => {
     await mkdir(dirname(storePath), { recursive: true });
     const temporary = `${storePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, storePath);
+    try {
+      await writeFile(temporary, `${JSON.stringify(store, null, 2)}\n`, { mode: 0o600 });
+      await rename(temporary, storePath);
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
   };
   const append = async (agentId: string, entries: readonly StoredEntry[]): Promise<Store> => {
     const current = await load();
@@ -141,14 +145,6 @@ export function createCoordinatorInferenceRouter(options: {
     const withUser = await append(agentId, [{ provider, role: "user", content: prompt, ...(richText === undefined ? {} : { richText }), id: userEntry.id, clientNonce, timestampMs }]);
     emitTranscript(agentId, "appended", userEntry);
     const endActivity = await beginActivity(agentId);
-    // The shipped transcript intentionally suppresses its activity row as soon as
-    // the first streamed assistant entry arrives. Direct providers can produce that
-    // first delta in the same renderer reconciliation window as the roster update,
-    // making the genuine composing state imperceptible. The shipped virtualized
-    // transcript needs roughly 350 ms to materialize its trailing activity row,
-    // so keep the composing state authoritative long enough for a clearly
-    // perceptible rendered interval before normal token streaming begins.
-    await new Promise<void>(resolve => setTimeout(resolve, 1_200));
     const messages = (withUser.agents[agentId] ?? []).map(entry => ({ role: entry.role, content: entry.content }));
     let content: string;
     const assistantTimestampMs = now();
@@ -209,6 +205,8 @@ export function createCoordinatorInferenceRouter(options: {
         const limit = typeof record.limit === "number" && Number.isInteger(record.limit) && record.limit > 0 ? record.limit : 500;
         return { handled: true, value: { ...result, entries: entries.slice(-limit) } };
       }
+      // Routed providers must run on this Mac process: Claude CLI, Codex
+      // auth.json, and OpenRouter keys are here, not in the remote box.
       if (method !== "sendPrompt" || provider === "cursor") return { handled: false };
       const record = asRecord(args) ?? {};
       const agentId = typeof record.agentId === "string" ? record.agentId : "";
