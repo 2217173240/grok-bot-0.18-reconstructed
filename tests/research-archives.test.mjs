@@ -67,4 +67,6 @@ test("bootstrap prefers the hash-pinned local archive before the network", async
   assert.match(bootstrap, /if \(archivedDigest !== dmgSha256\)/);
   assert.match(bootstrap, /await copyFile\(archivedDmg, cachedDmg\)/);
   assert.ok(bootstrap.indexOf("await copyFile(archivedDmg, cachedDmg)") < bootstrap.indexOf("await fetch(dmgUrl"));
+  assert.match(bootstrap, /is an LFS pointer/);
+  assert.match(bootstrap, /archivedInfo\.size >= 1000/);
 });
