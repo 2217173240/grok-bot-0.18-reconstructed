@@ -6,14 +6,14 @@ The reconstruction is based on the public macOS arm64 release artifact:
 - Version: 0.18.0
 - Upstream bundle ID: `com.anysphere.sand`
 - Electron framework: 42.1.0
-- DMG URL: `https://downloads.cursor.com/grokbot/stable/darwin-arm64/0.18.0/Grok_Bot_0.18.0.dmg`
+- DMG URL: `https://downloads.cursor.com/sand/stable/darwin-arm64/0.18.0/Grok_Bot_0.18.0.dmg`
 - DMG SHA-256: `a253ccd8aab01e083f9812a0264354c5034d8ba7f0610bbb557e82ae77d203eb`
 - Original `app.asar` SHA-256: `6665408168466f9cacc6087e917890c17f59d2e2e9c2404a5c4a59ad79c1de58`
 
 The repository preserves the original macOS artifact above and the matching
 Windows x64 installer through Git LFS. The Windows artifact identity is:
 
-- Installer URL: `https://downloads.cursor.com/grokbot/stable/win32-x64/0.18.0/Grok_Bot_0.18.0_Setup.exe`
+- Installer URL: `https://downloads.cursor.com/sand/stable/win32-x64/0.18.0/Grok_Bot_0.18.0_Setup.exe`
 - Installer SHA-256: `464079a15ef5fa8b61ccea8fffcc78f63cfcf6df65fb0ad5e725d8b95f7e437e`
 - Preservation manifest: `research-archives/original/0.18.0/artifacts.json`
 

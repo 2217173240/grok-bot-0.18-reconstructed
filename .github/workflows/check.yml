@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Installer blobs are verified via LFS pointer oid in tests, not by downloading 280MB.
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
