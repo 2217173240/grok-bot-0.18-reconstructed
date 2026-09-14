@@ -1,5 +1,7 @@
 # Grok Bot 0.18 — reconstructed and extended
 
+**English | [简体中文](README.zh-CN.md)**
+
 ![Grok Bot Router settings with Codex selected and local usage totals](docs/assets/router-settings.png)
 
 This repository is an unofficial, source-oriented reconstruction of the
