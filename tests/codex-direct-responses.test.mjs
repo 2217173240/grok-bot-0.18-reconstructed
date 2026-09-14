@@ -86,6 +86,34 @@ test("direct Codex Responses transport executes Grok Bot tools and continues wit
   assert.deepEqual(events.at(-1), { type: "done", text: "Subject", responseId: "resp-final", usage: { inputTokens: 28, outputTokens: 6, cacheReadTokens: 6, cacheWriteTokens: 0 } });
 });
 
+test("direct Codex Responses transport emits host-owned tool-call chunks instead of spinning without an executor", async () => {
+  const { streamCodexDirectResponses } = await loadModule();
+  const requests = [];
+  const fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body));
+    return sse([
+      { type: "response.output_item.done", item: { type: "function_call", id: "call-item", call_id: "call-host", name: "gmail_search", arguments: "{\"query\":\"newer_than:1d\"}" } },
+      { type: "response.completed", response: { id: "resp-host", output: [], usage: { input_tokens: 9, output_tokens: 3, input_tokens_details: { cached_tokens: 1 } } } }
+    ]);
+  };
+  const events = [];
+  for await (const event of streamCodexDirectResponses({
+    fetch,
+    endpoint: "https://example.invalid/responses",
+    model: "gpt-test",
+    instructions: "Use connected tools",
+    input: [{ role: "user", content: "latest email" }],
+    tools: [{ name: "gmail_search", description: "Search Gmail", parameters: { type: "object" }, source: { providerIdentifier: "user-Gmail", toolName: "search_threads" } }],
+    maxSteps: 8,
+  })) events.push(event);
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(events, [
+    { type: "tool-call", toolCallId: "call-host", toolName: "gmail_search", args: { query: "newer_than:1d" } },
+    { type: "done", text: "", responseId: "resp-host", usage: { inputTokens: 9, outputTokens: 3, cacheReadTokens: 1, cacheWriteTokens: 0 } },
+  ]);
+});
+
 test("direct Codex Responses transport fails closed on a truncated stream", async () => {
   const { streamCodexDirectResponses } = await loadModule();
   await assert.rejects(async () => {

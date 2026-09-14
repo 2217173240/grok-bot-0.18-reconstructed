@@ -49,6 +49,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   const coordinatorMain = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "main.ts"), "utf8");
   const mcpBridge = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "routed-mcp-bridge.ts"), "utf8");
   const localDocker = await readFile(path.join(repoRoot, "source", "electron-main", "box", "local-docker-host-connector.ts"), "utf8");
+  const secretsIpc = await readFile(path.join(repoRoot, "source", "electron-main", "secrets", "secrets-ipc.ts"), "utf8");
+  const inferenceRouter = await readFile(path.join(repoRoot, "source", "shared", "inference-router.ts"), "utf8");
   assert.match(rendererPatch, /desktop\.agent\.getInferenceRouter\(\)/);
   assert.match(rendererPatch, /desktop\.agent\.setInferenceRouter\(n\)/);
   assert.match(rendererPatch, /desktop\.agent\.getBoxRuntime\(\)/);
@@ -130,4 +132,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /kind: "send-message"/);
   assert.match(coordinatorMain, /createCoordinatorInferenceRouter/);
   assert.match(coordinatorMain, /routed\.handled/);
+  assert.match(inferenceRouter, /routedProviderToolSteps/);
+  assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
+  assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
+  assert.match(codexDirect, /type: "tool-call"/);
+  assert.match(codexDirect, /SimplePromptToolExecutor/);
+  assert.match(secretsIpc, /persistBoxSecretsSnapshot/);
+  assert.match(secretsIpc, /macSecretsPath/);
+  assert.match(secretsIpc, /await persistBoxSecretsSnapshot\([\s\S]*?await deps\.setBoxSecrets/);
 });
