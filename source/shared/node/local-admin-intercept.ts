@@ -1,0 +1,59 @@
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { isCursorProductionBackendUrl, isLocalAdminEnabled } from "./local-admin.js";
+
+// The ledger is a diagnostic surface, not a database: keep it bounded. When it
+// outgrows the cap, rewrite it with the most recent lines; heartbeat events
+// are sampled down to one per window.
+const INTERCEPT_LOG_MAX_BYTES = 2_000_000;
+const INTERCEPT_LOG_KEEP_BYTES = 512_000;
+const HEARTBEAT_KINDS = new Set(["already-ready"]);
+const HEARTBEAT_MIN_INTERVAL_MS = 60_000;
+let lastHeartbeatAtMs = 0;
+
+export function localInterceptLogPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env.SAND_DATA_ROOT?.trim() || join(homedir(), ".grokbot");
+  return join(root, "local-intercept.jsonl");
+}
+
+function rotateIfNeeded(path: string): void {
+  let size: number;
+  try { size = statSync(path).size; } catch { return; }
+  if (size <= INTERCEPT_LOG_MAX_BYTES) return;
+  let contents: string;
+  try { contents = readFileSync(path, "utf8"); } catch { return; }
+  const tail = contents.slice(Math.max(0, contents.length - INTERCEPT_LOG_KEEP_BYTES));
+  const firstLineBreak = tail.indexOf("\n");
+  const kept = firstLineBreak >= 0 ? tail.slice(firstLineBreak + 1) : tail;
+  try {
+    const temporary = `${path}.${process.pid}.tmp`;
+    writeFileSync(temporary, kept.endsWith("\n") || kept.length === 0 ? kept : `${kept}\n`, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, path);
+  } catch {}
+}
+
+export function appendLocalIntercept(record: Readonly<Record<string, unknown>>, env: NodeJS.ProcessEnv = process.env): void {
+  if (record.kind === "local-host" && HEARTBEAT_KINDS.has(String(record.event))) {
+    const now = Date.now();
+    if (now - lastHeartbeatAtMs < HEARTBEAT_MIN_INTERVAL_MS) return;
+    lastHeartbeatAtMs = now;
+  }
+  const path = localInterceptLogPath(env);
+  mkdirSync(dirname(path), { recursive: true });
+  appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
+  rotateIfNeeded(path);
+}
+
+export function installLocalAdminNetworkIntercept(env: NodeJS.ProcessEnv = process.env): void {
+  if (!isLocalAdminEnabled(env)) return;
+  const original = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url);
+    if (isCursorProductionBackendUrl(url)) {
+      appendLocalIntercept({ kind: "blocked-fetch", url, method: init?.method ?? "GET" }, env);
+      throw new Error(`SAND_LOCAL_ADMIN blocked fetch ${url}`);
+    }
+    return await original(input, init);
+  }) as typeof fetch;
+}

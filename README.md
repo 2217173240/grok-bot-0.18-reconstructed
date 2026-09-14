@@ -23,6 +23,55 @@ This is a hacking and research project, not Anysphere's original monorepo and
 not an official Grok Bot release. Names and module boundaries inferred from a
 compiled application may differ from the original source.
 
+## Fully local operation (local admin mode)
+
+`SAND_LOCAL_ADMIN=1` rewrites every backend dependency into a local
+equivalent, so the app runs end to end with **no Cursor/xAI account, no
+official login flow, and no dependency on remote returns**. Isolation is
+enforced in code (guards at every egress point), not by hoping the network is
+unreachable.
+
+| Layer | Stock app | Local mode |
+|---|---|---|
+| Identity | Cursor OAuth via `authenticator.cursor.sh` | Local admin session; no browser, no refresh, production RPCs fail closed |
+| Computer | Rented cloud VM (`EnsureSandBox`) | Host process on this Mac (`127.0.0.1:1340`), or the local Docker VM via `GROKBOT_BOX=docker` |
+| Inference | Cursor backend | Any Anthropic-compatible endpoint routed through the local Claude Code session (model set by environment) |
+| Tools | Routed sessions advertised tools with no executor (the model fabricated output) | Real, permission-gated local tools (bash, file, search) with up to 8 tool turns |
+| Plugins | Marketplace/catalog via dashboard OAuth | `mcp-servers.json` in the data root — standard `{ mcpServers: { name: { command, args, env } } }` stdio/http servers, manageable from the UI with no account |
+| Telemetry / statsig / credential minting | Official backends | Skipped or intercepted; every blocked attempt is recorded |
+
+Engineering rules the implementation follows (and tests enforce):
+
+- **Idempotent** — repeated starts reuse the staged runtime and token,
+  settings are seeded only when missing, the gateway fast-path never
+  double-spawns.
+- **Lifecycle-managed** — the host child and its exec-daemon are reaped on
+  quit; orphaned daemons from a crashed host are healed before the next
+  spawn; a three-strike circuit breaker stops automatic respawns of a
+  deterministic failure.
+- **No mechanical retries** — bounded, event-aware waits with real error
+  output instead of silent polling loops; failing lookups fail closed once.
+- **Audit over trust** — every permission decision and tool request/result is
+  appended to `local-intercept.jsonl`, so real tool output is
+  distinguishable from model-invented output (verified with ground-truth
+  md5 checks).
+
+### Quick start
+
+```bash
+# one-time: put your inference token in a 0600 file
+echo <token> > ~/.grokbot-local/anthropic-token && chmod 600 ~/.grokbot-local/anthropic-token
+
+./start-local.sh start    # also: stop | status | restart | logs
+GROKBOT_BOX=docker ./start-local.sh start   # computer = local Docker VM instead
+```
+
+The script is idempotent, waits a bounded time for the gateway, and reports
+the host log tail on failure instead of spinning. Plugins go in
+`~/.grokbot-local/mcp-servers.json`; artifacts land in the shared box
+workspace (`box-data/box-workspace`). Verification notes and the full commit
+narrative live in the branch history (`dir-0-1-musk`).
+
 ## What is in the repository?
 
 The checked-in tree contains the reviewed reconstruction, tests, manifests,

@@ -1,3 +1,5 @@
+import { SAND_ACCESS_GRANTED } from "../../shared/sand-access.js";
+import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { createSandAccessReader, readSandAccessOnce, type SandAccess } from "./access.js";
 import { SandCursorAuthService, type AccessTokenReader, type SandAuthStatus, type SandCursorAuthServiceOptions } from "./cursor-auth.js";
 import { fetchCursorProfile, fetchLocalToolPermissionCeiling, fetchUserPrivacyMode, updateCursorProfileName } from "./cursor-profile.js";
@@ -57,7 +59,7 @@ export function createCursorAuthWiring(deps: {
     const sequence = ++localToolCeilingSyncSeq;
     const previous = deps.settingsStore.getLocalToolPermission();
     let ceiling: string | undefined;
-    if (status.kind === "logged-in") ceiling = await readLocalToolPermissionCeiling((options) => service.getValidAccessToken(options));
+    if (status.kind === "logged-in" && !isLocalAdminEnabled()) ceiling = await readLocalToolPermissionCeiling((options) => service.getValidAccessToken(options));
     if (sequence !== localToolCeilingSyncSeq) return;
     deps.settingsStore.setLocalToolPermissionCeiling(ceiling);
     const effective = deps.settingsStore.getLocalToolPermission();
@@ -69,7 +71,7 @@ export function createCursorAuthWiring(deps: {
   function deliverCursorAuthStatus(service: AuthServicePort, status: SandAuthStatus): void {
     authStatusFreshness += 1;
     deps.emitAuthStatus({ ...status, freshness: authStatusFreshness });
-    if (deps.sentryEnabled) void syncSentryAccount(status, () => readPrivacyMode((options) => service.getValidAccessToken(options)));
+    if (deps.sentryEnabled && !isLocalAdminEnabled()) void syncSentryAccount(status, () => readPrivacyMode((options) => service.getValidAccessToken(options)));
     void syncLocalToolPermissionCeiling(service, status);
   }
 
@@ -78,7 +80,9 @@ export function createCursorAuthWiring(deps: {
     const service = (deps.createAuthService ?? ((options) => new SandCursorAuthService(options)))({
       ...(deps.serviceOptions ?? {}),
       openExternal: deps.openExternal,
+      env: process.env,
       fetchProfile: deps.fetchProfile ?? (async (getAccessToken) => {
+        if (isLocalAdminEnabled()) return { isAnysphereUser: false, email: "admin@local", displayName: "Local admin" };
         const profile = await fetchCursorProfile(getAccessToken, {});
         return profile == null ? null : {
           isAnysphereUser: profile.isAnysphereUser,
@@ -96,7 +100,7 @@ export function createCursorAuthWiring(deps: {
       else runtime.observe(status);
     });
     cursorAuthService = service;
-    if (deps.sentryEnabled) void service.getStatus().then((status) => syncSentryAccount(status, () => readPrivacyMode((options) => service.getValidAccessToken(options))));
+    if (deps.sentryEnabled && !isLocalAdminEnabled()) void service.getStatus().then((status) => syncSentryAccount(status, () => readPrivacyMode((options) => service.getValidAccessToken(options))));
     void service.getStatus().then((status) => syncLocalToolPermissionCeiling(service, status));
     return service;
   }
@@ -154,8 +158,8 @@ export function createCursorAccountEdgePort(deps: {
   const withService = async <T>(operation: (service: AuthServicePort) => Promise<T>): Promise<T> => await operation(await deps.ensureCursorAuthService());
   const tokenReader = (service: AuthServicePort): AccessTokenReader => (options) => service.getValidAccessToken(options);
   return {
-    getSandAccess: async () => await (await ensureSandAccessReader()).read(),
-    getSandAccessFresh: async () => (await readSandAccessOnce(await sandAccessDeps())).access,
+    getSandAccess: async () => isLocalAdminEnabled() ? SAND_ACCESS_GRANTED : await (await ensureSandAccessReader()).read(),
+    getSandAccessFresh: async () => isLocalAdminEnabled() ? SAND_ACCESS_GRANTED : (await readSandAccessOnce(await sandAccessDeps())).access,
     getAuthStatus: async () => { const freshness = deps.currentAuthStatusFreshness(); const service = await deps.ensureCursorAuthService(); return { ...await settledStatus(() => service.getStatus()), freshness }; },
     login: async () => withService(async (service) => { const result = await service.login(); const settled = await deps.getAccountRuntime()?.whenIdle(); await deps.resetMcpManager(); await deps.refreshHostMcp(); return settled ?? result; }),
     cancelLogin: async () => withService(async (service) => { const result = await service.cancelLogin(); return await deps.getAccountRuntime()?.whenIdle() ?? result; }),
@@ -165,14 +169,15 @@ export function createCursorAccountEdgePort(deps: {
       return await withService(async (service) => { const result = await service.updateDisplayName(name); return await deps.getAccountRuntime()?.whenIdle() ?? result; });
     },
     getAvatar: async () => withService(async (service) => { const status = await service.getStatus(); return status.kind !== "logged-in" || status.authId == null ? null : await deps.resolveAvatar(status.authId, status.profilePictureUrl); }),
-    getWeeklyUsage: async () => withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchWeeklyUsage(tokenReader(service)) : null),
-    getUsageSummary: async () => !await deps.isUsagePageEnabled() ? null : await withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchUsageSummary(tokenReader(service)) : null),
-    getPrReviewPreferences: async () => withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchPrReviewPreferences(tokenReader(service)) : NO_SAND_PR_REVIEW_PREFERENCES),
-    getPrivacyModeEnabled: async () => withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchPrivacyModeEnabled(tokenReader(service)) : true),
-    cancelTrial: async () => !await deps.isUsagePageEnabled() ? { ok: false, message: "This isn’t available right now" } : await withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.cancelTrial(tokenReader(service)) : { ok: false, message: "Sign in to Cursor to continue" }),
+    getWeeklyUsage: async () => isLocalAdminEnabled() ? null : withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchWeeklyUsage(tokenReader(service)) : null),
+    getUsageSummary: async () => isLocalAdminEnabled() || !await deps.isUsagePageEnabled() ? null : await withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchUsageSummary(tokenReader(service)) : null),
+    getPrReviewPreferences: async () => isLocalAdminEnabled() ? NO_SAND_PR_REVIEW_PREFERENCES : withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchPrReviewPreferences(tokenReader(service)) : NO_SAND_PR_REVIEW_PREFERENCES),
+    getPrivacyModeEnabled: async () => isLocalAdminEnabled() ? true : withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.fetchPrivacyModeEnabled(tokenReader(service)) : true),
+    cancelTrial: async () => isLocalAdminEnabled() ? { ok: false, message: "Local admin has no Cursor billing." } : !await deps.isUsagePageEnabled() ? { ok: false, message: "This isn’t available right now" } : await withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.cancelTrial(tokenReader(service)) : { ok: false, message: "Sign in to Cursor to continue" }),
     invokeDashboardAction: async (raw: unknown) => {
       const request = parseDashboardActionRequest(raw);
       if (request == null) return { ok: false, message: `This action isn’t supported by this version of ${deps.productDisplayName ?? "Grok Bot"}` };
+      if (isLocalAdminEnabled()) return { ok: false, message: "Local admin has no Cursor dashboard." };
       return await withService(async (service) => (await service.getStatus()).kind === "logged-in" ? await deps.invokeDashboardAction(tokenReader(service), request) : { ok: false, message: "Sign in to Cursor to continue" });
     },
   };

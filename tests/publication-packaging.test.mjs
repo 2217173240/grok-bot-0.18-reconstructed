@@ -49,6 +49,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   const coordinatorMain = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "main.ts"), "utf8");
   const mcpBridge = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "routed-mcp-bridge.ts"), "utf8");
   const localDocker = await readFile(path.join(repoRoot, "source", "electron-main", "box", "local-docker-host-connector.ts"), "utf8");
+  const secretsIpc = await readFile(path.join(repoRoot, "source", "electron-main", "secrets", "secrets-ipc.ts"), "utf8");
+  const inferenceRouter = await readFile(path.join(repoRoot, "source", "shared", "inference-router.ts"), "utf8");
   assert.match(rendererPatch, /desktop\.agent\.getInferenceRouter\(\)/);
   assert.match(rendererPatch, /desktop\.agent\.setInferenceRouter\(n\)/);
   assert.match(rendererPatch, /desktop\.agent\.getBoxRuntime\(\)/);
@@ -77,7 +79,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /"127\.0\.0\.1:1340:1340"/);
   assert.match(localDocker, /SAND_BOX_AUTO_UPDATE=0/);
   assert.match(localDocker, /dst=\/home\/box\/sand-host\/host-main\.cjs,readonly/);
-  assert.match(localDocker, /\.getBoxRuntime\(\) === "local-docker" \? await localConnect\(\) : await remote\.connect\(\)/);
+  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(inference, /recordInferenceUsage\(provider/);
   assert.match(inference, /routerSettings\.getInferenceProvider\(\)/);
   assert.match(inference, /typeof extendedUsage\.then === "function"/);
@@ -94,7 +96,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /mcpServers: \{ grok_bot_plugins:/);
   assert.match(providers, /recordRoutedUsage\(provider, usage\)/);
   assert.match(providers, /queryClaude/);
-  assert.match(providers, /tools: mcpServerUrl == null \? \[\] : \["mcp__grok_bot_plugins__\*"\]/);
+  // Routed Claude Code turns must carry real, audited local tools — never the
+  // stock empty tool list that made the model fabricate command output.
+  assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
+  assert.match(providers, /canUseTool: async \(toolName, input\)/);
+  assert.match(providers, /claudeToolPermission\(toolName\)/);
+  assert.match(providers, /maxTurns: 8/);
+  assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
+  assert.match(providers, /Never simulate, guess, or invent command output/);
+  assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
   assert.match(providers, /OpenRouter needs OPENROUTER_API_KEY/);
   assert.match(cursorSession, /routedProvider !== "cursor"/);
@@ -114,7 +124,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /\.map\(projectInferenceRouterTranscriptEntry\)/);
   assert.match(coordinator, /readonly richText\?: string/);
   assert.match(coordinator, /richText: entry\.richText/);
-  assert.match(coordinator, /setTimeout\(resolve, 1_200\)/);
+  assert.doesNotMatch(coordinator, /setTimeout\(resolve, 1_200\)/);
   assert.match(coordinator, /method === "reactToMessage"/);
   assert.match(coordinator, /reaction\.by === "me"/);
   assert.match(coordinator, /currentActivity: \{ kind: "thinking" \}/);
@@ -130,4 +140,38 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /kind: "send-message"/);
   assert.match(coordinatorMain, /createCoordinatorInferenceRouter/);
   assert.match(coordinatorMain, /routed\.handled/);
+  assert.match(inferenceRouter, /routedProviderToolSteps/);
+  assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
+  assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
+  assert.match(providers, /codexExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
+  assert.match(providers, /openRouterExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
+  assert.match(codexDirect, /type: "tool-call"/);
+  assert.match(codexDirect, /SimplePromptToolExecutor/);
+  assert.match(secretsIpc, /persistBoxSecretsSnapshot/);
+  assert.match(secretsIpc, /macSecretsPath/);
+  assert.match(secretsIpc, /await persistBoxSecretsSnapshot\([\s\S]*?await deps\.setBoxSecrets/);
+  assert.match(secretsIpc, /errorClass: "box_unreachable"/);
+  assert.match(coordinator, /unlink\(temporary\)/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin.ts"), "utf8"), /SAND_LOCAL_ADMIN_ENV = "SAND_LOCAL_ADMIN"/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/account/cursor-auth.ts"), "utf8"), /if \(this\.localAdminEnabled\)/);
+  assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
+  assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
+  assert.match(localDocker, /export function resolveDockerHost/);
+  assert.match(localDocker, /ensureLocalAdminHost/);
+  // SAND_LOCAL_ADMIN_BOX=docker routes the local-admin computer to the Docker VM.
+  assert.match(localDocker, /SAND_LOCAL_ADMIN_BOX\?\.trim\(\)\.toLowerCase\(\) === "docker"/);
+  assert.match(localDocker, /stopLocalAdminHost\(\);/);
+  // Local admin never mints official credentials.
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
+  // Plugins without OAuth: mcp-servers.json feeds BOTH MCP managers via one
+  // shared source swap, and the desktop marketplace surface stays local.
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/mcp/local-mcp-servers.ts"), "utf8"), /applyLocalAdminMcpSources/);
+  assert.match(await readFile(path.join(repoRoot, "source/host/extensions/mcp/mcp-service.ts"), "utf8"), /applyLocalAdminMcpSources\(\{/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/mcp/desktop-mcp-manager.ts"), "utf8"), /createLocalMcpServersFileWriter\(getSandRootDir\(\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/mcp/mcp-desktop.ts"), "utf8"), /marketplaceUnavailable \? \[\]/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/cursor-backend/cursor-inference.ts"), "utf8"), /Cursor inference is unavailable in local admin mode/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /blocked-fetch/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/main.ts"), "utf8"), /password-store", "basic"/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/secrets/secret-store.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return false;/);
+  assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /SAND_LOCAL_ADMIN forbids EnsureSandBox/);
 });

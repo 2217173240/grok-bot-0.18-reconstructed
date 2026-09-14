@@ -11,6 +11,7 @@ import { GATEWAY_ACCESS_DENIED_MESSAGE_MARKER, CLOUD_AGENT_STORAGE_DISABLED, GAT
 import { GATEWAY_NETWORK_TOKEN_HEADER } from "../../shared/gateway-wire.js";
 import { createGatewayConnectFastPath, type GatewayConnection, type GatewayDescriptorStore } from "./gateway-descriptor-cache.js";
 import type { RecreateResult } from "./box-recreate-commands.js";
+import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 
 export const LOCAL_EXEC_DAEMON_CREDENTIAL_PATH = "/sand-box/local-exec-daemon-credential";
 export const GATEWAY_URL_ENV = "SAND_HOST_GATEWAY_URL";
@@ -79,6 +80,7 @@ export class BrokeredHostConnector {
   }
 
   async connect(): Promise<GatewayConnection> {
+    if (isLocalAdminEnabled()) throw new SandBoxHostConnectError("SAND_LOCAL_ADMIN forbids EnsureSandBox against Cursor.");
     if (this.blocked != null && Date.now() < this.blocked.untilMs) throw blockedError(this.blocked.info);
     let box: BrokerBox;
     try { box = await this.client.ensureSandBox({}); }
@@ -114,6 +116,10 @@ export class BrokeredHostConnector {
     return { status: "rejected" as const, reason: `Couldn't reset the computer${result.reason.length > 0 ? ` (${result.reason})` : ""}. It is unchanged.` };
   }
   async issueLocalExecDaemonCredential(): Promise<{ credential: string; backendUrl: string; expiresAtMs?: number } | undefined> {
+    // Local admin has no Cursor identity to mint daemon credentials with; the
+    // local exec daemon serves over the local gateway without one. Asking the
+    // official backend just spams failed RPCs.
+    if (isLocalAdminEnabled()) return undefined;
     const backendUrl = getSandInferenceBackendUrl();
     let accessToken: string;
     try { accessToken = await this.deps.getAccessToken({ backendUrl }); } catch { return undefined; }
@@ -128,6 +134,7 @@ export class BrokeredHostConnector {
     return { credential, backendUrl, ...(typeof expiresAtMs === "number" ? { expiresAtMs } : {}) };
   }
   async issueInferenceCredential(): Promise<{ accessToken: string; backendUrl: string; expiresAtMs: number } | undefined> {
+    if (isLocalAdminEnabled()) return undefined;
     const backendUrl = getSandInferenceBackendUrl();
     try {
       const accessToken = await this.deps.getAccessToken({ backendUrl });

@@ -1,0 +1,254 @@
+#!/bin/bash
+# grokbot-local — launch the reconstructed Grok Bot in local-admin mode.
+#
+#   start-local.sh [start|stop|status|restart|logs]   (default: start)
+#   GROKBOT_BOX=docker start-local.sh start           # computer = Docker VM
+#                                                     # (default: host process on the Mac)
+#
+# Principles baked in:
+#   idempotent    — safe to run repeatedly; seeds settings only when absent,
+#                   reuses the staged host runtime, refuses double launches.
+#   lifecycle     — stop goes through the Apple quit event so before-quit
+#                   reaps the local host; status reports every moving part.
+#   no blind retry — start waits a bounded time for the gateway, then fails
+#                   with the host log tail instead of spinning.
+set -euo pipefail
+
+BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
+BUNDLE_ID="com.anysphere.sand.reconstructed"
+REPO="/Users/xinheyun/Desktop/grok-bot-0.18-reconstructed"
+DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
+PROFILE="$DATA_ROOT/profile"
+TOKEN_FILE="$DATA_ROOT/anthropic-token"
+APP_LOG="$DATA_ROOT/app.log"
+PID_FILE="$DATA_ROOT/app.pid"
+GATEWAY_HEALTH_URL="http://127.0.0.1:1340/health"
+READY_TIMEOUT_S="${GROKBOT_READY_TIMEOUT_S:-45}"
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'grokbot-local: %s\n' "$*" >&2; exit 1; }
+
+app_pid() {
+  # The host and exec-daemon also run under $BIN as Electron-as-node; the app
+  # itself is the one carrying --user-data-dir.
+  pgrep -f "^${BIN} --user-data-dir=" | head -1 || true
+}
+
+host_pid() {
+  pgrep -f "sand-host/host-main\.cjs" | head -1 || true
+}
+
+gateway_token() {
+  python3 - "$DATA_ROOT/local-docker-vm.json" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))["token"])
+except Exception:
+    pass
+PY
+}
+
+# Mirror the connector's Colima discovery so docker CLI works from this shell.
+resolve_docker_host() {
+  [ -n "${DOCKER_HOST:-}" ] && return 0
+  for socket in /var/run/docker.sock "$HOME"/.colima/docker.sock "$HOME"/.colima/*/docker.sock; do
+    if [ -S "$socket" ]; then export DOCKER_HOST="unix://$socket"; return 0; fi
+  done
+  return 1
+}
+
+health_ok() {
+  local token
+  token="$(gateway_token)"
+  [ -n "$token" ] || return 1
+  curl -s -o /dev/null --max-time 2 -H "authorization: Bearer $token" \
+    "$GATEWAY_HEALTH_URL" 2>/dev/null || return 1
+}
+
+seed_settings() {
+  local settings="$DATA_ROOT/settings.json"
+  if [ -f "$settings" ]; then
+    say "settings: kept existing $settings"
+    return
+  fi
+  python3 - "$settings" <<'PY'
+import json, sys
+settings = {
+    "version": 1, "mcpBoxServers": [], "autoUpdateWhenIdleOptIn": False,
+    "egressTunnelEnabled": False, "webauthnProxyEnabled": True,
+    "mcpCustomInstructions": {}, "mcpCustomInstructionsByServerId": {},
+    "mcpDisabledToolsByServerId": {}, "conciergeConsent": "unset",
+    "settingsMigrations": ["downgrade-persisted-max-fast"],
+    "hasSeenOnboarding": True,
+    "inferenceProvider": "claude-code", "boxRuntime": "local-docker",
+}
+open(sys.argv[1], "w").write(json.dumps(settings, indent=2) + "\n")
+PY
+  say "settings: seeded $settings (claude-code + local box)"
+}
+
+do_start() {
+  [ -x "$BIN" ] || die "app binary not found: $BIN (run scripts/package-macos.mjs first)"
+  [ -r "$TOKEN_FILE" ] || die "missing $TOKEN_FILE (echo <token> > $TOKEN_FILE; chmod 600)"
+
+  if [ "$(app_pid)" ]; then
+    say "already running: app pid $(app_pid)"
+    health_ok && say "gateway: healthy" || say "gateway: not ready (host may still be starting)"
+    exit 0
+  fi
+  if lsof -nP -iTCP:1340 -sTCP:LISTEN >/dev/null 2>&1; then
+    die "port 1340 is held by something that is not our app; refusing to start"
+  fi
+  if [ "$(host_pid)" ]; then
+    say "note: leftover host pid $(host_pid); stopping it first"
+    kill "$(host_pid)" 2>/dev/null || true
+    sleep 1
+  fi
+
+  # One-time migration from the /tmp smoke root.
+  if [ ! -d "$DATA_ROOT" ] || [ -z "$(ls -A "$DATA_ROOT" 2>/dev/null)" ]; then
+    if [ -d /tmp/grok-bot-local ] && [ -f /tmp/grok-bot-local/settings.json ]; then
+      mkdir -p "$DATA_ROOT"
+      cp -R /tmp/grok-bot-local/. "$DATA_ROOT/" 2>/dev/null || true
+      say "migrated smoke state from /tmp/grok-bot-local"
+    fi
+  fi
+  mkdir -p "$DATA_ROOT" "$PROFILE"
+  seed_settings
+
+  # Stale package hint: repo dist newer than the installed bundle.
+  if [ -d "$REPO/dist/Grok Bot 0.18 Reconstructed.app" ] && \
+     [ "$REPO/dist/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot" -nt "$BIN" ]; then
+    say "note: repo dist is newer than /Applications copy — consider re-copying it"
+  fi
+
+  local anthropic_token
+  anthropic_token="$(cat "$TOKEN_FILE")"
+  : > "$APP_LOG"
+
+  export SAND_LOCAL_ADMIN=1
+  export SAND_DISABLE_SENTRY=1
+  export SAND_DISABLE_TELEMETRY=1
+  export SAND_CLAUDE_MODEL=glm-5.2
+  export ANTHROPIC_BASE_URL='https://open.bigmodel.cn/api/anthropic'
+  export ANTHROPIC_AUTH_TOKEN="$anthropic_token"
+  export ANTHROPIC_API_KEY="$anthropic_token"
+  export ANTHROPIC_DEFAULT_FABLE_MODEL='glm-5.3[1M]'
+  export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME='glm-5.3'
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-5.3-flash'
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME='glm-5.3-flash'
+  export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-5.3[1M]'
+  export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME='glm-5.3'
+  export ANTHROPIC_DEFAULT_SONNET_MODEL='glm-5.2[1M]'
+  export ANTHROPIC_DEFAULT_SONNET_MODEL_NAME='glm-5.2'
+  export ANTHROPIC_MODEL='glm-5.2'
+  export CLAUDE_CODE_SUBAGENT_MODEL='glm-5.2[1M]'
+  export ENABLE_TOOL_SEARCH='true'
+  export DISABLE_AUTOUPDATER=1
+  export SAND_DATA_ROOT="$DATA_ROOT"
+  export SAND_USER_DATA_DIR="$PROFILE"
+  # GROKBOT_BOX=docker runs the computer as the local Docker VM instead of a
+  # Mac-side host process. Docker (Colima) must be running; the connector
+  # discovers Colima sockets on its own.
+  if [ "${GROKBOT_BOX:-}" = "docker" ]; then
+    resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
+    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
+    export SAND_LOCAL_ADMIN_BOX=docker
+    echo docker > "$DATA_ROOT/box-mode"
+    say "computer: Docker VM (SAND_LOCAL_ADMIN_BOX=docker)"
+  else
+    echo mac > "$DATA_ROOT/box-mode"
+  fi
+
+  # Launch the binary directly — `open` would strip the environment.
+  "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+  say "launched: app pid $pid, log $APP_LOG"
+
+  local waited=0
+  while [ "$waited" -lt "$((READY_TIMEOUT_S * 2))" ]; do
+    health_ok && { say "gateway: healthy on 127.0.0.1:1340 (after ${waited}x500ms)"; exit 0; }
+    if ! ps -p "$pid" >/dev/null 2>&1; then
+      say "app exited during startup; last log lines:"
+      tail -20 "$APP_LOG" || true
+      exit 1
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  say "gateway did not become healthy within ${READY_TIMEOUT_S}s; host log tail:"
+  tail -30 "$DATA_ROOT/box-logs/sand-host.log" 2>/dev/null || \
+    say "(no host log — the host may never have spawned; see $APP_LOG)"
+  exit 1
+}
+
+do_stop() {
+  local pid
+  pid="$(app_pid)"
+  if [ -z "$pid" ]; then
+    say "not running"
+  else
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || kill "$pid"
+    local waited=0
+    while ps -p "$pid" >/dev/null 2>&1 && [ "$waited" -lt 20 ]; do
+      sleep 0.5
+      waited=$((waited + 1))
+    done
+    ps -p "$pid" >/dev/null 2>&1 && { kill "$pid" 2>/dev/null || true; sleep 1; }
+    say "app stopped (pid $pid)"
+  fi
+  local hpid
+  hpid="$(host_pid)"
+  if [ -n "$hpid" ]; then
+    say "host still alive (pid $hpid); sending SIGTERM"
+    kill "$hpid" 2>/dev/null || true
+  fi
+  rm -f "$PID_FILE"
+  # A Docker computer outlives the app by design (restart: unless-stopped) and
+  # keeps the published gateway port; remove it so the next Mac-host start is
+  # not blocked. Named volumes persist the workspace.
+  if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac)" = "docker" ]; then
+    resolve_docker_host || true
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
+      docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace volumes persist)"
+    fi
+  fi
+  say "note: the detached local-exec-daemon is left running by design; it reattaches on next start"
+}
+
+do_status() {
+  local pid hpid token
+  pid="$(app_pid)"; hpid="$(host_pid)"
+  say "data root:   $DATA_ROOT"
+  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac-host) (GROKBOT_BOX=docker to switch)"
+  if [ -f "$DATA_ROOT/mcp-servers.json" ]; then
+    say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"
+  fi
+  if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
+  if [ -n "$hpid" ]; then say "host:        running (pid $hpid)"; else say "host:        not running"; fi
+  if pgrep -f "dist/local-exec-daemon/main\.cjs" >/dev/null 2>&1; then
+    say "exec-daemon: running (pid $(pgrep -f "dist/local-exec-daemon/main\.cjs" | head -1))"
+  else
+    say "exec-daemon: not running"
+  fi
+  if health_ok; then say "gateway:     healthy"; else say "gateway:     down"; fi
+  if [ -f "$DATA_ROOT/local-intercept.jsonl" ]; then
+    say "intercept:   $(wc -l < "$DATA_ROOT/local-intercept.jsonl" | tr -d ' ') events"
+  fi
+  exit 0
+}
+
+do_logs() {
+  say "tailing $DATA_ROOT/app.log and box-logs/sand-host.log (Ctrl-C to stop)"
+  tail -n 40 -F "$APP_LOG" "$DATA_ROOT/box-logs/sand-host.log" 2>/dev/null
+}
+
+case "${1:-start}" in
+  start)   do_start ;;
+  stop)    do_stop ;;
+  restart) do_stop; do_start ;;
+  status)  do_status ;;
+  logs)    do_logs ;;
+  *)       die "usage: $0 [start|stop|status|restart|logs]" ;;
+esac

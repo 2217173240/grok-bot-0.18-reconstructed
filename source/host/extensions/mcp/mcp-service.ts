@@ -19,6 +19,7 @@ import {
   createMcpToolsDiscovery,
   SandMcpExecutor,
 } from "../../../shared/node/mcp/tools-discovery.js";
+import { applyLocalAdminMcpSources } from "../../../shared/node/mcp/local-mcp-servers.js";
 import {
   isEffectivePluginInstalled,
   uninstallClearedInstallRecord,
@@ -90,11 +91,16 @@ interface McpManagerRuntime {
 }
 export function createHostMcp(deps: CreateHostMcpOptions): McpHostPort {
   const log = deps.log ?? ((message: string) => console.log(`[sand:mcp] ${message}`));
+  // Local admin has no dashboard; definitions come from mcp-servers.json.
+  const { accountConfigProvider, accountServersProvider } = applyLocalAdminMcpSources({
+    accountConfigProvider: deps.accountConfigProvider,
+    accountServersProvider: deps.accountServersProvider,
+  });
   const manager = new SandMcpManager({
     includeBuiltins: false,
-    accountConfigProvider: deps.accountConfigProvider,
+    accountConfigProvider,
     accountDisplayConfigProvider: deps.accountDisplayConfigProvider,
-    accountServersProvider: deps.accountServersProvider,
+    accountServersProvider,
     accountMcpWriter: deps.accountMcpWriter,
     backendMcpExec: deps.backendMcpExec,
     settingsStore: deps.settingsStore,

@@ -1,7 +1,9 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
+import { BOX_SECRETS_FILENAME, persistBoxSecretsSnapshot } from "../../shared/node/box-secrets-store.js";
 import { SandClientPersistenceStore, type ClientPersistenceFiles } from "../../shared/client-persistence-store.js";
 import { CLIENT_PERSISTENCE_CHANNELS } from "../../shared/persistence.js";
+import { getSandRootDir } from "../../host/host-paths.js";
 import { assertTrustedCoordinatorPortRequester } from "../coordinator/coordinator-port-ipc-guard.js";
 import { createBoxSecretsPushTelemetry, type BoxSecretsPushAttempt } from "../telemetry/box-secrets-push-telemetry.js";
 import { assertTrustedClientPersistenceSender, assertTrustedSecretsSender } from "./secrets-ipc-guard.js";
@@ -36,7 +38,7 @@ export interface BoxSecretsPushReport {
   readonly secretCount?: number;
   readonly applied?: boolean;
   readonly scope?: { readonly accountScope?: string | undefined };
-  readonly errorClass?: "keychain_locked" | "other" | "host_unreachable";
+  readonly errorClass?: "keychain_locked" | "other" | "host_unreachable" | "box_unreachable";
 }
 
 export function createBoxSecretsPush(deps: {
@@ -44,6 +46,7 @@ export function createBoxSecretsPush(deps: {
   readonly isAccountDeparting: () => boolean;
   readonly setBoxSecrets: (request: { readonly secrets: Record<string, string> }) => Promise<{ readonly isApplied?: boolean }>;
   readonly report: (report: BoxSecretsPushAttempt) => void;
+  readonly macSecretsPath?: string;
 }): {
   push(trigger: string): Promise<boolean>;
   pushOrThrow(trigger: string): Promise<void>;
@@ -58,12 +61,21 @@ export function createBoxSecretsPush(deps: {
       return { ok: false, error };
     }
     const sentCount = Object.keys(snapshot.secrets).length;
+    const macSecretsPath = deps.macSecretsPath ?? join(getSandRootDir(), BOX_SECRETS_FILENAME);
+    // Mac coordinator reads ~/.grokbot/box-secrets.json. Persist before the box
+    // push so Saved keys survive a down box; never roll back that Mac snapshot.
+    try {
+      await persistBoxSecretsSnapshot(macSecretsPath, snapshot.secrets);
+    } catch (error) {
+      deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "other", secretCount: sentCount });
+      return { ok: false, error };
+    }
     try {
       const status = await deps.setBoxSecrets({ secrets: snapshot.secrets });
       deps.report({ outcome: "ok", trigger, accountScope: snapshot.accountScope, departing, secretCount: sentCount, applied: status.isApplied === true });
       return { ok: true };
     } catch (error) {
-      deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "host_unreachable", secretCount: sentCount });
+      deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "box_unreachable", secretCount: sentCount });
       return { ok: false, error };
     }
   };

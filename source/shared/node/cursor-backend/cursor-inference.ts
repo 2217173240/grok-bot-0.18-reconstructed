@@ -14,6 +14,7 @@ import { SAND_DEFAULT_MODEL_SELECTION } from "../../agents/agent-model.js";
 import { SAND_COMPUTER_USE_MODEL_SELECTION, type SandAgentModelSelection } from "../../agents/sand-agent-model.js";
 import { PrivacyMode } from "../../observability/sentry-privacy-mode.js";
 import { accountCacheScope, getConfiguredBackendUrl } from "../cursor-token.js";
+import { isLocalAdminEnabled } from "../local-admin.js";
 import { SAND_BOX_NAMESPACE_HEADER, SAND_CLIENT_TYPE, getSandBoxNamespace, getSandClientVersion } from "../sand-client-metadata.js";
 import { createSandRpcTracingInterceptor } from "./rpc-tracing.js";
 import { SandSettingsStore } from "../settings/sand-settings-store.js";
@@ -75,6 +76,9 @@ export async function settlePrivacyMode(fetchPrivacyMode: PrivacyModeFetcher, op
   catch (error) { const label = error instanceof Error ? error.name : typeof error; log(`[sand:privacy] privacy-mode lookup failed, using privacy-safe fallback backend=${options.backendUrl} error=${label}`); return undefined; }
 }
 export async function resolveCachedSandPrivacyMode(options: PrivacyLookupOptions, fetchPrivacyMode: PrivacyModeFetcher, now = Date.now, log?: (message: string) => void): Promise<PrivacyMode | undefined> {
+  // Local admin never queries Cursor: the connect transport bypasses the fetch
+  // intercept, so the only fail-closed answer is to not ask at all.
+  if (isLocalAdminEnabled()) return undefined;
   const accountScope = accountCacheScope(options.accessToken);
   const cached = cachedPrivacyMode;
   if (cached?.backendUrl === options.backendUrl && cached.accountScope === accountScope && (cached.expiresAt === undefined || now() <= cached.expiresAt)) return await cached.value;
@@ -188,6 +192,9 @@ export function createCursorInferencePromptSession(options: Omit<SandInferenceOp
   const settingsPath = join(getSandRootDir(), "settings.json");
   const routedProvider = new SandSettingsStore(settingsPath).getInferenceProvider();
   if (routedProvider !== "cursor") return createProviderPromptSession(routedProvider);
+  if (isLocalAdminEnabled()) {
+    throw new Error("Cursor inference is unavailable in local admin mode (there is no official login). Open Settings → Router and select Claude Code or OpenRouter, or restart without SAND_LOCAL_ADMIN.");
+  }
   const client = createSandCursorBackendClient(InferenceService, options);
   return createProtoSessionProvider(client, options.requestedModel, undefined, options.inferenceReason).getSession(imageResizingMiddleware);
 }

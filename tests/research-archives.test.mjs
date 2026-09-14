@@ -14,6 +14,13 @@ async function sha256(file) {
   return hash.digest("hex");
 }
 
+function parseGitLfsPointer(text) {
+  const oid = /^oid sha256:([0-9a-f]{64})$/m.exec(text)?.[1];
+  const size = /^size ([0-9]+)$/m.exec(text)?.[1];
+  assert.ok(oid && size, "expected a Git LFS pointer with oid sha256: and size");
+  return { oid, size: Number(size) };
+}
+
 test("preserved 0.18.0 installers match the exact public release inventory", async () => {
   const manifest = JSON.parse(await readFile(path.join(archiveRoot, "artifacts.json"), "utf8"));
   assert.deepEqual(Object.keys(manifest).sort(), ["artifacts", "product", "schemaVersion", "version"]);
@@ -29,14 +36,21 @@ test("preserved 0.18.0 installers match the exact public release inventory", asy
     );
     assert.match(artifact.path, /^(macos-arm64\/[^/]+\.dmg|windows-x64\/[^/]+\.exe)$/);
     assert.match(artifact.sha256, /^[0-9a-f]{64}$/);
-    assert.match(artifact.sourceUrl, /^https:\/\/downloads\.cursor\.com\/grokbot\/stable\//);
+    // Live 0.18.0 installers are under sand/; historical grokbot/ URLs now 403.
+    assert.match(artifact.sourceUrl, /^https:\/\/downloads\.cursor\.com\/sand\/stable\//);
     const file = path.join(archiveRoot, artifact.path);
     assert.ok(file.startsWith(`${archiveRoot}${path.sep}`));
     const metadata = await lstat(file);
     assert.equal(metadata.isFile(), true);
     assert.equal(metadata.isSymbolicLink(), false);
-    assert.equal(metadata.size, artifact.bytes, `${artifact.path} requires git lfs pull`);
-    assert.equal(await sha256(file), artifact.sha256);
+    if (metadata.size < 1000) {
+      const pointer = parseGitLfsPointer(await readFile(file, "utf8"));
+      assert.equal(pointer.oid, artifact.sha256);
+      assert.equal(pointer.size, artifact.bytes);
+    } else {
+      assert.equal(metadata.size, artifact.bytes);
+      assert.equal(await sha256(file), artifact.sha256);
+    }
   }
 });
 
@@ -53,4 +67,6 @@ test("bootstrap prefers the hash-pinned local archive before the network", async
   assert.match(bootstrap, /if \(archivedDigest !== dmgSha256\)/);
   assert.match(bootstrap, /await copyFile\(archivedDmg, cachedDmg\)/);
   assert.ok(bootstrap.indexOf("await copyFile(archivedDmg, cachedDmg)") < bootstrap.indexOf("await fetch(dmgUrl"));
+  assert.match(bootstrap, /is an LFS pointer/);
+  assert.match(bootstrap, /archivedInfo\.size >= 1000/);
 });

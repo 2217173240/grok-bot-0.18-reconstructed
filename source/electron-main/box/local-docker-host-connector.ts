@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,12 +10,24 @@ import type { SandSettingsStore } from "../../shared/node/settings/sand-settings
 import type { RecreateResult } from "./box-recreate-commands.js";
 import type { SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
+import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
+import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
+import { ensureLocalAdminHost, stopLocalAdminHost } from "./local-admin-host.js";
 
 export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
 export const LOCAL_DOCKER_SCHEMA_VERSION = "6";
+// v2 stages host-main.cjs under sand-host/ because the stock host resolves its
+// box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
+// sibling layout. v1 (flat) directories are never reused.
+export const LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "2";
+// A local host that exits is a deterministic failure (layout, deps, port);
+// identical automatic respawns are mechanical retries. Three strikes open a
+// 60s breaker; the user-driven recreate paths reset it.
+const LOCAL_HOST_AUTO_FAILURE_LIMIT = 3;
+const LOCAL_HOST_BREAKER_OPEN_MS = 60_000;
 const READY_TIMEOUT_MS = 180_000;
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
@@ -31,9 +44,33 @@ interface CommandResult { readonly ok: boolean; readonly output: string }
 interface InferenceCredential { readonly accessToken: string; readonly backendUrl: string; readonly expiresAtMs: number }
 interface LocalHostBundle { readonly path: string; readonly sha256: string; readonly boxExecDaemonPath: string; readonly boxExecDaemonSha256: string }
 
+export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
+  const configured = env.DOCKER_HOST?.trim();
+  if (configured != null && configured.length > 0) return configured;
+  const sockets = [
+    "/var/run/docker.sock",
+    join(homeDir, ".colima", "docker.sock"),
+    join(homeDir, ".colima", "default", "docker.sock"),
+  ];
+  try {
+    for (const profile of readdirSync(join(homeDir, ".colima"))) {
+      sockets.push(join(homeDir, ".colima", profile, "docker.sock"));
+    }
+  } catch {}
+  for (const socket of sockets) {
+    if (existsSync(socket)) return `unix://${socket}`;
+  }
+  return undefined;
+}
+
+function dockerSpawnEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const dockerHost = resolveDockerHost(env);
+  return dockerHost == null || env.DOCKER_HOST?.trim() ? env : { ...env, DOCKER_HOST: dockerHost };
+}
+
 function runDocker(args: readonly string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
-    const child = spawn("docker", [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("docker", [...args], { stdio: ["ignore", "pipe", "pipe"], env: dockerSpawnEnv() });
     let output = "";
     const append = (chunk: Buffer): void => { output += chunk.toString(); if (output.length > 200_000) output = output.slice(-200_000); };
     child.stdout?.on("data", append);
@@ -130,7 +167,7 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   const boxExecDaemonBytes = await readRuntime("box-exec-daemon/main.cjs");
   const sha256 = createHash("sha256").update(hostBytes).digest("hex");
   const boxExecDaemonSha256 = createHash("sha256").update(boxExecDaemonBytes).digest("hex");
-  const directory = join(dirname(settingsPath), "local-docker-runtime", `${sha256}-${boxExecDaemonSha256}`);
+  const directory = join(dirname(settingsPath), "local-docker-runtime", `v${LOCAL_HOST_RUNTIME_LAYOUT_VERSION}-${sha256}-${boxExecDaemonSha256}`);
   const persistRuntime = async (name: string, bytes: Buffer): Promise<string> => {
     const target = join(directory, name);
     await mkdir(dirname(target), { recursive: true });
@@ -147,7 +184,7 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   };
   await mkdir(directory, { recursive: true });
   return {
-    path: await persistRuntime("host-main.cjs", hostBytes),
+    path: await persistRuntime("sand-host/host-main.cjs", hostBytes),
     sha256,
     boxExecDaemonPath: await persistRuntime("box-exec-daemon/main.cjs", boxExecDaemonBytes),
     boxExecDaemonSha256,
@@ -231,21 +268,80 @@ export function createSettingsRoutedHostConnector(
   remote: SandRemoteHostConnector,
   settings: SandSettingsStore,
 ): SandRemoteHostConnector {
+  let localHostConsecutiveFailures = 0;
+  let localHostLastFailure = "unknown";
+  let localHostBreakerOpenUntilMs = 0;
+  const resetLocalHostBreaker = (): void => {
+    localHostConsecutiveFailures = 0;
+    localHostBreakerOpenUntilMs = 0;
+  };
+  const localAdminBoxIsDocker = (env: NodeJS.ProcessEnv = process.env): boolean => env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase() === "docker";
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
+      if (isLocalAdminEnabled()) {
+        if (localAdminBoxIsDocker()) {
+          // The computer is the Docker VM; a Mac-side host process, if any,
+          // must not keep the gateway port.
+          stopLocalAdminHost();
+          try {
+            return await ensureLocalDockerBox(settings.settingsPath, undefined);
+          } catch (error) {
+            appendLocalIntercept({ kind: "docker", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+            throw error;
+          }
+        }
+        if (Date.now() < localHostBreakerOpenUntilMs) {
+          const message = `Local admin host circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
+          appendLocalIntercept({ kind: "local-host", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
+          throw new Error(message);
+        }
+        try {
+          const token = await readOrCreateToken(settings.settingsPath);
+          const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
+          const connection = await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+          resetLocalHostBreaker();
+          return connection;
+        } catch (error) {
+          localHostLastFailure = error instanceof Error ? error.message : String(error);
+          localHostConsecutiveFailures += 1;
+          if (localHostConsecutiveFailures >= LOCAL_HOST_AUTO_FAILURE_LIMIT) {
+            localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
+            appendLocalIntercept({ kind: "local-host", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
+          }
+          appendLocalIntercept({ kind: "local-host", event: "connect-failed", error: localHostLastFailure });
+          throw error;
+        }
+      }
       const issued = remote.issueInferenceCredential == null ? undefined : await Promise.race([
         remote.issueInferenceCredential(),
         new Promise<undefined>((resolve) => setTimeout(resolve, OPTIONAL_CREDENTIAL_TIMEOUT_MS)),
       ]);
-      return await ensureLocalDockerBox(settings.settingsPath, issued);
+      try {
+        return await ensureLocalDockerBox(settings.settingsPath, issued);
+      } catch (error) {
+        appendLocalIntercept({ kind: "docker", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     })().finally(() => { ensureInFlight = undefined; });
     return ensureInFlight;
   };
   return {
-    connect: async () => settings.getBoxRuntime() === "local-docker" ? await localConnect() : await remote.connect(),
+    connect: async () => (isLocalAdminEnabled() || settings.getBoxRuntime() === "local-docker") ? await localConnect() : await remote.connect(),
     ...(remote.issueLocalExecDaemonCredential == null ? {} : { issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote) }),
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
+      if (isLocalAdminEnabled() && !localAdminBoxIsDocker()) {
+        stopLocalAdminHost();
+        resetLocalHostBreaker();
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
+      if (isLocalAdminEnabled() && localAdminBoxIsDocker()) {
+        const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
+        if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
       if (settings.getBoxRuntime() !== "local-docker") {
         if (remote.recreate == null) throw new Error("Remote computer recreation is unavailable.");
         return await remote.recreate(args);
@@ -256,6 +352,13 @@ export function createSettingsRoutedHostConnector(
       return { status: "started-untrackable" };
     },
     forceRecreate: async (): Promise<RecreateResult> => {
+      if (isLocalAdminEnabled()) {
+        stopLocalAdminHost();
+        resetLocalHostBreaker();
+        if (localAdminBoxIsDocker()) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        await localConnect();
+        return { status: "started-untrackable" };
+      }
       if (settings.getBoxRuntime() !== "local-docker") {
         if (remote.forceRecreate == null) return { status: "rejected", reason: "Remote computer reset is unavailable." };
         return await remote.forceRecreate();

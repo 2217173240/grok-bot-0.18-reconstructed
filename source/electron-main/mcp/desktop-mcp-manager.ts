@@ -14,6 +14,9 @@ import {
   createDashboardSandBackendMcpExec,
   type DashboardMcpExecClient,
 } from "../../shared/node/cursor-backend/backend-mcp-exec.js";
+import { applyLocalAdminMcpSources, createLocalMcpServersFileWriter } from "../../shared/node/mcp/local-mcp-servers.js";
+import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
+import { getSandRootDir } from "../../host/host-paths.js";
 import { pinMcpDiagnosticsReporter } from "../../shared/node/mcp/mcp-diagnostics.js";
 import { SandMcpManager } from "../../shared/node/mcp/mcp-manager.js";
 import { createMcpToolsDiscovery } from "../../shared/node/mcp/tools-discovery.js";
@@ -84,11 +87,17 @@ export async function createSandDesktopMcpManager(options: DesktopMcpManagerOpti
     getMachineId: accountMcpDeps.getMachineId,
     createClient: generatedBackendClient,
   });
+  // Local admin: definitions and mutations go to mcp-servers.json; no
+  // dashboard reads, no marketplace install backfill.
+  const { accountConfigProvider, accountServersProvider } = applyLocalAdminMcpSources({
+    accountServersProvider: () => fetchAccountMcpServers(accountMcpDeps),
+  });
   const manager = new SandMcpManager({
     settingsStore: options.settingsStore,
     onAccountScopeApplied: options.onAccountScopeApplied,
-    accountServersProvider: () => fetchAccountMcpServers(accountMcpDeps),
-    accountMcpWriter: createAccountMcpWriter(accountMcpDeps),
+    accountConfigProvider,
+    accountServersProvider,
+    accountMcpWriter: isLocalAdminEnabled() ? createLocalMcpServersFileWriter(getSandRootDir()) : createAccountMcpWriter(accountMcpDeps),
     effectivePluginsProvider: () => fetchEffectiveUserPlugins(accountMcpDeps),
     getMachineId: accountMcpDeps.getMachineId,
     backendMcpExec,
@@ -119,7 +128,7 @@ export async function createSandDesktopMcpManager(options: DesktopMcpManagerOpti
     throw error;
   });
   void warmRoutedTools().catch((error: unknown) => reportDesktopEdgeFailure("mcp-manager", "routed-tools-warm", error));
-  let hasKickedInstallBackfill = false;
+  let hasKickedInstallBackfill = isLocalAdminEnabled();
   const kickInstallBackfillOnce = (): void => {
     if (hasKickedInstallBackfill) return;
     hasKickedInstallBackfill = true;
