@@ -387,6 +387,119 @@ test("local mcp-servers.json parses the standard mcpServers shape", async () => 
   }
 });
 
+test("local admin swaps MCP provider sources; the file writer round-trips configs", async () => {
+  const loaded = await loadModule("source/shared/node/mcp/local-mcp-servers.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-local-mcp-writer-"));
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  try {
+    const dashboardProvider = async () => { throw new Error("must not read the dashboard in local admin"); };
+    process.env.SAND_LOCAL_ADMIN = "1";
+    process.env.SAND_DATA_ROOT = root;
+    await writeFile(path.join(root, "mcp-servers.json"), JSON.stringify({ mcpServers: { demo: { command: "node" } } }));
+
+    const swapped = loaded.module.applyLocalAdminMcpSources({ accountServersProvider: dashboardProvider });
+    assert.equal(swapped.accountServersProvider, undefined);
+    assert.deepEqual(await swapped.accountConfigProvider(), { mcpServers: { demo: { command: "node" } } });
+
+    delete process.env.SAND_LOCAL_ADMIN;
+    const untouched = loaded.module.applyLocalAdminMcpSources({ accountServersProvider: dashboardProvider });
+    assert.equal(untouched.accountServersProvider, dashboardProvider, "non-admin sources pass through untouched");
+
+    const writer = loaded.module.createLocalMcpServersFileWriter(root);
+    const edited = await writer.getConfigForEdit();
+    assert.deepEqual(edited.config.mcpServers, { demo: { command: "node" } });
+    await writer.setConfig({ mcpServers: { demo: { command: "node" }, extra: { command: "/bin/extra", args: ["-v"] } } });
+    const reread = await writer.getConfigForEdit();
+    assert.deepEqual(Object.keys(reread.config.mcpServers), ["demo", "extra"]);
+    await assert.rejects(() => writer.installPlugin({ pluginId: 1n }), /Marketplace plugins need a Cursor account/);
+  } finally {
+    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("desktop MCP IPC answers marketplace questions locally in local admin", async () => {
+  const loaded = await loadModule("source/electron-main/mcp/mcp-desktop.ts");
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const handlers = new Map();
+  const ipc = { handle: (channel, handler) => handlers.set(channel, handler) };
+  let managerCalls = 0;
+  const deps = () => ({
+    ipc,
+    shell: { openExternal: async () => {} },
+    parseAllowedExternalUrl: () => null,
+    createOAuthLoopback: async () => ({ registerPendingAuthFromUrl: async () => {}, dispose: () => {} }),
+    getManager: async () => { managerCalls += 1; return {
+      listServers: async () => [],
+      listEffectivePlugins: async () => { throw new Error("dashboard"); },
+      getCatalog: async () => { throw new Error("dashboard"); },
+      resolvePluginLogo: async () => null,
+    }; },
+    peekAccessToken: async () => "token",
+    fetchTeamPopularity: async () => { throw new Error("dashboard"); },
+    refreshMcp: async () => {},
+    syncHostSettings: async () => null,
+    settings: { getMcpCustomInstructionsAccountScope: () => null, getMcpCustomInstructionsByServerId: () => ({}), getMcpCustomInstructions: () => ({}), getMcpDisabledToolsByServerId: () => ({}) },
+    wait: async () => {},
+    onEdgeFailure: () => {},
+  });
+  try {
+    process.env.SAND_LOCAL_ADMIN = "1";
+    loaded.module.registerMcpDesktopIpc(deps());
+    assert.deepEqual(await handlers.get("sand:mcp-catalog")({}, undefined), []);
+    assert.deepEqual(await handlers.get("sand:mcp-effective-plugins")({}, undefined), []);
+    assert.deepEqual(await handlers.get("sand:mcp-team-popularity")({}, undefined), {});
+    assert.equal(managerCalls, 0, "marketplace handlers never reach the manager in local admin");
+
+    delete process.env.SAND_LOCAL_ADMIN;
+    handlers.clear();
+    loaded.module.registerMcpDesktopIpc(deps());
+    await assert.rejects(() => handlers.get("sand:mcp-catalog")({}, undefined), /dashboard/);
+    assert.ok(managerCalls >= 1, "non-admin still consults the manager");
+  } finally {
+    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    await loaded.dispose();
+  }
+});
+
+test("intercept ledger samples heartbeats and rotates when it outgrows the cap", async () => {
+  const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-intercept-rotate-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  process.env.SAND_DATA_ROOT = root;
+  const ledger = path.join(root, "local-intercept.jsonl");
+  try {
+    loaded.module.appendLocalIntercept({ kind: "local-host", event: "already-ready", logPath: "/x" });
+    loaded.module.appendLocalIntercept({ kind: "local-host", event: "already-ready", logPath: "/x" });
+    let lines = (await readFile(ledger, "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1, "heartbeat within the window is sampled to one line");
+
+    const pad = "A".repeat(8_000);
+    for (let index = 0; index < 300; index += 1) {
+      loaded.module.appendLocalIntercept({ kind: "blocked-fetch", url: "https://api2.cursor.sh/x", sequence: index, pad });
+    }
+    const rotated = await readFile(ledger, "utf8");
+    assert.ok(rotated.length < 1_000_000, `ledger rotated below cap (got ${rotated.length} bytes)`);
+    const kept = rotated.trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(kept.length > 1 && kept.length < 300, "rotation kept a tail, not everything");
+    const last = kept[kept.length - 1];
+    assert.equal(last.sequence, 299, "the newest record survives rotation");
+    assert.equal(last.kind, "blocked-fetch");
+  } finally {
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
 
 
 
