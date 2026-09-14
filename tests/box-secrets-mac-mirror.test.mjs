@@ -88,6 +88,7 @@ test("failed box secret push still writes a Mac-side snapshot", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-mac-mirror-fail-"));
   try {
     const macSecretsPath = path.join(root, "box-secrets.json");
+    const reports = [];
     const push = loaded.module.createBoxSecretsPush({
       userSecretsStore: {
         async exportSnapshot() {
@@ -98,10 +99,11 @@ test("failed box secret push still writes a Mac-side snapshot", async () => {
       setBoxSecrets: async () => {
         throw new Error("host unreachable");
       },
-      report: () => {},
+      report: (report) => reports.push(report),
       macSecretsPath,
     });
     assert.equal(await push.push("edit"), false);
+    assert.equal(reports[0]?.errorClass, "box_unreachable");
     const mirrored = JSON.parse(await readFile(macSecretsPath, "utf8"));
     assert.deepEqual(mirrored, { version: 1, secrets: { OPENROUTER_API_KEY: "or-live-key" } });
   } finally {

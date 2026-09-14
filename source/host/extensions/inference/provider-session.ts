@@ -257,10 +257,12 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void) { super(new BasePromptBuilder(initialMessages)); }
-  stream(_ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
-    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
+  stream(_ctx: unknown, invocationId = crypto.randomUUID(), _definitions?: readonly Loose[]) {
+    // Host-owned sessions are text-only. Claude CLI, Codex auth, and MCP tools
+    // live on the Mac coordinator; advertising tools here with no executor is a lie.
+    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
-    return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage);
+    return openRouterExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
   }
 }
 
