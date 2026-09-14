@@ -362,6 +362,32 @@ test("orphaned box-exec-daemon port is reaped; foreign owners are refused", asyn
   }
 });
 
+test("local mcp-servers.json parses the standard mcpServers shape", async () => {
+  const loaded = await loadModule("source/shared/node/mcp/local-mcp-servers.ts");
+  try {
+    const { parseLocalMcpServersConfig } = loaded.module;
+    const wrapped = parseLocalMcpServersConfig(JSON.stringify({
+      mcpServers: {
+        demo: { command: "node", args: ["server.cjs"], env: { KEY: "value" } },
+        remote: { url: "https://example.com/mcp" },
+        broken: { neither: true },
+        "": { command: "x" },
+      },
+    }));
+    assert.deepEqual(Object.keys(wrapped.mcpServers), ["demo", "remote"]);
+    assert.deepEqual(wrapped.mcpServers.demo, { command: "node", args: ["server.cjs"], env: { KEY: "value" } });
+
+    const flat = parseLocalMcpServersConfig(JSON.stringify({ echo: { command: "/usr/local/bin/echo-mcp" } }));
+    assert.deepEqual(flat.mcpServers, { echo: { command: "/usr/local/bin/echo-mcp" } });
+
+    assert.throws(() => parseLocalMcpServersConfig("{not json"), /not valid JSON/);
+    assert.throws(() => parseLocalMcpServersConfig("[1,2]"), /must contain an object/);
+  } finally {
+    await loaded.dispose();
+  }
+});
+
+
 
 
 

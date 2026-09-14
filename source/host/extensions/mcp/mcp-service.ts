@@ -19,6 +19,9 @@ import {
   createMcpToolsDiscovery,
   SandMcpExecutor,
 } from "../../../shared/node/mcp/tools-discovery.js";
+import { readLocalMcpServersConfig } from "../../../shared/node/mcp/local-mcp-servers.js";
+import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
+import { getSandRootDir } from "../../host-paths.js";
 import {
   isEffectivePluginInstalled,
   uninstallClearedInstallRecord,
@@ -90,11 +93,19 @@ interface McpManagerRuntime {
 }
 export function createHostMcp(deps: CreateHostMcpOptions): McpHostPort {
   const log = deps.log ?? ((message: string) => console.log(`[sand:mcp] ${message}`));
+  // Local admin has no dashboard to define MCP servers, so definitions come
+  // from mcp-servers.json in the sand root — plugins without OAuth.
+  const accountConfigProvider = isLocalAdminEnabled()
+    ? async (): Promise<unknown> => await readLocalMcpServersConfig(getSandRootDir())
+    : deps.accountConfigProvider;
+  // Without a dashboard there is no display source; nulling this makes the
+  // manager fall back to the runtime definitions as server rows.
+  const accountServersProvider = isLocalAdminEnabled() ? undefined : deps.accountServersProvider;
   const manager = new SandMcpManager({
     includeBuiltins: false,
-    accountConfigProvider: deps.accountConfigProvider,
+    accountConfigProvider,
     accountDisplayConfigProvider: deps.accountDisplayConfigProvider,
-    accountServersProvider: deps.accountServersProvider,
+    accountServersProvider,
     accountMcpWriter: deps.accountMcpWriter,
     backendMcpExec: deps.backendMcpExec,
     settingsStore: deps.settingsStore,

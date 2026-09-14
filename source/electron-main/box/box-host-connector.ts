@@ -116,6 +116,10 @@ export class BrokeredHostConnector {
     return { status: "rejected" as const, reason: `Couldn't reset the computer${result.reason.length > 0 ? ` (${result.reason})` : ""}. It is unchanged.` };
   }
   async issueLocalExecDaemonCredential(): Promise<{ credential: string; backendUrl: string; expiresAtMs?: number } | undefined> {
+    // Local admin has no Cursor identity to mint daemon credentials with; the
+    // local exec daemon serves over the local gateway without one. Asking the
+    // official backend just spams failed RPCs.
+    if (isLocalAdminEnabled()) return undefined;
     const backendUrl = getSandInferenceBackendUrl();
     let accessToken: string;
     try { accessToken = await this.deps.getAccessToken({ backendUrl }); } catch { return undefined; }
@@ -130,6 +134,7 @@ export class BrokeredHostConnector {
     return { credential, backendUrl, ...(typeof expiresAtMs === "number" ? { expiresAtMs } : {}) };
   }
   async issueInferenceCredential(): Promise<{ accessToken: string; backendUrl: string; expiresAtMs: number } | undefined> {
+    if (isLocalAdminEnabled()) return undefined;
     const backendUrl = getSandInferenceBackendUrl();
     try {
       const accessToken = await this.deps.getAccessToken({ backendUrl });
