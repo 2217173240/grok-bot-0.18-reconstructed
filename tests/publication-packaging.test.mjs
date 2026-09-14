@@ -96,7 +96,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /mcpServers: \{ grok_bot_plugins:/);
   assert.match(providers, /recordRoutedUsage\(provider, usage\)/);
   assert.match(providers, /queryClaude/);
-  assert.match(providers, /tools: mcpServerUrl == null \? \[\] : \["mcp__grok_bot_plugins__\*"\]/);
+  // Routed Claude Code turns must carry real, audited local tools — never the
+  // stock empty tool list that made the model fabricate command output.
+  assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
+  assert.match(providers, /canUseTool: async \(toolName, input\)/);
+  assert.match(providers, /claudeToolPermission\(toolName\)/);
+  assert.match(providers, /maxTurns: 8/);
+  assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
+  assert.match(providers, /Never simulate, guess, or invent command output/);
+  assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
   assert.match(providers, /OpenRouter needs OPENROUTER_API_KEY/);
   assert.match(cursorSession, /routedProvider !== "cursor"/);

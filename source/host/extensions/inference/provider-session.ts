@@ -2,7 +2,7 @@ import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { query as queryClaude, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
 import { jsonSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
 
@@ -10,6 +10,8 @@ import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-in
 import { routedProviderToolSteps, type SandInferenceProvider } from "../../../shared/inference-router.js";
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
+import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
+import { appendLocalIntercept } from "../../../shared/node/local-admin-intercept.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
@@ -45,12 +47,12 @@ function openRouterCredential(): string {
   return value;
 }
 
-function providerPrompt(messages: readonly ProviderMessage[]): string {
+function providerPrompt(messages: readonly ProviderMessage[], extraGuidance?: string): string {
   const rendered = messages.map(message => {
     const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
     return `${message.role.toUpperCase()}: ${content}`;
   }).join("\n\n");
-  return `${GROK_ROUTER_SYSTEM_PROMPT}\n\nContinue this Grok Bot conversation.\n\n${rendered}`;
+  return `${GROK_ROUTER_SYSTEM_PROMPT}${extraGuidance == null || extraGuidance.length === 0 ? "" : `\n\n${extraGuidance}`}\n\nContinue this Grok Bot conversation.\n\n${rendered}`;
 }
 
 function deferred<T>() { return Promise.withResolvers<T>(); }
@@ -201,6 +203,58 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
+// --- Local tool execution for routed Claude Code turns ---------------------
+// The stock options (tools: [], maxTurns: 1, no permission callback) left the
+// model with zero real tools, which it papered over by fabricating command
+// output. These paths give it real, audited tools on this machine instead.
+
+const CLAUDE_LOCAL_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"] as const;
+const CLAUDE_READ_ONLY_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch"]);
+
+export function resolveAgentWorkspace(): string {
+  const override = process.env.SAND_AGENT_WORKSPACE?.trim();
+  if (override != null && override.length > 0) return override;
+  const root = getSandRootDir();
+  // The host child runs with SAND_DATA_ROOT=<root>/box-data; the Mac
+  // coordinator runs with <root>. Accept either layout, prefer the shared
+  // box workspace so tool artifacts land where the computer's files live.
+  for (const candidate of [join(root, "box-data", "box-workspace"), join(root, "box-workspace")]) {
+    try { if (lstatSync(candidate).isDirectory()) return candidate; } catch {}
+  }
+  return root;
+}
+
+export function claudeToolPermission(toolName: string): PermissionResult {
+  if (isLocalAdminEnabled()) return { behavior: "allow", updatedInput: {} };
+  if (CLAUDE_READ_ONLY_TOOLS.has(toolName)) return { behavior: "allow", updatedInput: {} };
+  appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
+  return {
+    behavior: "deny",
+    message: "Grok Bot local tools are read-only outside local admin mode. Start the app with SAND_LOCAL_ADMIN=1 to allow file and command tools on this machine.",
+  };
+}
+
+function recordClaudeToolTraffic(message: SDKMessage): void {
+  const blocks = (message as { type: string; message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(blocks)) return;
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    const record = block as { type?: string; name?: string; input?: unknown; content?: unknown; is_error?: boolean };
+    if (record.type === "tool_use") {
+      appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "request", tool: record.name ?? "unknown", input: JSON.stringify(record.input ?? {}).slice(0, 400) });
+    } else if (record.type === "tool_result") {
+      const body = typeof record.content === "string" ? record.content : JSON.stringify(record.content ?? "");
+      appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "result", tool: "result", output: body.slice(0, 400), isError: record.is_error === true });
+    }
+  }
+}
+
+const CLAUDE_LOCAL_TOOLS_PROMPT = [
+  "You have real local tools (Bash, file read/write/edit, search) for this machine's workspace — your current working directory.",
+  "When asked to run a command, inspect files, or check this machine, actually call the tools and report their real output.",
+  "Never simulate, guess, or invent command output or file contents. If a tool call is denied or fails, say so plainly and show the real error.",
+].join("\n");
+
 function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
   const executable = resolveClaudeCodeCliPath();
   if (executable == null) throw new Error("Claude Code is not installed. Install and sign in to Claude Code, then reopen Grok Bot.");
@@ -212,7 +266,24 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     try {
       let final: SDKResultMessage | undefined;
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
-      for await (const message of queryClaude({ prompt: providerPrompt(messages), options: { pathToClaudeCodeExecutable: executable, cwd: getSandRootDir(), tools: mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"], ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }), permissionMode: "default", maxTurns: mcpServerUrl == null ? 1 : 8, persistSession: false, ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }) } })) if (message.type === "result") final = message;
+      for await (const message of queryClaude({ prompt: providerPrompt(messages, CLAUDE_LOCAL_TOOLS_PROMPT), options: {
+        pathToClaudeCodeExecutable: executable,
+        cwd: resolveAgentWorkspace(),
+        tools: [...CLAUDE_LOCAL_TOOLS, ...(mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"])],
+        ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }),
+        permissionMode: "default",
+        canUseTool: async (toolName, input) => {
+          const decision = claudeToolPermission(toolName);
+          if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: JSON.stringify(input ?? {}).slice(0, 200) });
+          return decision;
+        },
+        maxTurns: 8,
+        persistSession: false,
+        ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
+      } })) {
+        if (message.type === "result") { final = message; continue; }
+        recordClaudeToolTraffic(message);
+      }
       if (final == null) throw new Error("Claude Code ended without a result.");
       if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `Claude Code failed (${final.subtype}).`);
       const text = final.result;

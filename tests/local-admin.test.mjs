@@ -270,4 +270,67 @@ test("local admin never queries the Cursor privacy mode backend", async () => {
   }
 });
 
+test("claude tool permission allows everything in local admin and read-only outside", async () => {
+  const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-tool-policy-"));
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  process.env.SAND_DATA_ROOT = root;
+  try {
+    process.env.SAND_LOCAL_ADMIN = "1";
+    const allowed = loaded.module.claudeToolPermission("Bash");
+    assert.equal(allowed.behavior, "allow");
+    const readAllowed = loaded.module.claudeToolPermission("Read");
+    assert.equal(readAllowed.behavior, "allow");
+
+    delete process.env.SAND_LOCAL_ADMIN;
+    const readStill = loaded.module.claudeToolPermission("Read");
+    assert.equal(readStill.behavior, "allow");
+    const bashDenied = loaded.module.claudeToolPermission("Bash");
+    assert.equal(bashDenied.behavior, "deny");
+    assert.match(bashDenied.message, /SAND_LOCAL_ADMIN=1/);
+    const writeDenied = loaded.module.claudeToolPermission("Write");
+    assert.equal(writeDenied.behavior, "deny");
+
+    const interceptLog = path.join(root, "local-intercept.jsonl");
+    const log = await readFile(interceptLog, "utf8");
+    assert.match(log, /permission-denied/);
+    assert.match(log, /"tool":"Bash"/);
+  } finally {
+    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent workspace prefers the shared box workspace over the data root", async () => {
+  const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-workspace-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  const previousWorkspace = process.env.SAND_AGENT_WORKSPACE;
+  try {
+    process.env.SAND_DATA_ROOT = root;
+    delete process.env.SAND_AGENT_WORKSPACE;
+    assert.equal(loaded.module.resolveAgentWorkspace(), root, "falls back to the data root when no workspace exists");
+
+    const workspace = path.join(root, "box-data", "box-workspace");
+    await mkdir(workspace, { recursive: true });
+    assert.equal(loaded.module.resolveAgentWorkspace(), workspace, "prefers box-data/box-workspace");
+
+    process.env.SAND_AGENT_WORKSPACE = path.join(root, "override");
+    assert.equal(loaded.module.resolveAgentWorkspace(), path.join(root, "override"), "honours the env override");
+  } finally {
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    if (previousWorkspace == null) delete process.env.SAND_AGENT_WORKSPACE;
+    else process.env.SAND_AGENT_WORKSPACE = previousWorkspace;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
 
