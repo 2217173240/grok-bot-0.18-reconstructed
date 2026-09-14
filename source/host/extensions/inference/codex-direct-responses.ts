@@ -16,6 +16,7 @@ export type CodexDirectTool = {
 
 export type CodexDirectEvent =
   | { readonly type: "text-delta"; readonly delta: string }
+  | { readonly type: "tool-call"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
   | { readonly type: "done"; readonly text: string; readonly responseId: string; readonly usage: CodexDirectUsage };
 
 export type CodexDirectOptions = {
@@ -159,7 +160,21 @@ export async function* streamCodexDirectResponses(options: CodexDirectOptions): 
       yield { type: "done", text, responseId, usage };
       return;
     }
-    if (options.executeTool == null) throw new Error("Codex requested a tool but Grok Bot did not provide an executor.");
+    if (options.executeTool == null) {
+      // Host-owned turn: advertise tools, emit one step of native tool-call
+      // chunks, and let SimplePromptToolExecutor run them. Do not fail closed
+      // here — that path never produces an assistant message the host can settle.
+      for (const call of calls) {
+        let args: unknown = {};
+        if (typeof call.arguments === "string" && call.arguments.length > 0) {
+          try { args = JSON.parse(call.arguments); }
+          catch { args = call.arguments; }
+        }
+        yield { type: "tool-call", toolCallId: call.call_id, toolName: call.name, args };
+      }
+      yield { type: "done", text, responseId, usage };
+      return;
+    }
 
     const results: Loose[] = [];
     for (const call of calls) {

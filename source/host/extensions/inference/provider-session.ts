@@ -7,7 +7,8 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { jsonSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
-import type { SandInferenceProvider } from "../../../shared/inference-router.js";
+import { routedProviderToolSteps, type SandInferenceProvider } from "../../../shared/inference-router.js";
+import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
@@ -34,11 +35,7 @@ function recordRoutedUsage(provider: RoutedProvider, usage: UsageRecord): void {
 
 function persistedSecrets(): Record<string, string> {
   try {
-    const parsed = JSON.parse(readFileSync(getBoxSecretsStorePath(), "utf8")) as unknown;
-    if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed)) return {};
-    const secrets = (parsed as { secrets?: unknown }).secrets;
-    if (typeof secrets !== "object" || secrets == null || Array.isArray(secrets)) return {};
-    return Object.fromEntries(Object.entries(secrets).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    return parseBoxSecretsSnapshot(JSON.parse(readFileSync(getBoxSecretsStorePath(), "utf8")) as unknown) ?? {};
   } catch { return {}; }
 }
 
@@ -184,9 +181,13 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         input: messages.map(message => ({ role: message.role === "assistant" ? "assistant" : "user", content: typeof message.content === "string" ? message.content : JSON.stringify(message.content) })),
         ...(tools == null ? {} : { tools }),
         ...(executeTool == null ? {} : { executeTool: async (selected, args, toolCallId) => await executeTool(selected.source, args, toolCallId) }),
-        maxSteps: tools == null ? 1 : 8,
+        maxSteps: tools == null ? 1 : routedProviderToolSteps(executeTool != null),
       })) {
         if (event.type === "text-delta") { text += event.delta; yield { type: "text-delta" as const, textDelta: event.delta }; continue; }
+        if (event.type === "tool-call") {
+          yield { type: "tool-call" as const, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args };
+          continue;
+        }
         const basic = { promptTokens: event.usage.inputTokens, completionTokens: event.usage.outputTokens, totalTokens: event.usage.inputTokens + event.usage.outputTokens };
         const extended = { ...event.usage, maxTokens: 0 };
         onUsage?.(event.usage);
@@ -248,7 +249,7 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
   const id = process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   const model: LanguageModelV1 = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", compatibility: "compatible", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id as any);
   const tools = toToolSet(definitions, executeTool);
-  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: tools === undefined ? 1 : 8 });
+  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: tools === undefined ? 1 : routedProviderToolSteps(executeTool != null) });
   const extendedUsage = result.usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
   if (onUsage != null) void extendedUsage.then(onUsage);
   return { fullStream: result.fullStream, response: result.response, usage: result.usage, extendedUsage, providerMetadata: result.providerMetadata, invocationId: Promise.resolve(invocationId) };
