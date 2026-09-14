@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -6,6 +6,7 @@ import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 
 const LOCAL_ADMIN_GATEWAY_URL = "http://127.0.0.1:1340";
+const BOX_EXEC_DAEMON_PORT = 1337;
 
 const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_INTERVAL_MS = 300;
@@ -35,6 +36,56 @@ export function resolveLocalAdminHostDeps(): LocalAdminHostDeps {
 
 interface HostExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
 
+// A SIGKILLed host leaves its box-exec-daemon orphaned on 1337; the next host
+// then refuses to start ("port already bound") and the connector breaker opens.
+// Before spawning, free the port: reap our own orphan, refuse foreign owners.
+export interface ExecDaemonHealDeps {
+  readonly listPortOwner?: (port: number) => Promise<number | undefined>;
+  readonly readCommand?: (pid: number) => Promise<string | undefined>;
+  readonly terminate?: (pid: number) => Promise<void>;
+}
+
+function defaultListPortOwner(port: number): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    execFile("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { timeout: 3_000 }, (error, stdout) => {
+      if (error) return resolve(undefined);
+      const pid = Number.parseInt(stdout.trim().split("\n")[0] ?? "", 10);
+      resolve(Number.isInteger(pid) && pid > 0 ? pid : undefined);
+    });
+  });
+}
+
+function defaultReadCommand(pid: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile("ps", ["-p", String(pid), "-o", "command="], { timeout: 3_000 }, (error, stdout) => {
+      resolve(error ? undefined : stdout.trim().length > 0 ? stdout.trim() : undefined);
+    });
+  });
+}
+
+async function defaultTerminate(pid: number): Promise<void> {
+  process.kill(pid, "SIGTERM");
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try { process.kill(pid, 0); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  try { process.kill(pid, "SIGKILL"); } catch {}
+}
+
+export async function healOrphanedBoxExecDaemon(port: number = BOX_EXEC_DAEMON_PORT, deps: ExecDaemonHealDeps = {}): Promise<"free" | "reaped-orphan"> {
+  const listPortOwner = deps.listPortOwner ?? defaultListPortOwner;
+  const readCommand = deps.readCommand ?? defaultReadCommand;
+  const terminate = deps.terminate ?? defaultTerminate;
+  const owner = await listPortOwner(port);
+  if (owner == null) return "free";
+  const command = await readCommand(owner);
+  if (command == null || !command.includes("box-exec-daemon")) {
+    throw new Error(`Port ${port} is held by pid ${owner} which is not a Grok Bot box-exec-daemon (${command ?? "unknown command"}). Free the port before starting the local computer.`);
+  }
+  await terminate(owner);
+  return "reaped-orphan";
+}
+
 export async function ensureLocalAdminHost(options: {
   readonly settingsPath: string;
   readonly hostMainPath: string;
@@ -53,6 +104,8 @@ export async function ensureLocalAdminHost(options: {
     appendLocalIntercept({ kind: "local-host", event: "already-ready", logPath }, env);
     return { baseUrl: LOCAL_ADMIN_GATEWAY_URL, token: options.token };
   }
+  const healed = await healOrphanedBoxExecDaemon();
+  if (healed === "reaped-orphan") appendLocalIntercept({ kind: "local-host", event: "reaped-orphan-daemon", port: BOX_EXEC_DAEMON_PORT }, env);
   stopLocalAdminHost();
   logStream = createWriteStream(logPath, { flags: "a" });
   let outputTail = "";

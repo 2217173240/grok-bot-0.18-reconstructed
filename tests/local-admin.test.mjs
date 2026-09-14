@@ -332,5 +332,36 @@ test("agent workspace prefers the shared box workspace over the data root", asyn
   }
 });
 
+test("orphaned box-exec-daemon port is reaped; foreign owners are refused", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-admin-host.ts");
+  const terminated = [];
+  const deps = (command) => ({
+    listPortOwner: async () => 4242,
+    readCommand: async () => command,
+    terminate: async (pid) => { terminated.push(pid); },
+  });
+  try {
+    const freed = await loaded.module.healOrphanedBoxExecDaemon(1337, {
+      listPortOwner: async () => undefined,
+      readCommand: async () => { throw new Error("must not read"); },
+      terminate: async () => { throw new Error("must not terminate"); },
+    });
+    assert.equal(freed, "free");
+
+    const reaped = await loaded.module.healOrphanedBoxExecDaemon(1337, deps("/Applications/Grok Bot.app/.../box-exec-daemon/main.cjs"));
+    assert.equal(reaped, "reaped-orphan");
+    assert.deepEqual(terminated, [4242]);
+
+    await assert.rejects(
+      () => loaded.module.healOrphanedBoxExecDaemon(1337, deps("/usr/local/bin/nginx -p 80")),
+      /not a Grok Bot box-exec-daemon/,
+    );
+    assert.equal(terminated.length, 1, "foreign owner is never terminated");
+  } finally {
+    await loaded.dispose();
+  }
+});
+
+
 
 
