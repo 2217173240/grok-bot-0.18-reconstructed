@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
@@ -8,6 +8,11 @@ import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 const LOCAL_ADMIN_GATEWAY_URL = "http://127.0.0.1:1340";
 
 const READY_TIMEOUT_MS = 30_000;
+const READY_POLL_INTERVAL_MS = 300;
+const OUTPUT_TAIL_LIMIT_BYTES = 8_192;
+// Loopback port 9 refuses instantly: every stock-host call aimed at the Cursor
+// backend fails closed without DNS, egress, or a 3s timeout.
+const INERT_BACKEND_URL = "http://127.0.0.1:9";
 
 let child: ChildProcess | undefined;
 let logStream: ReturnType<typeof createWriteStream> | undefined;
@@ -16,6 +21,20 @@ export function localAdminHostLogPath(settingsPath: string): string {
   return join(dirname(settingsPath), "box-logs", "sand-host.log");
 }
 
+export interface LocalAdminHostDeps { readonly nodePath?: string; readonly treeSitterDeps?: string }
+
+export function resolveLocalAdminHostDeps(): LocalAdminHostDeps {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath !== "string" || resourcesPath.length === 0) return {};
+  const distRoot = join(resourcesPath, "app.asar.unpacked", "dist");
+  const deps = join(distRoot, "deps");
+  const nodeDeps = join(distRoot, "node-deps");
+  if (!existsSync(join(deps, "tree-sitter")) || !existsSync(nodeDeps)) return {};
+  return { nodePath: `${deps}:${nodeDeps}`, treeSitterDeps: deps };
+}
+
+interface HostExit { readonly code: number | null; readonly signal: NodeJS.Signals | null }
+
 export async function ensureLocalAdminHost(options: {
   readonly settingsPath: string;
   readonly hostMainPath: string;
@@ -23,9 +42,11 @@ export async function ensureLocalAdminHost(options: {
   readonly execPath?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly fetchImpl?: typeof fetch;
+  readonly deps?: LocalAdminHostDeps;
 }): Promise<GatewayConnection> {
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const deps = options.deps ?? resolveLocalAdminHostDeps();
   const logPath = localAdminHostLogPath(options.settingsPath);
   await mkdir(dirname(logPath), { recursive: true });
   if (await gatewayReady(options.token, fetchImpl)) {
@@ -34,6 +55,12 @@ export async function ensureLocalAdminHost(options: {
   }
   stopLocalAdminHost();
   logStream = createWriteStream(logPath, { flags: "a" });
+  let outputTail = "";
+  const capture = (chunk: Buffer): void => {
+    logStream?.write(chunk);
+    outputTail = (outputTail + String(chunk)).slice(-OUTPUT_TAIL_LIMIT_BYTES);
+  };
+  let exit: HostExit | undefined;
   const childEnv: NodeJS.ProcessEnv = {
     ...env,
     ELECTRON_RUN_AS_NODE: "1",
@@ -44,23 +71,26 @@ export async function ensureLocalAdminHost(options: {
     SAND_GATEWAY_TOKEN: options.token,
     SAND_GATEWAY_REQUIRE_AUTH: "1",
     SAND_DATA_ROOT: join(dirname(options.settingsPath), "box-data"),
+    ...(env.SAND_BACKEND_URL == null || env.SAND_BACKEND_URL.trim() === "" ? { SAND_BACKEND_URL: INERT_BACKEND_URL } : {}),
+    ...(deps.nodePath == null ? {} : { NODE_PATH: deps.nodePath }),
+    ...(deps.treeSitterDeps == null ? {} : { SAND_TREE_SITTER_NODE_DEPS: deps.treeSitterDeps }),
   };
   const execPath = options.execPath ?? process.execPath;
   child = spawn(execPath, [options.hostMainPath], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout?.on("data", (chunk) => logStream?.write(chunk));
-  child.stderr?.on("data", (chunk) => logStream?.write(chunk));
+  child.stdout?.on("data", capture);
+  child.stderr?.on("data", capture);
   child.once("exit", (code, signal) => {
-    appendLocalIntercept({ kind: "local-host", event: "exit", code, signal, logPath }, env);
-    if (child?.exitCode != null) child = undefined;
+    exit = { code, signal };
+    appendLocalIntercept({ kind: "local-host", event: "exit", code, signal, outputTail, logPath }, env);
   });
   appendLocalIntercept({ kind: "local-host", event: "spawn", pid: child.pid, hostMainPath: options.hostMainPath, logPath }, env);
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await gatewayReady(options.token, fetchImpl)) return { baseUrl: LOCAL_ADMIN_GATEWAY_URL, token: options.token };
-    if (child.exitCode != null) throw new Error(`Local admin host exited before the gateway was ready (code ${child.exitCode}). See ${logPath}`);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (exit != null) throw new Error(`Local admin host exited before the gateway was ready (code ${exit.code}${exit.signal == null ? "" : `, signal ${exit.signal}`}). Last output:\n${outputTail.trim()}\nFull log: ${logPath}`);
+    await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
   }
-  throw new Error(`Local admin host did not expose ${LOCAL_ADMIN_GATEWAY_URL} within 30s. See ${logPath}`);
+  throw new Error(`Local admin host did not expose ${LOCAL_ADMIN_GATEWAY_URL} within 30s. Last output:\n${outputTail.trim()}\nFull log: ${logPath}`);
 }
 
 export function stopLocalAdminHost(): void {

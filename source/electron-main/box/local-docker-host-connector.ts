@@ -19,6 +19,15 @@ export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
 export const LOCAL_DOCKER_SCHEMA_VERSION = "6";
+// v2 stages host-main.cjs under sand-host/ because the stock host resolves its
+// box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
+// sibling layout. v1 (flat) directories are never reused.
+export const LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "2";
+// A local host that exits is a deterministic failure (layout, deps, port);
+// identical automatic respawns are mechanical retries. Three strikes open a
+// 60s breaker; the user-driven recreate paths reset it.
+const LOCAL_HOST_AUTO_FAILURE_LIMIT = 3;
+const LOCAL_HOST_BREAKER_OPEN_MS = 60_000;
 const READY_TIMEOUT_MS = 180_000;
 const OPTIONAL_CREDENTIAL_TIMEOUT_MS = 3_000;
 
@@ -158,7 +167,7 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   const boxExecDaemonBytes = await readRuntime("box-exec-daemon/main.cjs");
   const sha256 = createHash("sha256").update(hostBytes).digest("hex");
   const boxExecDaemonSha256 = createHash("sha256").update(boxExecDaemonBytes).digest("hex");
-  const directory = join(dirname(settingsPath), "local-docker-runtime", `${sha256}-${boxExecDaemonSha256}`);
+  const directory = join(dirname(settingsPath), "local-docker-runtime", `v${LOCAL_HOST_RUNTIME_LAYOUT_VERSION}-${sha256}-${boxExecDaemonSha256}`);
   const persistRuntime = async (name: string, bytes: Buffer): Promise<string> => {
     const target = join(directory, name);
     await mkdir(dirname(target), { recursive: true });
@@ -175,7 +184,7 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   };
   await mkdir(directory, { recursive: true });
   return {
-    path: await persistRuntime("host-main.cjs", hostBytes),
+    path: await persistRuntime("sand-host/host-main.cjs", hostBytes),
     sha256,
     boxExecDaemonPath: await persistRuntime("box-exec-daemon/main.cjs", boxExecDaemonBytes),
     boxExecDaemonSha256,
@@ -259,15 +268,35 @@ export function createSettingsRoutedHostConnector(
   remote: SandRemoteHostConnector,
   settings: SandSettingsStore,
 ): SandRemoteHostConnector {
+  let localHostConsecutiveFailures = 0;
+  let localHostLastFailure = "unknown";
+  let localHostBreakerOpenUntilMs = 0;
+  const resetLocalHostBreaker = (): void => {
+    localHostConsecutiveFailures = 0;
+    localHostBreakerOpenUntilMs = 0;
+  };
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
       if (isLocalAdminEnabled()) {
-        const token = await readOrCreateToken(settings.settingsPath);
-        const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
+        if (Date.now() < localHostBreakerOpenUntilMs) {
+          const message = `Local admin host circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
+          appendLocalIntercept({ kind: "local-host", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
+          throw new Error(message);
+        }
         try {
-          return await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+          const token = await readOrCreateToken(settings.settingsPath);
+          const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
+          const connection = await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+          resetLocalHostBreaker();
+          return connection;
         } catch (error) {
-          appendLocalIntercept({ kind: "local-host", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
+          localHostLastFailure = error instanceof Error ? error.message : String(error);
+          localHostConsecutiveFailures += 1;
+          if (localHostConsecutiveFailures >= LOCAL_HOST_AUTO_FAILURE_LIMIT) {
+            localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
+            appendLocalIntercept({ kind: "local-host", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
+          }
+          appendLocalIntercept({ kind: "local-host", event: "connect-failed", error: localHostLastFailure });
           throw error;
         }
       }
@@ -291,6 +320,7 @@ export function createSettingsRoutedHostConnector(
     recreate: async (args): Promise<RecreateResult> => {
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
+        resetLocalHostBreaker();
         await localConnect();
         return { status: "started-untrackable" };
       }
@@ -306,6 +336,7 @@ export function createSettingsRoutedHostConnector(
     forceRecreate: async (): Promise<RecreateResult> => {
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
+        resetLocalHostBreaker();
         await localConnect();
         return { status: "started-untrackable" };
       }

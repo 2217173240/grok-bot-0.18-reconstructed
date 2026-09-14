@@ -20,6 +20,7 @@ import type { SandWindowPlacement, WindowStatePersistenceWindow } from "./window
 import { createElectronMainProductionComposition, type ElectronMainProductionBindings } from "./main-production-services.js";
 import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
 import { installLocalAdminNetworkIntercept } from "../shared/node/local-admin-intercept.js";
+import { stopLocalAdminHost } from "./box/local-admin-host.js";
 
 export interface PreventableEvent {
   preventDefault(): void;
@@ -438,6 +439,7 @@ export function startElectronMain(deps: ElectronMainDependencies): ElectronMainR
       return;
     }
     void services?.dispose?.();
+    stopLocalAdminHost();
     mainWindow = undefined;
   });
 
