@@ -5,6 +5,7 @@ import { delay } from "../../shared/node/async.js";
 import { parseJwtPayload } from "../../shared/node/cursor-token.js";
 import { findSystemErrno } from "../../shared/system-errno.js";
 import { reportDesktopEdgeFailure } from "../desktop-edge-failures.js";
+import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { captureSandSentryWarning } from "../telemetry/sentry.js";
 
 export const SECRETS_FILENAME = "sand-secrets.json";
@@ -113,6 +114,7 @@ function ensureLinuxBasicTextOptIn(): void {
 }
 
 function isOsEncryptionAvailable(): boolean {
+  if (isLocalAdminEnabled()) return false;
   if (isSecureStorageSimulatedUnavailable()) return false;
   ensureLinuxBasicTextOptIn();
   return electronSecretStorageRuntime().safeStorage.isEncryptionAvailable();
@@ -291,6 +293,7 @@ export async function waitForEncryptedStorage(
   isAvailable: () => boolean = isEncryptedStorageAvailable,
   options: { readonly timeoutMs?: number; readonly intervalMs?: number } = {},
 ): Promise<boolean> {
+  if (isLocalAdminEnabled()) return false;
   if (isAvailable()) return true;
   const timeoutMs = options.timeoutMs ?? SECURE_STORAGE_READY_TIMEOUT_MS;
   const intervalMs = options.intervalMs ?? SECURE_STORAGE_POLL_INTERVAL_MS;

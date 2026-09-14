@@ -18,6 +18,7 @@ import {
 } from "./window-chrome.js";
 import type { SandWindowPlacement, WindowStatePersistenceWindow } from "./window-state-persistence.js";
 import { createElectronMainProductionComposition, type ElectronMainProductionBindings } from "./main-production-services.js";
+import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
 
 export interface PreventableEvent {
   preventDefault(): void;
@@ -82,7 +83,7 @@ export interface MainBrowserWindow extends WindowStatePersistenceWindow {
 export interface ElectronMainApp {
   readonly isPackaged: boolean;
   disableHardwareAcceleration(): void;
-  readonly commandLine: { readonly appendSwitch: (name: string) => void };
+  readonly commandLine: { readonly appendSwitch: (name: string, value?: string) => void };
   requestSingleInstanceLock(): boolean;
   quit(): void;
   isReady(): boolean;
@@ -244,6 +245,11 @@ export function startElectronMain(deps: ElectronMainDependencies): ElectronMainR
   deps.app.disableHardwareAcceleration();
   deps.app.commandLine.appendSwitch("no-sandbox");
   deps.app.commandLine.appendSwitch("disable-gpu");
+  if (isLocalAdminEnabled(env)) {
+    // One Chromium safe-storage backend. Keychain ACL prompts per secret are a lie of many parts.
+    deps.app.commandLine.appendSwitch("password-store", "basic");
+    deps.app.commandLine.appendSwitch("use-mock-keychain");
+  }
 
   const isPrimaryInstance = !deps.app.isPackaged || deps.app.requestSingleInstanceLock();
   if (!isPrimaryInstance) deps.app.quit();
