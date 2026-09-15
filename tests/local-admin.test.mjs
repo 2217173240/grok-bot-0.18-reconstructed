@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,8 @@ import { build } from "esbuild";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function loadModule(entry) {
+  // .cache is gitignored; it exists on dev machines but not on a fresh CI checkout.
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
   const temporary = await mkdtemp(path.join(repoRoot, ".cache", "local-admin-"));
   const output = path.join(temporary, `${path.basename(entry, ".ts")}.mjs`);
   await build({
@@ -98,7 +101,7 @@ test("local admin forbids production Cursor RPC and remote box", async () => {
     await admin.dispose();
     await settingsLoaded.dispose();
     await broker.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -123,7 +126,7 @@ test("local admin intercept blocks Cursor production fetches and records them", 
     if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
     else process.env.SAND_DATA_ROOT = previousRoot;
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -134,11 +137,14 @@ test("docker CLI uses an existing Colima socket when DOCKER_HOST is unset", asyn
     const socket = path.join(home, ".colima", "finonelib", "docker.sock");
     await mkdir(path.dirname(socket), { recursive: true });
     await writeFile(socket, "");
+    // CI runners ship /var/run/docker.sock; the default socket wins by
+    // precedence and Colima discovery is the fallback.
     const resolved = loaded.module.resolveDockerHost({}, home);
-    assert.equal(resolved, `unix://${socket}`);
+    if (existsSync("/var/run/docker.sock")) assert.equal(resolved, "unix:///var/run/docker.sock");
+    else assert.equal(resolved, `unix://${socket}`);
     const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///tmp/explicit.sock" }, home);
     assert.equal(explicit, "unix:///tmp/explicit.sock");
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   } finally {
     await loaded.dispose();
   }
@@ -181,7 +187,7 @@ test("local admin host failure carries the child exit code and output tail", asy
     );
   } finally {
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -221,7 +227,7 @@ test("local admin host resolves when the gateway answers and passes deps + inert
   } finally {
     loaded?.module?.stopLocalAdminHost?.();
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -249,7 +255,7 @@ test("local host connector opens a breaker after repeated failures and resets on
     else process.env.SAND_LOCAL_ADMIN = previous;
     await connectorLoaded.dispose();
     await settingsLoaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -302,7 +308,7 @@ test("claude tool permission allows everything in local admin and read-only outs
     if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
     else process.env.SAND_DATA_ROOT = previousRoot;
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -328,7 +334,7 @@ test("agent workspace prefers the shared box workspace over the data root", asyn
     if (previousWorkspace == null) delete process.env.SAND_AGENT_WORKSPACE;
     else process.env.SAND_AGENT_WORKSPACE = previousWorkspace;
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -419,7 +425,7 @@ test("local admin swaps MCP provider sources; the file writer round-trips config
     if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
     else process.env.SAND_DATA_ROOT = previousRoot;
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -495,7 +501,7 @@ test("intercept ledger samples heartbeats and rotates when it outgrows the cap",
     if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
     else process.env.SAND_DATA_ROOT = previousRoot;
     await loaded.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
