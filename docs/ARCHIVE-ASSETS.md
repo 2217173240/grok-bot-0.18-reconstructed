@@ -74,3 +74,35 @@
 | 浏览器启动 | 必须 box-chrome 启动器，class=box-chrome | 系统提示明令 + `box-chrome --sand-prepare` 预热 |
 
 完整对齐表、时间线与逐项分析：`/Users/xinheyun/Desktop/grok-compare/分析-Archive-vs-bot-0.18.md`。
+
+## 6. 必要优化清单（最终版，按必要度排序；已按 PR #4 后状态校准）
+
+前提判断：Archive 有 Linux+桌面+浏览器控制、无 exec；本仓库有 exec（daemon）和自包含的浏览器 driver（`driver-v2.mjs` 上传后经 Shell 工具跑，不依赖常驻服务）；但本地**默认**模式 exec 落在 macOS 本机。"Linux 里面"的价值 = 隔离 + 真 Linux 语义 + 试验场（编译/工具链），目前只有 docker 分支具备——这与 0.18 序列里分量最重的"由假转真"（`77c8a9d` 真实本地工具）是同一条价值线：exec 层就是主体。
+
+**P0 —— 不做则"Linux 试验场"落不了地**
+
+1. **把容器变成默认执行目标**。当前默认 local-admin 模式 host+daemon 跑在 Mac：shell 以用户权限直接打 macOS（无隔离、非 GNU 语义），workspace 落 `box-data/box-workspace`。只有 `SAND_LOCAL_ADMIN_BOX=docker` 分支同时有隔离+桌面。方向：docker 分支转正，Mac-host 降级为无 Docker 环境的 fallback。
+2. **arm64 原生自建镜像**（零件三方凑齐：trixie 基础 + Archive 桌面治理脚本 + 本仓库 v2 staged daemon/host）。做法：关掉 `SAND_USE_EXISTING_BOX_EXEC_DAEMON`，让 host 拉起 staged 重建版 daemon（`exec-daemon-process.ts` 已支持该路径）。理由从"延迟优化"升格为**可行性**：QEMU 下 21s ready 只证明服务栈能跑；试验场的核心负载是编译（cargo/go build），模拟下原生代码常见 5–10 倍减速。Archive Dockerfile 第二层的工具链清单（Go/Rust/Python/bun/uv/gh + pkg-config/libssl-dev，照"观察值那台"配的）就是试验场规格，直接可用。
+3. **真容器集成测试**：build-stamp 已解决"测试绿、打包旧"（§1 原则的落地）；剩余缺口是"起真容器"这一层——起 arm64 容器跑 exec/浏览器冒烟（Archive `tests/run-gates.sh` + `e2e.mjs` 是骨架参考，含冷启动 G1"此时不应有 Chromium 进程"这类行为门禁）。
+
+> **执行结果（2026-09-15，P0-2 已落地）**：arm64 原生自建镜像已建成并验证——`docker/arm64-exec-box.Dockerfile`（Archive base + 官方 Node 22 arm64 钉版本钉校验和 + linux/arm64 运行时依赖层）。实测：host 在容器内**自拉起**重建版 daemon（无 `SAND_USE_EXISTING_BOX_EXEC_DAEMON`），网关 **3 秒**就绪（QEMU 下 21–25s）。编译基准（hello 级）：
+
+| 负载 | arm64 原生 | QEMU amd64 | 差距 |
+|---|---|---|---|
+| cargo build | 0.40s | 6.36s | **16×** |
+| go build | 1.53s | 5.19s | **3.4×** |
+| 网关冷启动 | 3s | 21–25s | **~8×** |
+
+"试验场可行性"论断由预估升格为实测。构建/运行入口：`docker/build-arm64-box.sh`、`docker/run-arm64-box.sh`。遗留：P0-1（docker 转正为默认执行目标）与 P0-3（真容器门禁进 CI）待做；QEMU 对照组因官方镜像工具链版本可能略有差异，倍数量级可信。
+
+**P1 —— 把盒子从"能用"变"可信、完整"**
+
+4. **Computer use 补齐**：自建镜像里 1339 路由 + `start-window`/`stop-window` 用 Archive 现成实现（头语义 `x-sand-display`/`x-sand-window-owner` 与 `box-windows.ts` 一致，timingSafeEqual 等长垫平都写好了）；GUI 级输入参考 `desktop-input.mjs` + `xtest-input.py`（XTEST）。浏览器侧不用动：`driver-v2.mjs` 路线自包含。
+5. **人机交接**：`request_box_help` 合同 + awaiting_human 语义（§2 已详）+ noVNC 随机 token（`box-windows.ts` 注释已登记约束，实现时抄 `novnc-auth.mjs`）。登录态进容器后这是必需品，不是加分项。
+6. **本地模式出网策略**：远程线有 egress tunnel + 私网目标拒绝；本地 docker 容器目前直连出网、无等价治理。最小做法：私网/保留段拒绝 + `MAC_BOT_PROXY` 代理模式（Archive `up.js` 已解过 DNS 投毒场景，含 NO_PROXY 必须排除回环否则页面驱动连不上自己浏览器的坑）。
+
+**P2 —— 明确不做**
+
+- 不并入 Archive 的 `:18765` 窗口服务和 mcp-server：本仓库 driver 模式自包含，最小合并集 = `box-image`（Dockerfile + bin/ 脚本）+ 行为规格。
+- 多屏配额、>4 屏支持等留给运行时调参，不做结构性工作。
+
