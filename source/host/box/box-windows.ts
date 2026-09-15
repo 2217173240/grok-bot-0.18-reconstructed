@@ -17,6 +17,13 @@ export const SAND_BOX_WINDOW_UNAVAILABLE_EXIT_CODE = 75;
 export function mintSandWindowOwnerToken(): string { return randomUUID(); }
 export function envInt(name: string, fallback: number, env: Record<string, string | undefined> = process.env): number { const raw = env[name]; if (raw == null || !raw.trim()) return fallback; const value = Number.parseInt(raw.trim(), 10); return Number.isInteger(value) && value > 0 ? value : fallback; }
 export const SAND_BOX_MAX_WINDOWS = envInt("SAND_BOX_MAX_WINDOWS", 100);
+// Protocol constraint (do not "fix" unilaterally): the in-box fork router and
+// websockify TokenFile are official-image components that key on the display
+// number, so the display token must stay String(windowIndex). Any in-box
+// process can therefore address any display by number — the same fail-open
+// family as the retired exec-daemon default token. A real fix requires a
+// self-built image (see docs/ARCHIVE-ASSETS.md, novnc-auth reference); the
+// per-window owner token minted below is the strong credential we control.
 export function sandBoxDisplayToken(windowIndex: number): string { return String(windowIndex); }
 export type ShellExecutionResult = ShellExecResponse;
 export interface ShellAccessor { get(resource: typeof shellExecutorResource): ShellExecutor }

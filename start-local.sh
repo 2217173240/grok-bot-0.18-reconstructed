@@ -144,6 +144,21 @@ do_start() {
   export CLAUDE_CODE_SUBAGENT_MODEL='glm-5.2[1M]'
   export ENABLE_TOOL_SEARCH='true'
   export DISABLE_AUTOUPDATER=1
+  # Stale package guard: the app bundle carries a build stamp; warn loudly when
+  # it does not match this repository's HEAD (a silently failed rebuild shipped
+  # as a stale dist exactly once — never again).
+  STAMP="$BIN/../Resources/build-stamp.json"  # resolved against MacOS dir
+  STAMP="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/Resources/build-stamp.json"
+  if [ -f "$STAMP" ]; then
+    STAMPED_REV=$(python3 -c "import json; print(json.load(open('$STAMP'))['sourceRevision'])" 2>/dev/null)
+    HEAD_REV=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
+    if [ "$STAMPED_REV" != "$HEAD_REV" ]; then
+      say "WARNING: installed app was built from ${STAMPED_REV:0:7} but the repo is at ${HEAD_REV:0:7} — repackage and re-copy before trusting runtime behavior"
+    fi
+  else
+    say "WARNING: installed app has no build stamp (pre-stamp package); freshness cannot be verified"
+  fi
+
   export SAND_DATA_ROOT="$DATA_ROOT"
   export SAND_USER_DATA_DIR="$PROFILE"
   # GROKBOT_BOX=docker runs the computer as the local Docker VM instead of a
