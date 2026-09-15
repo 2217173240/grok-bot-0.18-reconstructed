@@ -4,8 +4,17 @@ import { dirname, join } from "node:path";
 
 import { runRoutedProviderText } from "../host/extensions/inference/provider-session.js";
 import type { SandInferenceProvider } from "../shared/inference-router.js";
+import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
 import { SandSettingsStore } from "../shared/node/settings/sand-settings-store.js";
 import { createRoutedMcpBridge } from "./routed-mcp-bridge.js";
+
+// SAND_LOCAL_ADMIN_TURN=host executes routed turns inside the local host
+// process — one execution plane, the host journal is the transcript of record.
+// The Mac-side interception stays the default: it owns the CLI credentials and
+// works on any host bundle.
+export function hostTurnModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isLocalAdminEnabled(env) && env.SAND_LOCAL_ADMIN_TURN?.trim().toLowerCase() === "host";
+}
 
 type StoredEntry = {
   readonly provider: Exclude<SandInferenceProvider, "cursor">;
@@ -206,8 +215,9 @@ export function createCoordinatorInferenceRouter(options: {
         return { handled: true, value: { ...result, entries: entries.slice(-limit) } };
       }
       // Routed providers must run on this Mac process: Claude CLI, Codex
-      // auth.json, and OpenRouter keys are here, not in the remote box.
-      if (method !== "sendPrompt" || provider === "cursor") return { handled: false };
+      // auth.json, and OpenRouter keys are here, not in the remote box —
+      // unless the local host itself is the execution plane.
+      if (method !== "sendPrompt" || provider === "cursor" || hostTurnModeEnabled()) return { handled: false };
       const record = asRecord(args) ?? {};
       const agentId = typeof record.agentId === "string" ? record.agentId : "";
       const previous = queues.get(agentId) ?? Promise.resolve();

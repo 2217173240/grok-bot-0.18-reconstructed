@@ -56,6 +56,8 @@ echo <token> > ~/.grokbot-local/anthropic-token && chmod 600 ~/.grokbot-local/an
 
 ./start-local.sh start    # 另有：stop | status | restart | logs
 GROKBOT_BOX=docker ./start-local.sh start   # 电脑 = 本地 Docker 虚拟机
+GROKBOT_TURN=host  ./start-local.sh start   # 回合在 host 进程内执行（单一执行面，
+                                            # host journal 即转写正本；实验性）
 ```
 
 脚本幂等，对网关做有界等待，失败时输出 host 日志尾部而不是空转。插件配置放在
