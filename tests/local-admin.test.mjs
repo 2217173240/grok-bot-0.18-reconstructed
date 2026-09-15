@@ -505,8 +505,96 @@ test("intercept ledger samples heartbeats and rotates when it outgrows the cap",
   }
 });
 
+test("claude child env resolves the token from env or the 0600 file", async () => {
+  const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-token-file-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  const previousAuth = process.env.ANTHROPIC_AUTH_TOKEN;
+  try {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.SAND_DATA_ROOT = root;
+
+    const untouched = loaded.module.claudeChildEnv({ PATH: "/usr/bin" });
+    assert.equal(untouched.ANTHROPIC_AUTH_TOKEN, undefined, "no token anywhere injects nothing");
+
+    await writeFile(path.join(root, "anthropic-token"), "file-token-123");
+    const fromRoot = loaded.module.claudeChildEnv({ PATH: "/usr/bin" });
+    assert.equal(fromRoot.ANTHROPIC_AUTH_TOKEN, "file-token-123");
+    assert.equal(fromRoot.ANTHROPIC_API_KEY, "file-token-123");
+
+    const boxData = path.join(root, "box-data");
+    await mkdir(boxData, { recursive: true });
+    process.env.SAND_DATA_ROOT = boxData;
+    const fromParent = loaded.module.claudeChildEnv({ PATH: "/usr/bin" });
+    assert.equal(fromParent.ANTHROPIC_AUTH_TOKEN, "file-token-123", "token found beside the host sand root");
+
+    const envWins = loaded.module.claudeChildEnv({ ANTHROPIC_AUTH_TOKEN: "env-token" });
+    assert.equal(envWins.ANTHROPIC_AUTH_TOKEN, "env-token", "an existing env token wins over the file");
+  } finally {
+    if (previousAuth == null) delete process.env.ANTHROPIC_AUTH_TOKEN;
+    else process.env.ANTHROPIC_AUTH_TOKEN = previousAuth;
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("SAND_LOCAL_ADMIN_TURN=host bypasses the coordinator sendPrompt interception", async () => {  const loaded = await loadModule("source/node-agent-coordinator/inference-router.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-host-turn-"));
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const previousTurn = process.env.SAND_LOCAL_ADMIN_TURN;
+  try {
+    await writeFile(path.join(root, "settings.json"), JSON.stringify({ version: 1, mcpBoxServers: [], autoUpdateWhenIdleOptIn: false, egressTunnelEnabled: false, webauthnProxyEnabled: true, mcpCustomInstructions: {}, mcpCustomInstructionsByServerId: {}, mcpDisabledToolsByServerId: {}, conciergeConsent: "unset", settingsMigrations: [], inferenceProvider: "claude-code" }));
+    const router = loaded.module.createCoordinatorInferenceRouter({
+      dataDir: root,
+      postEvent: () => {},
+      dispatchRemote: async () => { throw new Error("unexpected remote dispatch"); },
+    });
+
+    process.env.SAND_LOCAL_ADMIN = "1";
+    delete process.env.SAND_LOCAL_ADMIN_TURN;
+    const intercepted = await router.dispatch("sendPrompt", { agentId: "a", prompt: "x" });
+    assert.equal(intercepted.handled, true, "default: the Mac coordinator owns routed turns");
+
+    process.env.SAND_LOCAL_ADMIN_TURN = "host";
+    const bypassed = await router.dispatch("sendPrompt", { agentId: "a", prompt: "x" });
+    assert.equal(bypassed.handled, false, "host-turn mode passes the turn to the host");
+    const fallsThrough = await router.dispatch("reactToMessage", { agentId: "a", entryId: "t0u", emoji: "👍" });
+    assert.equal(fallsThrough.handled, false, "cursor-path methods still fall through");
+  } finally {
+    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    if (previousTurn == null) delete process.env.SAND_LOCAL_ADMIN_TURN;
+    else process.env.SAND_LOCAL_ADMIN_TURN = previousTurn;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
 
 
 
 
 
+
+
+
+test("exec daemon auth has no default credential and resolves from env in lockstep", async () => {
+  const loaded = await loadModule("source/host/box/loopback-sand-box.ts");
+  try {
+    const { requireExecDaemonAuthToken, resolveExecDaemonAuthTokenFromEnv } = loaded.module;
+    assert.throws(() => requireExecDaemonAuthToken(undefined), /requires an explicit auth token/);
+    assert.throws(() => requireExecDaemonAuthToken("  "), /requires an explicit auth token/);
+    assert.equal(requireExecDaemonAuthToken("real-token"), "real-token");
+
+    assert.throws(() => resolveExecDaemonAuthTokenFromEnv({}), /requires an explicit auth token/);
+    assert.equal(resolveExecDaemonAuthTokenFromEnv({ SAND_GATEWAY_TOKEN: "gateway-token" }), "gateway-token");
+    assert.equal(
+      resolveExecDaemonAuthTokenFromEnv({ SAND_GATEWAY_TOKEN: "gateway-token", SAND_BOX_EXEC_DAEMON_AUTH_TOKEN: "daemon-token" }),
+      "daemon-token",
+      "an explicit daemon token wins over the gateway token",
+    );
+  } finally {
+    await loaded.dispose();
+  }
+});

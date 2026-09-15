@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -56,6 +56,31 @@ function providerPrompt(messages: readonly ProviderMessage[], extraGuidance?: st
 }
 
 function deferred<T>() { return Promise.withResolvers<T>(); }
+
+// The inference token reaches the Claude CLI child only — the desktop app's
+// own environment (readable via ps eww) carries at most a non-secret marker.
+// Resolution order: existing env token (compat), then the 0600 token file in
+// the sand root.
+export function claudeChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...env };
+  let token = env.ANTHROPIC_AUTH_TOKEN?.trim();
+  if (token == null || token.length === 0) {
+    // The host's sand root is <root>/box-data while the desktop's is <root>;
+    // accept the token file at either level.
+    const root = getSandRootDir();
+    for (const candidate of [join(root, "anthropic-token"), join(dirname(root), "anthropic-token")]) {
+      try {
+        const fromFile = readFileSync(candidate, "utf8").trim();
+        if (fromFile.length > 0) { token = fromFile; break; }
+      } catch {}
+    }
+  }
+  if (token != null && token.length > 0) {
+    childEnv.ANTHROPIC_AUTH_TOKEN = token;
+    childEnv.ANTHROPIC_API_KEY = token;
+  }
+  return childEnv;
+}
 
 function response(text: string, id: string, modelId: string) {
   return { id, modelId, timestamp: new Date(), headers: {}, messages: [{ role: "assistant", content: [{ type: "text", text }] }] };
@@ -279,6 +304,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         },
         maxTurns: 8,
         persistSession: false,
+        env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
         if (message.type === "result") { final = message; continue; }

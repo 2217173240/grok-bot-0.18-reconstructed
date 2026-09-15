@@ -27,6 +27,7 @@ import type {
   LoopbackTelemetry,
   PingResult
 } from "./loopback-sand-box.js";
+import { resolveExecDaemonAuthTokenFromEnv } from "./loopback-sand-box.js";
 import type { ShellAccessor } from "./box-windows.js";
 
 export type ProductionBoxControlClient = BoxPingControlClient &
@@ -161,7 +162,7 @@ export function createProductionBoxInner<
 
   const loopback = createSandBox<Accessor>({
     ...(options.host === undefined ? {} : { host: options.host }),
-    ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
+    authToken: options.authToken ?? resolveExecDaemonAuthTokenFromEnv(),
     telemetry: options.telemetry,
     protectedBoxPaths: options.protectedBoxPaths,
     operations: {

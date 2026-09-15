@@ -11,7 +11,17 @@ import { SAND_BOX_DISPLAY_HEADER, SAND_BOX_FORK_ROUTER_PORT, SAND_BOX_MAX_WINDOW
 
 export const EXEC_DAEMON_PORT = 1337;
 export const VNC_PORT = SAND_BOX_PRIMARY_NOVNC_PORT;
-export const DEFAULT_AUTH_TOKEN = "local";
+// No default credential: a missing token must fail construction, not invent a
+// known shared secret for the loopback exec daemon.
+export function requireExecDaemonAuthToken(token: string | undefined): string {
+  if (token == null || token.trim().length === 0) throw new Error("The loopback exec daemon requires an explicit auth token (SAND_GATEWAY_TOKEN / loopback box options).");
+  return token;
+}
+
+// One resolver for both sides (spawn and client) so they can never disagree.
+export function resolveExecDaemonAuthTokenFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  return requireExecDaemonAuthToken(env.SAND_BOX_EXEC_DAEMON_AUTH_TOKEN?.trim() || env.SAND_GATEWAY_TOKEN?.trim() || undefined);
+}
 export const BOX_TERMINALS_FOLDER = "/root/.cursor/projects/workspace/terminals";
 export const DAEMON_READY_TIMEOUT_MS = 90_000;
 export const DAEMON_WATCHDOG_INTERVAL_MS = 30_000;
@@ -27,7 +37,7 @@ export function daemonPingReadinessState(outcome: string): string { if (outcome 
 
 export class LoopbackSandBox<Accessor extends ShellAccessor = ShellAccessor> {
   readonly host: string; readonly authToken: string; readonly readyTimeoutMs: number; readonly pollIntervalMs: number; readonly watchdogIntervalMs: number; readonly protectedBoxPaths: readonly string[]; private telemetry: LoopbackTelemetry = { reportDaemonPing() {} }; private hasTelemetry = false; private daemonWatchdogStarted = false; private readonly daemonWatchdogAbort = new AbortController(); private daemonWatchdogRun: Promise<void> | undefined; private daemonWatchdogPoll: Promise<void> | undefined; private daemonForegroundReadyWaits = 0; private daemonWatchdogState: "ready" | "unready" | undefined; private daemonWatchdogUnreadySince: number | undefined; private daemonWatchdogUnreadyAttempts = 0; private readonly windowConnections = new Map<string, { window: { windowIndex: number; computerUse: Accessor; vncUrl: string }; endpoint: BoxEndpoint; ownerToken?: string }>();
-  constructor(readonly options: LoopbackSandBoxOptions<Accessor>) { this.host = options.host ?? "127.0.0.1"; this.authToken = options.authToken ?? DEFAULT_AUTH_TOKEN; if (options.telemetry != null) this.setTelemetry(options.telemetry); this.readyTimeoutMs = options.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS; this.pollIntervalMs = options.pollIntervalMs ?? 500; this.watchdogIntervalMs = options.watchdogIntervalMs ?? DAEMON_WATCHDOG_INTERVAL_MS; this.protectedBoxPaths = options.protectedBoxPaths ?? []; }
+  constructor(readonly options: LoopbackSandBoxOptions<Accessor>) { this.host = options.host ?? "127.0.0.1"; this.authToken = requireExecDaemonAuthToken(options.authToken); if (options.telemetry != null) this.setTelemetry(options.telemetry); this.readyTimeoutMs = options.readyTimeoutMs ?? DAEMON_READY_TIMEOUT_MS; this.pollIntervalMs = options.pollIntervalMs ?? 500; this.watchdogIntervalMs = options.watchdogIntervalMs ?? DAEMON_WATCHDOG_INTERVAL_MS; this.protectedBoxPaths = options.protectedBoxPaths ?? []; }
   private now(): number { return this.options.operations.now?.() ?? Date.now(); } private async sleep(ms: number, signal?: AbortSignal): Promise<void> { if (this.options.operations.sleep != null) return this.options.operations.sleep(ms, signal); await delay(ms, undefined, signal == null ? { ref: false } : { ref: false, signal }); }
   setTelemetry(telemetry: LoopbackTelemetry): void { this.telemetry = telemetry; this.hasTelemetry = true; }
   async assertFileReadAllowed(boxPath: string): Promise<void> { await assertPathOutsideProtectedRoots(this.protectedBoxPaths, boxPath, "/workspace"); }

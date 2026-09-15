@@ -66,6 +66,10 @@ echo <token> > ~/.grokbot-local/anthropic-token && chmod 600 ~/.grokbot-local/an
 
 ./start-local.sh start    # also: stop | status | restart | logs
 GROKBOT_BOX=docker ./start-local.sh start   # computer = local Docker VM instead
+GROKBOT_TURN=host  ./start-local.sh start   # turns execute inside the host
+                                            # process (single execution plane,
+                                            # host journal as the transcript of
+                                            # record; experimental)
 ```
 
 The script is idempotent, waits a bounded time for the gateway, and reports

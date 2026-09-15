@@ -16,6 +16,7 @@ import {
   startBoxExecDaemonProcess,
   type OwnedBoxExecDaemon,
 } from "./box/exec-daemon-process.js";
+import { resolveExecDaemonAuthTokenFromEnv } from "./box/loopback-sand-box.js";
 
 export const BOX_COPY_IN_ARG = "--box-copy-in";
 export const BOX_COPY_IN_EXIT_FAILED = 1;
@@ -138,6 +139,7 @@ export function createProductionHostMainDependencies(
         generated: ports.extensionHost.boxGenerated,
         workspaceRoot: path.join(getSandRootDir(), "box-workspace"),
         terminalsDirectory: path.join(getSandRootDir(), "box-terminals"),
+        authToken: resolveExecDaemonAuthTokenFromEnv(),
         ...(ports.log === undefined ? {} : { log: ports.log }),
       }) }),
     getSandRootDir,

@@ -6,7 +6,7 @@ import path from "node:path";
 import { createContext } from "../../packages/context/core.js";
 import { pingBoxClassified } from "./box-remote-accessor.js";
 import type { ErasedProductionBoxGeneratedPorts } from "./production.js";
-import { DEFAULT_AUTH_TOKEN, EXEC_DAEMON_PORT } from "./loopback-sand-box.js";
+import { requireExecDaemonAuthToken, EXEC_DAEMON_PORT } from "./loopback-sand-box.js";
 
 export const BOX_EXEC_DAEMON_ENTRY_RELATIVE = "../box-exec-daemon/main.cjs";
 export const BOX_EXEC_DAEMON_START_TIMEOUT_MS = 20_000;
@@ -66,7 +66,7 @@ async function delay(milliseconds: number): Promise<void> {
 export async function startBoxExecDaemonProcess(options: BoxExecDaemonProcessOptions): Promise<OwnedBoxExecDaemon> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? EXEC_DAEMON_PORT;
-  const authToken = options.authToken ?? DEFAULT_AUTH_TOKEN;
+  const authToken = requireExecDaemonAuthToken(options.authToken);
   const log = options.log ?? console;
   if (await portAcceptsConnections(host, port)) {
     throw new Error(`refusing contaminated box exec-daemon startup: ${host}:${port} is already bound`);

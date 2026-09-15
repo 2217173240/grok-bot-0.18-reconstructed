@@ -122,8 +122,6 @@ do_start() {
     say "note: repo dist is newer than /Applications copy — consider re-copying it"
   fi
 
-  local anthropic_token
-  anthropic_token="$(cat "$TOKEN_FILE")"
   : > "$APP_LOG"
 
   export SAND_LOCAL_ADMIN=1
@@ -131,8 +129,9 @@ do_start() {
   export SAND_DISABLE_TELEMETRY=1
   export SAND_CLAUDE_MODEL=glm-5.2
   export ANTHROPIC_BASE_URL='https://open.bigmodel.cn/api/anthropic'
-  export ANTHROPIC_AUTH_TOKEN="$anthropic_token"
-  export ANTHROPIC_API_KEY="$anthropic_token"
+  # The real token stays in the 0600 file; the provider layer injects it into
+  # the CLI child only. This marker just satisfies the logged-in check.
+  export ANTHROPIC_API_KEY='local-file'
   export ANTHROPIC_DEFAULT_FABLE_MODEL='glm-5.3[1M]'
   export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME='glm-5.3'
   export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-5.3-flash'
@@ -158,6 +157,12 @@ do_start() {
     say "computer: Docker VM (SAND_LOCAL_ADMIN_BOX=docker)"
   else
     echo mac > "$DATA_ROOT/box-mode"
+  fi
+  # GROKBOT_TURN=host executes routed turns inside the local host process
+  # (single execution plane; the host journal becomes the transcript of record).
+  if [ "${GROKBOT_TURN:-}" = "host" ]; then
+    export SAND_LOCAL_ADMIN_TURN=host
+    say "turns: host execution plane (experimental)"
   fi
 
   # Launch the binary directly — `open` would strip the environment.
