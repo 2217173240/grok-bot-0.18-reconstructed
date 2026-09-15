@@ -158,8 +158,11 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
   assert.match(localDocker, /export function resolveDockerHost/);
   assert.match(localDocker, /ensureLocalAdminHost/);
-  // SAND_LOCAL_ADMIN_BOX=docker routes the local-admin computer to the Docker VM.
-  assert.match(localDocker, /SAND_LOCAL_ADMIN_BOX\?\.trim\(\)\.toLowerCase\(\) === "docker"/);
+  // Docker is the default local-admin computer; the Mac host is the fallback.
+  assert.match(localDocker, /resolveLocalAdminBox/);
+  assert.match(localDocker, /return dockerAvailable \? "docker" : "mac-host"/);
+  assert.match(localDocker, /refusing to silently fall back to the emulated official image/);
+  assert.match(localDocker, /SELF_BUILT_EXEC_BOX_IMAGE/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
