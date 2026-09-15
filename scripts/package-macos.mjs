@@ -1,5 +1,7 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   outputApp,
   outputDir,
@@ -75,3 +77,13 @@ const verification = await verifyReconstructedMacPackage({
 });
 
 console.log(`Packaged application: ${outputApp} (${verification.runtime.nodeFileCount} native manifest entries, ${verification.runtime.runtimeFileCount} unpacked runtime files)`);
+
+// Freshness stamp: launch tooling compares this against the repository HEAD so
+// a silently failed rebuild can never ship as a stale dist unnoticed.
+const sourceRevision = (() => {
+  try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: "utf8" }).trim(); }
+  catch { return "unknown"; }
+})();
+const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId }, null, 2)}\n`;
+await writeFile(path.join(resources, "build-stamp.json"), buildStamp);
+await writeFile(path.join(outputDir, "build-stamp.json"), buildStamp);
