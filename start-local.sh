@@ -164,14 +164,27 @@ do_start() {
   # GROKBOT_BOX=docker runs the computer as the local Docker VM instead of a
   # Mac-side host process. Docker (Colima) must be running; the connector
   # discovers Colima sockets on its own.
+  # Computer selection: GROKBOT_BOX=host forces the Mac-side host process;
+  # GROKBOT_BOX=docker forces the container; unset lets the connector default
+  # to Docker when its daemon is reachable (the isolated Linux lab) and fall
+  # back to the Mac host otherwise. GROKBOT_IMAGE pins a specific image.
   if [ "${GROKBOT_BOX:-}" = "docker" ]; then
     resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
     docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
     export SAND_LOCAL_ADMIN_BOX=docker
     echo docker > "$DATA_ROOT/box-mode"
-    say "computer: Docker VM (SAND_LOCAL_ADMIN_BOX=docker)"
+    say "computer: Docker VM (forced)"
+  elif [ "${GROKBOT_BOX:-}" = "host" ]; then
+    export SAND_LOCAL_ADMIN_BOX=host
+    echo mac-host > "$DATA_ROOT/box-mode"
+    say "computer: Mac host process (forced)"
   else
-    echo mac > "$DATA_ROOT/box-mode"
+    echo auto > "$DATA_ROOT/box-mode"
+    say "computer: auto (Docker when reachable, else Mac host)"
+  fi
+  if [ -n "${GROKBOT_IMAGE:-}" ]; then
+    export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
+    say "image: $GROKBOT_IMAGE (pinned)"
   fi
   # GROKBOT_TURN=host executes routed turns inside the local host process
   # (single execution plane; the host journal becomes the transcript of record).
@@ -228,7 +241,7 @@ do_stop() {
   # A Docker computer outlives the app by design (restart: unless-stopped) and
   # keeps the published gateway port; remove it so the next Mac-host start is
   # not blocked. Named volumes persist the workspace.
-  if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac)" = "docker" ]; then
+  if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ]; then
     resolve_docker_host || true
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
       docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace volumes persist)"

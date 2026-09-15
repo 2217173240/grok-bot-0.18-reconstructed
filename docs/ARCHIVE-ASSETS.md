@@ -93,7 +93,9 @@
 | go build | 1.53s | 5.19s | **3.4×** |
 | 网关冷启动 | 3s | 21–25s | **~8×** |
 
-"试验场可行性"论断由预估升格为实测。构建/运行入口：`docker/build-arm64-box.sh`、`docker/run-arm64-box.sh`。遗留：P0-1（docker 转正为默认执行目标）与 P0-3（真容器门禁进 CI）待做；QEMU 对照组因官方镜像工具链版本可能略有差异，倍数量级可信。
+"试验场可行性"论断由预估升格为实测。构建/运行入口：`docker/build-arm64-box.sh`、`docker/run-arm64-box.sh`。数据校准：16× 是 hello 级构建、被 QEMU 固定开销主导；对外表述用"编译类 5–16×、冷启动稳定 ~8×"区间。
+
+**P0-1 与 P0-3 已落地（同 PR）**：容器门禁 `docker/container-gates.sh`（G1 有界网关就绪 / G2 host 自拉 daemon / G3 标记串 shell 往返 / G4 冷启动无 Chromium，全绿）；docker 转正——auto 模式下 Docker 可达即默认（自建 arm64 镜像优先、官方 ECR 回退），Mac-host 降级为无 Docker 时的回退（活体验证双向通过：Colima 停→Mac-host 1.5s 就绪；Colima 起→aarch64 容器 3s 就绪）。镜像缺失给指向 build 脚本的可执行报错、拒绝静默回退；断路器统一覆盖两种电脑形态。坑记录：官方镜像的数据卷是 root 属主，box 用户写不进——自建镜像改用独立 `-arm64` 卷。
 
 **P1 —— 把盒子从"能用"变"可信、完整"**
 

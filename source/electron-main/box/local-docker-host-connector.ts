@@ -15,6 +15,106 @@ import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js
 import { ensureLocalAdminHost, stopLocalAdminHost } from "./local-admin-host.js";
 
 export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
+// SAND_LOCAL_ADMIN_IMAGE switches the local-admin computer to a self-built
+// arm64-native image (see docker/): the host process IS the container process
+// and spawns the reconstructed exec-daemon itself — no amd64 emulation and no
+// image supervisor.
+export const SAND_LOCAL_ADMIN_IMAGE_ENV = "SAND_LOCAL_ADMIN_IMAGE";
+export const SELF_BUILT_EXEC_BOX_IMAGE = "grok-bot-exec-box:arm64";
+
+export function activeDockerImage(env: NodeJS.ProcessEnv = process.env): string {
+  return env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim() || LOCAL_DOCKER_BOX_IMAGE;
+}
+
+// Explicit image choice wins; otherwise prefer the self-built native image
+// when it exists locally, else the official (amd64/QEMU) image.
+async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
+  if (explicit != null && explicit.length > 0) return explicit;
+  const present = await runDocker(["image", "inspect", "--format", "1", SELF_BUILT_EXEC_BOX_IMAGE]);
+  return present.ok ? SELF_BUILT_EXEC_BOX_IMAGE : LOCAL_DOCKER_BOX_IMAGE;
+}
+
+// Where the local-admin computer executes. Docker is the default when its
+// daemon is reachable (isolation + GNU semantics + the native lab); the
+// Mac-side host process is the fallback when it is not.
+export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" | "mac-host" {
+  const explicit = env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase();
+  if (explicit === "host" || explicit === "mac" || explicit === "mac-host") return "mac-host";
+  if (explicit === "docker") return "docker";
+  return dockerAvailable ? "docker" : "mac-host";
+}
+
+export interface LocalDockerRunPlan {
+  readonly image: string;
+  readonly args: readonly string[];
+  readonly custom: boolean;
+}
+
+export function localDockerRunPlan(options: {
+  readonly image?: string;
+  readonly hostMainPath: string;
+  readonly boxExecDaemonDir: string;
+  readonly token: string;
+  readonly hostSha256: string;
+  readonly boxExecDaemonSha256: string;
+  readonly workspaceVolume?: string;
+  readonly dataVolume?: string;
+  readonly authMounts?: readonly string[];
+  readonly inferenceCredential?: InferenceCredential;
+  readonly inferenceFileDir?: string;
+}): LocalDockerRunPlan {
+  const image = options.image ?? LOCAL_DOCKER_BOX_IMAGE;
+  const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
+  // Fresh volume names for the self-built image: the official image's
+  // volumes are root-owned and the box user cannot mkdir inside them.
+  const workspaceVolume = options.workspaceVolume ?? (custom ? "grok-bot-local-vm-workspace-arm64" : "grok-bot-local-vm-workspace");
+  const dataVolume = options.dataVolume ?? (custom ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data");
+  const hasCredential = options.inferenceCredential != null;
+  const common = [
+    "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
+    "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${options.hostSha256}`,
+    "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${options.boxExecDaemonSha256}`,
+    "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
+    "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
+    "--restart", "unless-stopped",
+    "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
+    ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
+    "--publish", "127.0.0.1:1340:1340",
+    "--volume", `${workspaceVolume}:/workspace`,
+    "--volume", `${dataVolume}:/home/box/sand-data`,
+    "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host/host-main.cjs,readonly`,
+    "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
+    ...(options.inferenceFileDir == null ? [] : ["--mount", `type=bind,src=${options.inferenceFileDir},dst=/run/grok-bot,readonly`]),
+    ...(options.authMounts ?? []),
+  ];
+  if (custom) {
+    // Self-built image: native arm64, host as the container process, daemon
+    // spawned by the host (no SAND_USE_EXISTING_BOX_EXEC_DAEMON). Fresh
+    // volume names: the official image writes its volumes as root, and the
+    // box user here cannot mkdir inside them.
+    return {
+      image,
+      custom,
+      args: [...common,
+        "--env", "SAND_DATA_ROOT=/home/box/sand-data",
+        "--env", "NODE_PATH=/home/box/deps/node_modules", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules",
+        "--entrypoint", "/usr/local/bin/node",
+        image, "/home/box/sand-host/host-main.cjs"],
+    };
+  }
+  // Official image: amd64 via QEMU, supervisor entrypoint, pre-provisioned daemon.
+  return {
+    image,
+    custom,
+    args: [...common,
+      "--platform", "linux/amd64",
+      "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps",
+      "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339",
+      "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
+      image],
+  };
+}
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
@@ -202,12 +302,17 @@ async function localAuthMountArguments(): Promise<string[]> {
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
   const token = await readOrCreateToken(settingsPath);
   const hostBundle = await stageCurrentHostBundle(settingsPath);
+  const image = await resolveDockerImageForComputer();
+  if (image !== LOCAL_DOCKER_BOX_IMAGE) {
+    const present = await runDocker(["image", "inspect", "--format", "1", image]);
+    if (!present.ok) throw new Error(`The local computer image ${image} is not built locally. Build it with docker/build-arm64-box.sh; refusing to silently fall back to the emulated official image.`);
+  }
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
   const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
   if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
-  if (inspected.exists && inspected.image !== LOCAL_DOCKER_BOX_IMAGE) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
+  if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
   if (inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || (inferenceCredential != null && !inspected.hasInferenceCredential))) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
@@ -219,24 +324,18 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     if (!started.ok) throw new Error(`Could not start the local Docker VM: ${started.output}`);
   } else if (!current.exists) {
     const authMounts = await localAuthMountArguments();
-    const created = await runDocker([
-      "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
-      "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${hostBundle.sha256}`,
-      "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${hostBundle.boxExecDaemonSha256}`,
-      "--label", `com.grok-bot.local-vm.inference-credential=${inferenceCredential == null ? "0" : "1"}`,
-      "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
-      "--platform", "linux/amd64", "--restart", "unless-stopped",
-      "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps", "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${token}`,
-      ...(inferenceCredential == null ? [] : ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${inferenceCredential.backendUrl}`]),
-      "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339", "--publish", "127.0.0.1:1340:1340",
-      "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
-      "--volume", "grok-bot-local-vm-workspace:/workspace", "--volume", "grok-bot-local-vm-data:/home/box/sand-data",
-      "--mount", `type=bind,src=${hostBundle.path},dst=/home/box/sand-host/host-main.cjs,readonly`,
-      "--mount", `type=bind,src=${dirname(hostBundle.boxExecDaemonPath)},dst=/home/box/box-exec-daemon,readonly`,
-      ...(inferenceFile == null ? [] : ["--mount", `type=bind,src=${dirname(inferenceFile)},dst=/run/grok-bot,readonly`]),
-      ...authMounts,
-      LOCAL_DOCKER_BOX_IMAGE,
-    ]);
+    const plan = localDockerRunPlan({
+      image,
+      hostMainPath: hostBundle.path,
+      boxExecDaemonDir: dirname(hostBundle.boxExecDaemonPath),
+      token,
+      hostSha256: hostBundle.sha256,
+      boxExecDaemonSha256: hostBundle.boxExecDaemonSha256,
+      authMounts,
+      ...(inferenceCredential == null ? {} : { inferenceCredential }),
+      ...(inferenceFile == null ? {} : { inferenceFileDir: dirname(inferenceFile) }),
+    });
+    const created = await runDocker(plan.args);
     if (!created.ok) throw new Error(`Could not create the local Docker VM: ${created.output}`);
   }
   const deadline = Date.now() + READY_TIMEOUT_MS;
@@ -275,30 +374,34 @@ export function createSettingsRoutedHostConnector(
     localHostConsecutiveFailures = 0;
     localHostBreakerOpenUntilMs = 0;
   };
-  const localAdminBoxIsDocker = (env: NodeJS.ProcessEnv = process.env): boolean => env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase() === "docker";
+  // Probe with a short cache: docker reachability and self-built image
+  // presence drive the default computer choice without hammering the CLI.
+  const cachedProbe = <T>(ttlMs: number, run: () => Promise<T>): (() => Promise<T>) => {
+    let cached: { at: number; value: T } | undefined;
+    return async () => {
+      if (cached != null && Date.now() - cached.at < ttlMs) return cached.value;
+      const value = await run();
+      cached = { at: Date.now(), value };
+      return value;
+    };
+  };
+  const probeDockerAvailable = cachedProbe(60_000, async () => (await runDocker(["info", "--format", "{{.ServerVersion}}"])).ok);
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
       if (isLocalAdminEnabled()) {
-        if (localAdminBoxIsDocker()) {
-          // The computer is the Docker VM; a Mac-side host process, if any,
-          // must not keep the gateway port.
-          stopLocalAdminHost();
-          try {
-            return await ensureLocalDockerBox(settings.settingsPath, undefined);
-          } catch (error) {
-            appendLocalIntercept({ kind: "docker", event: "connect-failed", error: error instanceof Error ? error.message : String(error) });
-            throw error;
-          }
-        }
+        // Docker is the default computer (isolation + GNU semantics + the
+        // native lab); the Mac-side host process is the no-Docker fallback.
+        // One breaker governs whichever local computer is in play.
         if (Date.now() < localHostBreakerOpenUntilMs) {
-          const message = `Local admin host circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
-          appendLocalIntercept({ kind: "local-host", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
+          const message = `Local computer circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
+          appendLocalIntercept({ kind: "local-computer", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
           throw new Error(message);
         }
+        const box = resolveLocalAdminBox(process.env, await probeDockerAvailable());
         try {
-          const token = await readOrCreateToken(settings.settingsPath);
-          const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
-          const connection = await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+          const connection = box === "docker"
+            ? await (stopLocalAdminHost(), ensureLocalDockerBox(settings.settingsPath, undefined))
+            : await ensureMacHostComputer();
           resetLocalHostBreaker();
           return connection;
         } catch (error) {
@@ -306,9 +409,9 @@ export function createSettingsRoutedHostConnector(
           localHostConsecutiveFailures += 1;
           if (localHostConsecutiveFailures >= LOCAL_HOST_AUTO_FAILURE_LIMIT) {
             localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
-            appendLocalIntercept({ kind: "local-host", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
+            appendLocalIntercept({ kind: "local-computer", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
           }
-          appendLocalIntercept({ kind: "local-host", event: "connect-failed", error: localHostLastFailure });
+          appendLocalIntercept({ kind: box === "docker" ? "docker" : "local-host", event: "connect-failed", error: localHostLastFailure });
           throw error;
         }
       }
@@ -324,21 +427,27 @@ export function createSettingsRoutedHostConnector(
       }
     })().finally(() => { ensureInFlight = undefined; });
     return ensureInFlight;
+    async function ensureMacHostComputer(): Promise<GatewayConnection> {
+      const token = await readOrCreateToken(settings.settingsPath);
+      const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
+      return await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
+    }
   };
   return {
     connect: async () => (isLocalAdminEnabled() || settings.getBoxRuntime() === "local-docker") ? await localConnect() : await remote.connect(),
     ...(remote.issueLocalExecDaemonCredential == null ? {} : { issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote) }),
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
-      if (isLocalAdminEnabled() && !localAdminBoxIsDocker()) {
+      if (isLocalAdminEnabled()) {
+        if ((await probeDockerAvailable()) && resolveLocalAdminBox(process.env, true) === "docker") {
+          const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
+          if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+          resetLocalHostBreaker();
+          await localConnect();
+          return { status: "started-untrackable" };
+        }
         stopLocalAdminHost();
         resetLocalHostBreaker();
-        await localConnect();
-        return { status: "started-untrackable" };
-      }
-      if (isLocalAdminEnabled() && localAdminBoxIsDocker()) {
-        const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
-        if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
         await localConnect();
         return { status: "started-untrackable" };
       }
@@ -355,7 +464,7 @@ export function createSettingsRoutedHostConnector(
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
         resetLocalHostBreaker();
-        if (localAdminBoxIsDocker()) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        if ((await probeDockerAvailable()) && resolveLocalAdminBox(process.env, true) === "docker") await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
         await localConnect();
         return { status: "started-untrackable" };
       }
