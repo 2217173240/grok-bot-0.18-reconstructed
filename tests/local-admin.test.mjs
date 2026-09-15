@@ -9,6 +9,8 @@ import { build } from "esbuild";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function loadModule(entry) {
+  // .cache is gitignored; it exists on dev machines but not on a fresh CI checkout.
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
   const temporary = await mkdtemp(path.join(repoRoot, ".cache", "local-admin-"));
   const output = path.join(temporary, `${path.basename(entry, ".ts")}.mjs`);
   await build({
