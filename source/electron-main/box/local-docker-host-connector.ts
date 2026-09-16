@@ -183,7 +183,7 @@ export function localDockerRunPlan(options: {
     // the host lifecycle and desktop deaths surface via probes, not restarts).
     // Display env inheritance is baked into box-init-exec (DISPLAY=:1).
     const desktopEntrypoint = options.desktop === true
-      ? ["--entrypoint", "/usr/local/bin/box-init-exec"]
+      ? ["--entrypoint", "/usr/local/bin/box-init-exec", "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081"]
       : ["--entrypoint", "/usr/local/bin/node"];
     return {
       image,

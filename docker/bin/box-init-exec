@@ -26,6 +26,20 @@ websockify --web=/usr/share/novnc/ \
 # 窗口路由器（1339，多窗口契约在 S-3 接线）。
 node /usr/local/bin/sand-window-router.mjs >/tmp/router.log 2>&1 &
 
+# noVNC 真鉴权：TokenFile 的 token 是随机签发的，绝不是显示号（Archive 规格 §9.4
+# 那笔债）。本拓扑没有窗口服务当签发权威，由这里在开机时签——每次容器启动重写，
+# 旧 token 立即作废。URL 形状走 path=websockify?token=…（noVNC 1.6.0 静默忽略
+# 顶层 ?token= 参数，坑 6），autoconnect 让人少点一步。
+NOVNC_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+printf '%s: localhost:5900\n' "$NOVNC_TOKEN" > "$NOVNC_TOKEN_DIR/$PRIMARY_DISPLAY"
+chmod 600 "$NOVNC_TOKEN_DIR/$PRIMARY_DISPLAY"
+NOVNC_PATH="$(printf 'websockify?token=%s' "$NOVNC_TOKEN" | sed 's/?/%3F/g; s/=/%3D/g')"
+mkdir -p /workspace/.grokbot
+printf 'http://127.0.0.1:%s/vnc.html?autoconnect=1&path=%s\n' "$NOVNC_PRIMARY" "$NOVNC_PATH" \
+  > /workspace/.grokbot/novnc-url
+chmod 600 /workspace/.grokbot/novnc-url
+log "noVNC 凭证已签发（本机回环 ${NOVNC_PRIMARY}），接管 URL 在 /workspace/.grokbot/novnc-url"
+
 log "桌面面就绪：屏 :$PRIMARY_DISPLAY，画面 5900，入口 $NOVNC_PRIMARY/$NOVNC_FORKS，路由器 $ROUTER_PORT——host 转前台"
 
 # S-3 的浏览器与 Computer 工具都要能找到主屏。

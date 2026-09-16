@@ -282,6 +282,9 @@ do_status() {
   if resolve_docker_host && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
     if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
       say "computer:    desktop plane (box-init-exec, opt-in)"
+      if [ -f "$DATA_ROOT/box-workspace/.grokbot/novnc-url" ]; then
+        say "handover:    $(cat "$DATA_ROOT/box-workspace/.grokbot/novnc-url")"
+      fi
     else
       say "computer:    exec plane (headless)"
     fi

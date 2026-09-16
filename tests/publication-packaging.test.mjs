@@ -104,6 +104,10 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /maxTurns: 8/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
+  // Local-admin turns carry the local identity: the assistant must know it IS
+  // the sandbox and never present cursor/xai remotes as its backend.
+  assert.match(providers, /there is no cloud sandbox behind you/i);
+  assert.match(providers, /isLocalAdminEnabled\(\) \? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES/);
   assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
   assert.match(providers, /OpenRouter needs OPENROUTER_API_KEY/);
@@ -202,6 +206,14 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /box-init-exec/);
   assert.match(localDocker, /inspected\.desktop !== desktop/);
   assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /exec \/usr\/local\/bin\/node/);
+  // noVNC auth (S-2): randomly minted token, never the display number; the
+  // takeover URL rides the path=websockify?token= form (noVNC 1.6.0 silently
+  // ignores a top-level ?token=) and lands Mac-side via the workspace mount.
+  const boxInitExec = await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8");
+  assert.match(boxInitExec, /head -c 32 \/dev\/urandom/);
+  assert.match(boxInitExec, /websockify\?token=%s/);
+  assert.match(boxInitExec, /novnc-url/);
+  assert.match(localDocker, /127\.0\.0\.1:6080:6080/);
   assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /box-init-exec/);
   assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /GROKBOT_DESKTOP/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
