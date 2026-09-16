@@ -5,6 +5,8 @@
 > 可信度背书：Archive 的《确定-计算环境-*》观察文档已被本仓库源码逐项交叉验证——CDP 9222+N（`BOX_CDP_PORT_BASE`）、VNC 5900+N、noVNC 6080/6081 + websockify TokenFile `/tmp/sand-novnc-tokens.d`（我们自己的会话 msg138 也见到此目录）、`x-sand-display`/`x-sand-window-owner` 请求头、1337/1339/1340 端口职责、box-chrome 启动器强制——全部命中。
 
 > **状态注记（开发会话，2026-09-15）**：④③① 批次已提交并合并（PR #4，`57df4fa`，活体验证通过：daemon 用真实令牌、`"local"` 被拒 401）。"artifact-fallback 吞改动"的 blocker 已解——真因是 `.cache` 运行时缓存被误删导致打包**静默失败**、旧 dist 照常发货；已落地 `build-stamp.json` 盖戳 + 启动验戳防回归。§1 的 noVNC token 约束已写入 `box-windows.ts` 源码注释。
+>
+> **排队结构已迁移**：§6/§7 的清单被 `docs/ROADMAP.md` 取代（三切片：运行契约 v2 → 桌面模式 → 人机面），本文其余部分保留作资产索引与历史记录。
 
 ## 1. 对当前未提交批次（④③①）直接有用
 
@@ -107,4 +109,26 @@
 
 - 不并入 Archive 的 `:18765` 窗口服务和 mcp-server：本仓库 driver 模式自包含，最小合并集 = `box-image`（Dockerfile + bin/ 脚本）+ 行为规格。
 - 多屏配额、>4 屏支持等留给运行时调参，不做结构性工作。
+
+## 7. P0 收官 review（2026-09-16，对 `0833095` + `6705c02`）
+
+已核实属实：`resolveLocalAdminBox` 三态语义、镜像选择序（显式 env > 自建 > ECR）、统一断路器（`local-computer`）、`-arm64` 新卷、run plan 纯函数化+单测锚定、`start-local.sh` 三态 + `GROKBOT_IMAGE` 透传、recreate/forceRecreate 的 probe 感知、G1/G2/G4 行为级断言。
+
+三个 review 发现（按严重度）：
+
+- **F1 默认路径静默回退 QEMU，与 commit 宣称矛盾**。`resolveDockerImageForComputer` 在自建镜像缺失且无显式 env 时直接返回 ECR；`ensureLocalDockerBox` 的"refusing to silently fall back"守卫只在 `image !== ECR` 时可达——即只保护显式指定缺镜像的情形。新机器 + Colima 在跑 → 默认 docker → 静默 QEMU。二选一：(a) 保留回退但标注——run plan 记一条 intercept（`event: "official-image-qemu-fallback"`）+ start-local status 一行说明（推荐，保开箱即用）；(b) 默认也报 actionable 错。测试目前只锚定了报错字符串，没锚定可达性。
+- **F2 容器内双文件面**。daemon 的 `workspaceRoot` 把逻辑路径映射到 `/workspace`（卷 A：`grok-bot-local-vm-workspace-arm64`）；Claude Code SDK 子进程的 cwd 走 `resolveAgentWorkspace()` → sand-data 下的候选目录（卷 B：`grok-bot-local-vm-data-arm64`）。同一个 agent 的 daemon 文件工具和 SDK 工具写不同卷；host↔docker 模式切换又是两套。统一到 `/workspace`，并把 `/workspace` 从 named volume 换成 **bind mount**（Colima 默认共享 `/Users`，Archive 的 `MAC_BOT_WORKSPACE_HOST` 双径回报已验证此路，含 `-v` 只在 run 生效的漂移告警经验）——做完这一条，"试验场"里 agent 的产物人能在 Finder 直接看见。
+- **F3 G3 绕过了执行链**。`docker exec bash echo` 不经 gateway→host→daemon(1337)，防不了 daemon 协议/token/路径映射回归——恰是 ④ 那类 bug 的容器翻版。最小补法：容器内 `node` 直连 `127.0.0.1:1337` 走 ExecService 打一条真 exec（daemon client 本仓库现成，可做成 `scripts/daemon-smoke.mjs` 挂进容器跑）。
+
+次要：G4 只数 chromium，可顺带断言 Xvfb/plank 缺席；冷启动时长（如 <15s）进门禁当性能回归哨兵。
+
+### 剩余凸优化（review 后重排）
+
+1. **统一文件面 + Mac 可见工作区**（F2，bind mount 方案）——试验场可用性的头名。
+2. **镜像新鲜度钉子**：Dockerfile 把 package-lock + `apply-third-party-patches.mjs` 的 hash 打进 image label，connector/gates 比对，不符即"镜像过旧，跑 `docker/build-arm64-box.sh`"。这是 build-stamp 的容器对偶——防"仓库依赖升了、容器里 node_modules 还是旧的"。
+3. **G3 端到端化**（F3）。
+4. **P1 原队列表不动**：Computer use（注意 exec 模式 entrypoint 双模式设计：桌面要跑就得 host 前台 + box-init 后台，或引 supervisor）、人机交接、egress 治理。
+5. **门禁 CI 接线**：`workflow_dispatch` + nightly schedule；amd64 runner 只能跑 ECR 变体，双 arch 化前置 = Archive Dockerfile 的 bun/uv 钉版参数化。
+6. F1 标注修法、资源上限（防编译负载拖垮网关）按需。
+
 
