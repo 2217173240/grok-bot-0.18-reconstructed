@@ -224,6 +224,14 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /localDesktopComputerUseEnabled\(\)\s*\?\s*\(accessor => generated\.withLocalDesktopComputerUse\(accessor\)\)/);
   assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "generated-production.ts"), "utf8"), /resourceEntry\(computerUseExecutorResource, localComputerUseExecutor\)/);
   assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /xtest-input-local\.py/);
+  // Dual gate profiles (S-4): exec keeps every current assertion; desktop
+  // adds the plane's own contract (geometry, ports, dual auth, computer
+  // round-trip, death semantics); memory caps ride both plans.
+  assert.match(gates, /--profile exec\|desktop/);
+  assert.match(gates, /run_desktop_gates/);
+  assert.match(gates, /D3 noVNC auth dual-direction/);
+  assert.match(localDocker, /"--memory", options\.desktop === true \? "4g" : "2g"/);
+  assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /GROKBOT_DESKTOP=0 for headless exec/);
   assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /box-init-exec/);
   assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /GROKBOT_DESKTOP/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);

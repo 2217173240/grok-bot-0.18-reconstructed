@@ -63,17 +63,18 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
    修复走 recreate——不做机械重试。host 侧 S-3 的 Computer 工具遇到死桌面诚实报错。
 3. **`--restart unless-stopped` 交互**：host 崩 → 容器整体重启（桌面面随 PID1 一起回来）；
    桌面崩 → 容器活着、host 活着、门禁/探测抓（S-4 的 desktop profile 断言这一条）。
-4. **opt-in 先行**：`SAND_LOCAL_ADMIN_DESKTOP=1`（start-local `GROKBOT_DESKTOP=1`）才走
-   desktop 入口；默认仍 exec 入口，**翻转推迟到 S-4 双 profile 全绿后**（门禁先行，PR #7 模式）。
-   run 契约变更 → schema 9 + `com.grok-bot.local-vm.desktop` label（0/1 进漂移检测）。
-   host 进程继承 `DISPLAY=:1`（S-3 的浏览器/Computer 工具要用）。
+4. **opt-in 先行，S-4 已翻转默认**：双 profile 门禁全绿后（2026-09-16），desktop 成为
+   自建镜像的**默认**（`resolveDesktopMode`：`SAND_LOCAL_ADMIN_DESKTOP=0` 退回无头 exec，
+   start-local `GROKBOT_DESKTOP=0`）。官方镜像永不 desktop。run 契约 → schema 9→11
+   （9=入口+label，10=seccomp，11=内存 cap 2g/4g）+ `com.grok-bot.local-vm.desktop` label
+   （0/1 进漂移检测）。host 进程继承 `DISPLAY=:1`。
 
 **切片 B「桌面模式」**——唤醒睡着的界面：
 
 1. **先做拓扑决定**（其余三件事的地基）：推荐 box-init 出一个 exec 变体——起桌面+路由后台、`exec node host-main.cjs` 当前台（进程收尸归 Docker；避免再造 supervisor）；
 2. 端口与 token：6080/6081/1339 publish 到回环；noVNC token 用 Archive `novnc-auth.mjs` 的随机签发（镜像里现成的 TokenFile 机制，**别用显示号**）；
 3. Computer 去 stub：XTEST 输入 + 整屏截图（Archive 参考实现）；浏览器侧零改动（`driver-v2.mjs` 自包含）✅ 2026-09-16 已落地：`local-computer-use.ts` 执行器（仅 desktop opt-in 挂载）+ `docker/bin/xtest-input-local.py`（Archive ctypes 核心扩 move/down/up）；截图走 `xwd|convert` 整屏、落 /workspace 可 Mac 侧读取；几何镜像 1280x800 有单测；桌面容器 `seccomp=unconfined`（schema 10）否则 Chromium 自沙箱秒死成僵尸；活体：点击 dock 启动真浏览器 + 窗口截图确认；
-4. 契约演进：G4 拆成 exec/desktop 两个门禁 profile（无头纪律保留给 exec 模式）；加资源上限（Archive 实测每只 Chromium ~800MB）。
+4. 契约演进：G4 拆成 exec/desktop 两个门禁 profile（无头纪律保留给 exec 模式）；加资源上限（Archive 实测每只 Chromium ~800MB）✅ 2026-09-16 已落地：`--profile exec|desktop`（D1 几何单源/D2 端口/D3 双向鉴权/D4 Computer 往返/D5 桌面死语义），双 profile 活体全绿后默认翻转（独立 commit），内存 cap 2g/4g 进 run 契约（schema 11）；
 
 **切片 C「人机面」**——让浏览器从"能打开"变"能登录"：
 

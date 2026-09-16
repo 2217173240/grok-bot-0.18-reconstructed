@@ -327,6 +327,17 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     // sandbox works and a hostile page never gets the container.
     assert.ok(desktop.args.includes("seccomp=unconfined"));
     assert.equal(cases[0][1].args.includes("seccomp=unconfined"), false);
+    // Memory caps: desktop headroom for several browsers, exec stays lean.
+    assert.ok(desktop.args.includes("--memory") && desktop.args.includes("4g"));
+    assert.ok(cases[0][1].args.includes("--memory") && cases[0][1].args.includes("2g"));
+    // The desktop plane is the default for the self-built image (dual gate
+    // profiles green); SAND_LOCAL_ADMIN_DESKTOP=0 opts back to headless, and
+    // the official image never gets a desktop it does not know.
+    const { resolveDesktopMode, SAND_LOCAL_ADMIN_DESKTOP_ENV } = loaded.module;
+    assert.equal(resolveDesktopMode({}, true), true);
+    assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "1" }, true), true);
+    assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "0" }, true), false);
+    assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "1" }, false), false);
     // No Mac-side directory, no plan — for either image: silently falling
     // back to a named volume would reinstate the dual track the contract
     // exists to remove.

@@ -192,12 +192,14 @@ do_start() {
     export SAND_LOCAL_ADMIN_TURN=host
     say "turns: host execution plane (experimental)"
   fi
-  # GROKBOT_DESKTOP=1 opts the Docker computer into the desktop plane
-  # (box-init-exec: desktop in the background, host as the foreground).
-  # Opt-in until the desktop gate profile is green; the default stays exec.
-  if [ "${GROKBOT_DESKTOP:-}" = "1" ]; then
+  # The desktop plane is the default computer (complete bot; both gate
+  # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.
+  if [ "${GROKBOT_DESKTOP:-}" = "0" ]; then
+    export SAND_LOCAL_ADMIN_DESKTOP=0
+    say "desktop: off (headless exec plane, GROKBOT_DESKTOP=0)"
+  else
     export SAND_LOCAL_ADMIN_DESKTOP=1
-    say "desktop: opt-in (box-init-exec topology, schema 9)"
+    say "desktop: on (default; GROKBOT_DESKTOP=0 for headless exec)"
   fi
 
   # Launch the binary directly — `open` would strip the environment.
