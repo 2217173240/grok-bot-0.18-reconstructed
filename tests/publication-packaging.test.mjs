@@ -188,6 +188,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(gates, /bash -c "echo \$MARKER"/);
   assert.match(gates, /15s performance sentinel/);
   assert.match(await readFile(path.join(repoRoot, "docker", "run-arm64-box.sh"), "utf8"), /SAND_WORKSPACE_ROOT=\/workspace/);
+  // Image freshness pin (A-3): one canonical implementation feeds the package
+  // stamp, the image label, and the gate; a present-but-stale image is
+  // refused with the rebuild action and must never reach the QEMU fallback.
+  assert.match(localDocker, /SELF_BUILT_DEPS_PIN_LABEL = "com\.grok-bot\.local-vm\.deps-pin"/);
+  assert.match(localDocker, /stale-image-refused/);
+  assert.match(localDocker, /refusing to run outdated dependencies or to silently fall back/);
+  assert.match(await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8"), /depsPin/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "build-arm64-box.sh"), "utf8"), /com\.grok-bot\.local-vm\.deps-pin=/);
+  assert.match(gates, /G0 image deps pin/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);

@@ -5,6 +5,7 @@
 #   docker/container-gates.sh [ready-wait-seconds]
 #
 # Gates:
+#   G0  image deps pin matches the repository's canonical inputs
 #   G1  gateway answers authenticated /health within the bounded wait, and on
 #       native arm64 the cold start stays under the 15s performance sentinel
 #   G2  the reconstructed exec-daemon reached ready on 1337 (host spawned it)
@@ -34,6 +35,17 @@ fi
 if ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
   echo "grok-bot-exec-box:arm64 not built; run docker/build-arm64-box.sh first" >&2
   exit 1
+fi
+
+# G0 — dependency pin: the image label must match the repository's canonical
+# inputs (the same pin the app stamps at package time). A stale-but-present
+# image is exactly the case presence checks cannot catch.
+EXPECTED_PIN=$(node "$REPO/scripts/lib/deps-pin.mjs")
+ACTUAL_PIN=$(docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}' 2>/dev/null || true)
+if [ -n "$EXPECTED_PIN" ] && [ "$ACTUAL_PIN" = "$EXPECTED_PIN" ]; then
+  pass "G0 image deps pin matches the repository (${EXPECTED_PIN:0:12}…)"
+else
+  fail "G0 image deps pin mismatch (image '${ACTUAL_PIN:-none}' != repo '${EXPECTED_PIN:-?}') — rebuild with docker/build-arm64-box.sh"
 fi
 
 # G1 — bounded gateway readiness (starts the container via the runner); on a

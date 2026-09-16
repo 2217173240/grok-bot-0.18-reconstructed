@@ -22,5 +22,11 @@ cp "$REPO/package.json" "$REPO/package-lock.json" "$CONTEXT/"
 mkdir -p "$CONTEXT/scripts"
 cp "$REPO/scripts/apply-third-party-patches.mjs" "$CONTEXT/scripts/"
 
-docker build -t grok-bot-exec-box:arm64 "$CONTEXT"
-docker image inspect grok-bot-exec-box:arm64 --format 'built: {{join .RepoTags ","}}'
+# Dependency pin: baked as an image label from the same canonical inputs the
+# app stamps at package time (scripts/lib/deps-pin.mjs is the one
+# implementation). The connector compares it and refuses a present-but-stale
+# image instead of quietly running outdated dependencies.
+DEPS_PIN=$(node "$REPO/scripts/lib/deps-pin.mjs")
+
+docker build --label "com.grok-bot.local-vm.deps-pin=$DEPS_PIN" -t grok-bot-exec-box:arm64 "$CONTEXT"
+docker image inspect grok-bot-exec-box:arm64 --format 'built: {{join .RepoTags ","}} deps-pin: {{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}'
