@@ -261,6 +261,40 @@ test("local admin host resolves when the gateway answers and passes deps + inert
   }
 });
 
+test("the self-built computer plan converges every file surface on one bind-mounted workspace", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  try {
+    const base = {
+      hostMainPath: "/staged/sand-host/host-main.cjs",
+      boxExecDaemonDir: "/staged/box-exec-daemon",
+      token: "t".repeat(40),
+      hostSha256: "a".repeat(64),
+      boxExecDaemonSha256: "b".repeat(64),
+    };
+    const custom = loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace" });
+    assert.equal(custom.custom, true);
+    const args = custom.args.join(" ");
+    // One workspace, bind-mounted from the Mac side (Finder-visible).
+    assert.match(args, /type=bind,src=\/Users\/me\/\.grokbot-local\/box-workspace,dst=\/workspace(?!\S)/);
+    assert.doesNotMatch(args, /--volume [^ ]+:\/workspace/);
+    // The daemon's workspaceRoot, the agent cwd, and the Mac-side alias are
+    // all pinned to the same directory — no second volume, no dual track.
+    assert.ok(custom.args.includes("SAND_WORKSPACE_ROOT=/workspace"));
+    assert.ok(custom.args.includes("SAND_AGENT_WORKSPACE=/workspace"));
+    assert.ok(custom.args.includes("SAND_WORKSPACE_HOST=/Users/me/.grokbot-local/box-workspace"));
+    // No Mac-side directory, no plan: silently falling back to a named volume
+    // would reinstate the dual track the contract exists to remove.
+    assert.throws(() => loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64" }), /requires a Mac-side workspace directory/);
+    // The official (QEMU) branch keeps its named volume and pins nothing.
+    const official = loaded.module.localDockerRunPlan(base);
+    assert.equal(official.custom, false);
+    assert.ok(official.args.join(" ").includes("--volume grok-bot-local-vm-workspace:/workspace"));
+    assert.ok(!official.args.some(argument => argument.startsWith("SAND_AGENT_WORKSPACE=")));
+  } finally {
+    await loaded.dispose();
+  }
+});
+
 test("local host connector opens a breaker after repeated failures and resets on recreate", async () => {
   const connectorLoaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
   const settingsLoaded = await loadModule("source/shared/node/settings/sand-settings-store.ts");

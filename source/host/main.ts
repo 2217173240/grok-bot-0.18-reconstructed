@@ -137,7 +137,10 @@ export function createProductionHostMainDependencies(
     ...(useExistingBoxExecDaemon ? {} : { startBoxExecDaemon: () => startBoxExecDaemonProcess({
         entryPath: resolveBoxExecDaemonEntry(),
         generated: ports.extensionHost.boxGenerated,
-        workspaceRoot: path.join(getSandRootDir(), "box-workspace"),
+        // SAND_WORKSPACE_ROOT converges the daemon's file surfaces with the
+        // agent cwd on one directory (the container pins both to the
+        // bind-mounted /workspace); unset keeps the sand-data layout.
+        workspaceRoot: process.env.SAND_WORKSPACE_ROOT?.trim() || path.join(getSandRootDir(), "box-workspace"),
         terminalsDirectory: path.join(getSandRootDir(), "box-terminals"),
         authToken: resolveExecDaemonAuthTokenFromEnv(),
         ...(ports.log === undefined ? {} : { log: ports.log }),

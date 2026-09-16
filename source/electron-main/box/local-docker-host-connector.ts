@@ -81,7 +81,7 @@ export function localDockerRunPlan(options: {
   readonly token: string;
   readonly hostSha256: string;
   readonly boxExecDaemonSha256: string;
-  readonly workspaceVolume?: string;
+  readonly workspaceHostPath?: string;
   readonly dataVolume?: string;
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
@@ -89,9 +89,6 @@ export function localDockerRunPlan(options: {
 }): LocalDockerRunPlan {
   const image = options.image ?? LOCAL_DOCKER_BOX_IMAGE;
   const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
-  // Fresh volume names for the self-built image: the official image's
-  // volumes are root-owned and the box user cannot mkdir inside them.
-  const workspaceVolume = options.workspaceVolume ?? (custom ? "grok-bot-local-vm-workspace-arm64" : "grok-bot-local-vm-workspace");
   const dataVolume = options.dataVolume ?? (custom ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data");
   const hasCredential = options.inferenceCredential != null;
   const common = [
@@ -104,7 +101,6 @@ export function localDockerRunPlan(options: {
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
     "--publish", "127.0.0.1:1340:1340",
-    "--volume", `${workspaceVolume}:/workspace`,
     "--volume", `${dataVolume}:/home/box/sand-data`,
     "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host/host-main.cjs,readonly`,
     "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
@@ -112,16 +108,24 @@ export function localDockerRunPlan(options: {
     ...(options.authMounts ?? []),
   ];
   if (custom) {
-    // Self-built image: native arm64, host as the container process, daemon
-    // spawned by the host (no SAND_USE_EXISTING_BOX_EXEC_DAEMON). Fresh
-    // volume names: the official image writes its volumes as root, and the
-    // box user here cannot mkdir inside them.
+    // One workspace, one owner: /workspace is a bind mount of the Mac-side
+    // directory (Finder-visible, Archive's MAC_BOT_WORKSPACE_HOST lesson), and
+    // every file-facing surface inside the box is pinned to it — the daemon's
+    // workspaceRoot, the Claude SDK cwd, and the upload root all resolve to
+    // /workspace instead of splitting across the data volume and a named
+    // volume. SAND_WORKSPACE_HOST tells in-box code where the same directory
+    // lives on the Mac so it can report a path the caller can open.
+    if (options.workspaceHostPath == null || options.workspaceHostPath.length === 0) {
+      throw new Error("The self-built computer requires a Mac-side workspace directory to bind-mount at /workspace.");
+    }
     return {
       image,
       custom,
       args: [...common,
         "--env", "SAND_DATA_ROOT=/home/box/sand-data",
+        "--env", "SAND_WORKSPACE_ROOT=/workspace", "--env", "SAND_AGENT_WORKSPACE=/workspace", "--env", `SAND_WORKSPACE_HOST=${options.workspaceHostPath}`,
         "--env", "NODE_PATH=/home/box/deps/node_modules", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules",
+        "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
         "--entrypoint", "/usr/local/bin/node",
         image, "/home/box/sand-host/host-main.cjs"],
     };
@@ -132,6 +136,7 @@ export function localDockerRunPlan(options: {
     custom,
     args: [...common,
       "--platform", "linux/amd64",
+      "--volume", "grok-bot-local-vm-workspace:/workspace",
       "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps",
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
@@ -141,7 +146,10 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-export const LOCAL_DOCKER_SCHEMA_VERSION = "6";
+// Schema 7: /workspace moved from a named volume to a bind mount of the
+// Mac-side directory — the drift forces existing schema-6 containers to be
+// replaced, because -v/--mount only take effect at docker run.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
 // sibling layout. v1 (flat) directories are never reused.
@@ -358,6 +366,10 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     const started = await runDocker(["start", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!started.ok) throw new Error(`Could not start the local Docker VM: ${started.output}`);
   } else if (!current.exists) {
+    // The workspace bind mount must exist on the Mac before docker run: a
+    // docker-created directory would be root-owned and awkward outside Docker.
+    const workspaceHostPath = join(dirname(settingsPath), "box-workspace");
+    await mkdir(workspaceHostPath, { recursive: true });
     const authMounts = await localAuthMountArguments();
     const plan = localDockerRunPlan({
       image,
@@ -366,12 +378,16 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       token,
       hostSha256: hostBundle.sha256,
       boxExecDaemonSha256: hostBundle.boxExecDaemonSha256,
+      workspaceHostPath,
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
       ...(inferenceFile == null ? {} : { inferenceFileDir: dirname(inferenceFile) }),
     });
     const created = await runDocker(plan.args);
     if (!created.ok) throw new Error(`Could not create the local Docker VM: ${created.output}`);
+    // Dual-path report: the same directory seen from both sides, so tool
+    // output that mentions /workspace is actionable on the Mac.
+    if (plan.custom) appendLocalIntercept({ kind: "docker", event: "workspace-bind-mount", containerPath: "/workspace", hostPath: workspaceHostPath });
   }
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {

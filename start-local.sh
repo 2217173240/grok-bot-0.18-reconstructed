@@ -240,11 +240,12 @@ do_stop() {
   rm -f "$PID_FILE"
   # A Docker computer outlives the app by design (restart: unless-stopped) and
   # keeps the published gateway port; remove it so the next Mac-host start is
-  # not blocked. Named volumes persist the workspace.
+  # not blocked. The workspace is a bind mount — files stay in Finder view at
+  # $DATA_ROOT/box-workspace — and the sand-data volume persists.
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ]; then
     resolve_docker_host || true
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
-      docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace volumes persist)"
+      docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace persists at $DATA_ROOT/box-workspace)"
     fi
   fi
   say "note: the detached local-exec-daemon is left running by design; it reattaches on next start"
@@ -263,6 +264,9 @@ do_status() {
        ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
       say "image:       WARNING self-built arm64 image missing — default falls back to the emulated official image (QEMU); build with docker/build-arm64-box.sh"
     fi
+  fi
+  if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -d "$DATA_ROOT/box-workspace" ]; then
+    say "workspace:   $DATA_ROOT/box-workspace (Mac side of the container's /workspace)"
   fi
   if [ -f "$DATA_ROOT/mcp-servers.json" ]; then
     say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"

@@ -169,6 +169,13 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /official-image-qemu-fallback/);
   assert.match(localDocker, /officialImageQemuFallbackRecord\(imageChoice\)/);
   assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /self-built arm64 image missing/);
+  // One workspace, one owner: the container's /workspace is a bind mount of
+  // the Mac-side directory, and the daemon root, agent cwd, and Mac alias all
+  // converge on it (F2).
+  assert.match(localDocker, /SAND_AGENT_WORKSPACE=\/workspace/);
+  assert.match(localDocker, /SAND_WORKSPACE_ROOT=\/workspace/);
+  assert.match(localDocker, /workspace-bind-mount/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "main.ts"), "utf8"), /SAND_WORKSPACE_ROOT\?\.trim\(\) \|\| path\.join\(getSandRootDir\(\), "box-workspace"\)/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
