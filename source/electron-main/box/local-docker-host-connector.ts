@@ -22,17 +22,40 @@ export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironment
 export const SAND_LOCAL_ADMIN_IMAGE_ENV = "SAND_LOCAL_ADMIN_IMAGE";
 export const SELF_BUILT_EXEC_BOX_IMAGE = "grok-bot-exec-box:arm64";
 
-export function activeDockerImage(env: NodeJS.ProcessEnv = process.env): string {
-  return env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim() || LOCAL_DOCKER_BOX_IMAGE;
+// How the computer's image was chosen. The official image runs amd64 under
+// QEMU; keeping it as the no-build default preserves out-of-the-box usability,
+// but the choice must never be silent — the fallback carries a ledger record
+// and a status line so a 5-16x execution penalty is a fact the user can act on.
+export type DockerImageChoice =
+  | { readonly selection: "explicit"; readonly image: string }
+  | { readonly selection: "self-built"; readonly image: string }
+  | { readonly selection: "official-fallback"; readonly image: string; readonly reason: "self-built-image-missing" };
+
+export function decideDockerImage(env: NodeJS.ProcessEnv, selfBuiltImagePresent: boolean): DockerImageChoice {
+  const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
+  if (explicit != null && explicit.length > 0) return { selection: "explicit", image: explicit };
+  return selfBuiltImagePresent
+    ? { selection: "self-built", image: SELF_BUILT_EXEC_BOX_IMAGE }
+    : { selection: "official-fallback", image: LOCAL_DOCKER_BOX_IMAGE, reason: "self-built-image-missing" };
 }
 
-// Explicit image choice wins; otherwise prefer the self-built native image
-// when it exists locally, else the official (amd64/QEMU) image.
-async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
-  if (explicit != null && explicit.length > 0) return explicit;
+// The reachability seam for the fallback honesty contract: a default-path
+// fallback MUST map to an intercept record; explicit and native choices map to
+// none. Undefined means "nothing to annotate", never "annotation optional".
+export function officialImageQemuFallbackRecord(choice: DockerImageChoice): Readonly<Record<string, unknown>> | undefined {
+  if (choice.selection !== "official-fallback") return undefined;
+  return {
+    kind: "docker",
+    event: "official-image-qemu-fallback",
+    image: choice.image,
+    reason: choice.reason,
+    hint: "build the native image with docker/build-arm64-box.sh (5-16x faster than the emulated official image)",
+  };
+}
+
+async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env): Promise<DockerImageChoice> {
   const present = await runDocker(["image", "inspect", "--format", "1", SELF_BUILT_EXEC_BOX_IMAGE]);
-  return present.ok ? SELF_BUILT_EXEC_BOX_IMAGE : LOCAL_DOCKER_BOX_IMAGE;
+  return decideDockerImage(env, present.ok);
 }
 
 // Where the local-admin computer executes. Docker is the default when its
@@ -249,6 +272,9 @@ export async function getLocalDockerStatus(settingsPath: string): Promise<LocalD
 }
 
 let ensureInFlight: Promise<GatewayConnection> | undefined;
+// Written once per process: the image choice is re-derived on every connect,
+// the QEMU-fallback annotation is not — reconnects must not spam the ledger.
+let officialImageFallbackAnnotated = false;
 
 async function isDirectory(path: string): Promise<boolean> {
   try { return (await stat(path)).isDirectory(); } catch { return false; }
@@ -301,15 +327,24 @@ async function localAuthMountArguments(): Promise<string[]> {
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
   const token = await readOrCreateToken(settingsPath);
-  const hostBundle = await stageCurrentHostBundle(settingsPath);
-  const image = await resolveDockerImageForComputer();
-  if (image !== LOCAL_DOCKER_BOX_IMAGE) {
+  const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
+  if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
+  const imageChoice = await resolveDockerImageForComputer();
+  // Annotated, not silent: the default path without the self-built image runs
+  // the emulated official image. One record per process — reconnects must not
+  // spam the bounded ledger with the same fact.
+  const fallbackRecord = officialImageQemuFallbackRecord(imageChoice);
+  if (fallbackRecord != null && !officialImageFallbackAnnotated) {
+    officialImageFallbackAnnotated = true;
+    appendLocalIntercept(fallbackRecord);
+  }
+  const image = imageChoice.image;
+  if (imageChoice.selection === "explicit") {
     const present = await runDocker(["image", "inspect", "--format", "1", image]);
     if (!present.ok) throw new Error(`The local computer image ${image} is not built locally. Build it with docker/build-arm64-box.sh; refusing to silently fall back to the emulated official image.`);
   }
+  const hostBundle = await stageCurrentHostBundle(settingsPath);
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
-  const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
-  if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);

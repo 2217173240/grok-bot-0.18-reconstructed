@@ -159,6 +159,36 @@ async function loopbackPortBusy(port) {
   });
 }
 
+test("docker image selection annotates the QEMU fallback instead of hiding it", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  try {
+    const { decideDockerImage, officialImageQemuFallbackRecord, SELF_BUILT_EXEC_BOX_IMAGE, LOCAL_DOCKER_BOX_IMAGE, SAND_LOCAL_ADMIN_IMAGE_ENV } = loaded.module;
+    // An explicit pin wins whatever it points at and is never annotated.
+    const explicit = decideDockerImage({ [SAND_LOCAL_ADMIN_IMAGE_ENV]: "my-image:dev" }, false);
+    assert.equal(explicit.selection, "explicit");
+    assert.equal(explicit.image, "my-image:dev");
+    assert.equal(officialImageQemuFallbackRecord(explicit), undefined);
+    // Self-built image present → the native image, no annotation.
+    const native = decideDockerImage({}, true);
+    assert.equal(native.selection, "self-built");
+    assert.equal(native.image, SELF_BUILT_EXEC_BOX_IMAGE);
+    assert.equal(officialImageQemuFallbackRecord(native), undefined);
+    // Default path with the image missing → the official image MUST carry an
+    // annotation record: the fallback stays available, it just stops being
+    // silent. Reachability, not an error string.
+    const fallback = decideDockerImage({}, false);
+    assert.equal(fallback.selection, "official-fallback");
+    assert.equal(fallback.image, LOCAL_DOCKER_BOX_IMAGE);
+    const record = officialImageQemuFallbackRecord(fallback);
+    assert.notEqual(record, undefined, "a default-path QEMU fallback must map to an intercept record");
+    assert.equal(record.event, "official-image-qemu-fallback");
+    assert.equal(record.image, LOCAL_DOCKER_BOX_IMAGE);
+    assert.match(String(record.hint), /build-arm64-box\.sh/);
+  } finally {
+    await loaded.dispose();
+  }
+});
+
 test("local admin host failure carries the child exit code and output tail", async (t) => {
   if (await loopbackPortBusy(1340)) return t.skip("port 1340 is already bound");
   const loaded = await loadModule("source/electron-main/box/local-admin-host.ts");
