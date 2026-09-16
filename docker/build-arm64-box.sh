@@ -22,6 +22,7 @@ cp "$REPO/package.json" "$REPO/package-lock.json" "$CONTEXT/"
 mkdir -p "$CONTEXT/scripts" "$CONTEXT/docker/bin"
 cp "$REPO/scripts/apply-third-party-patches.mjs" "$CONTEXT/scripts/"
 cp "$REPO/docker/bin/box-init-exec" "$CONTEXT/docker/bin/box-init-exec"
+cp "$REPO/docker/bin/xtest-input-local.py" "$CONTEXT/docker/bin/xtest-input-local.py"
 
 # Dependency pin: baked as an image label from the same canonical inputs the
 # app stamps at package time (scripts/lib/deps-pin.mjs is the one

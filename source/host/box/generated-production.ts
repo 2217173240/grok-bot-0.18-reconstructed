@@ -21,6 +21,7 @@ import { ExecService } from "../../packages/proto/generated/agent/v1/exec_servic
 import {
   noMonitorComputerUseExecutor
 } from "../ports/box.js";
+import { localComputerUseExecutor } from "./local-computer-use.js";
 import type {
   BoxEnvironmentControlClient
 } from "./box-env.js";
@@ -223,6 +224,12 @@ export function createProductionBoxGeneratedPorts<
     withNoMonitorComputerUse(accessor): ProductionGeneratedBoxAccessor {
       return new CombinedResourceAccessor(accessor, [
         resourceEntry(computerUseExecutorResource, noMonitorComputerUseExecutor)
+      ]);
+    },
+
+    withLocalDesktopComputerUse(accessor): ProductionGeneratedBoxAccessor {
+      return new CombinedResourceAccessor(accessor, [
+        resourceEntry(computerUseExecutorResource, localComputerUseExecutor)
       ]);
     }
   };

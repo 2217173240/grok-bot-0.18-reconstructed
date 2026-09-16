@@ -322,6 +322,11 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     assert.equal(cases[0][1].args.includes("127.0.0.1:6080:6080"), false);
     assert.equal(cases[0][1].args.includes("/usr/local/bin/box-init-exec"), false);
     assert.ok(cases[0][1].args.includes("com.grok-bot.local-vm.desktop=0"));
+    // Relaxed seccomp is desktop-only: under the default profile Chromium's
+    // own sandbox cannot start (it dies instantly); relaxed, the browser
+    // sandbox works and a hostile page never gets the container.
+    assert.ok(desktop.args.includes("seccomp=unconfined"));
+    assert.equal(cases[0][1].args.includes("seccomp=unconfined"), false);
     // No Mac-side directory, no plan — for either image: silently falling
     // back to a named volume would reinstate the dual track the contract
     // exists to remove.
@@ -334,7 +339,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
 
 test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
   const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
-  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec"]);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py"]);
   const contents = ["alpha", "beta", "gamma"];
   assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
   // Concatenation order is part of the pin: reordering inputs must change it,
@@ -342,6 +347,24 @@ test("the self-built deps pin is canonical, deterministic, and order-sensitive",
   assert.notEqual(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([contents[1], contents[0], contents[2]]));
   const fromRepo = await depsPinModule.readDepsPin(repoRoot);
   assert.match(fromRepo, /^[0-9a-f]{64}$/);
+});
+
+test("the local computer-use executor enforces desktop geometry before touching input", async () => {
+  const loaded = await loadModule("source/host/box/local-computer-use.ts");
+  try {
+    const { localComputerUseExecutor, LOCAL_DESKTOP_GEOMETRY, localDesktopComputerUseEnabled } = loaded.module;
+    // Out-of-bounds coordinates fail before any input helper runs — the
+    // geometry mirror of box-common.sh SCREEN_GEOM is the boundary.
+    const result = await localComputerUseExecutor.execute({}, { toolCallId: "t", actions: [{ action: { case: "mouseMove", value: { coordinate: { x: LOCAL_DESKTOP_GEOMETRY.width, y: 10 } } } }] });
+    assert.equal(result.result.case, "error");
+    assert.match(result.result.value.error, /out of bounds/);
+    assert.match(result.result.value.error, /after 0 action/);
+    // The executor only mounts under the desktop opt-in.
+    assert.equal(localDesktopComputerUseEnabled({}), false);
+    assert.equal(localDesktopComputerUseEnabled({ SAND_LOCAL_ADMIN_DESKTOP: "1" }), true);
+  } finally {
+    await loaded.dispose();
+  }
 });
 
 test("local host connector opens a breaker after repeated failures and resets on recreate", async () => {

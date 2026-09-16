@@ -28,6 +28,7 @@ import type {
   PingResult
 } from "./loopback-sand-box.js";
 import { resolveExecDaemonAuthTokenFromEnv } from "./loopback-sand-box.js";
+import { localDesktopComputerUseEnabled } from "./local-computer-use.js";
 import type { ShellAccessor } from "./box-windows.js";
 
 export type ProductionBoxControlClient = BoxPingControlClient &
@@ -51,6 +52,8 @@ export interface ProductionBoxGeneratedPorts<
     assertFileReadAllowed: (path: string) => Promise<void>
   ): Accessor;
   withNoMonitorComputerUse(accessor: Accessor): Accessor;
+  /** The real desktop plane executor (XTEST input + desktop screenshots). */
+  withLocalDesktopComputerUse(accessor: Accessor): Accessor;
 }
 
 export type ErasedProductionBoxGeneratedPorts = ProductionBoxGeneratedPorts<
@@ -209,9 +212,14 @@ export function createProductionBoxInner<
   });
 
   if (options.sharedDesktop === false) {
+    // The desktop opt-in replaces the no-monitor stub with the real plane:
+    // XTEST input plus desktop-level screenshots, executed by this host
+    // process inside the box (DISPLAY is exported by box-init-exec).
     return createStandaloneProductionBoxInner(
       loopback,
-      accessor => generated.withNoMonitorComputerUse(accessor)
+      localDesktopComputerUseEnabled()
+        ? (accessor => generated.withLocalDesktopComputerUse(accessor))
+        : (accessor => generated.withNoMonitorComputerUse(accessor))
     );
   }
 

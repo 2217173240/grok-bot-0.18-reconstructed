@@ -183,7 +183,16 @@ export function localDockerRunPlan(options: {
     // the host lifecycle and desktop deaths surface via probes, not restarts).
     // Display env inheritance is baked into box-init-exec (DISPLAY=:1).
     const desktopEntrypoint = options.desktop === true
-      ? ["--entrypoint", "/usr/local/bin/box-init-exec", "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081"]
+      ? [
+          // Archive's measured trade-off: under the default docker seccomp
+          // profile Chromium's own sandbox cannot start (it dies instantly,
+          // leaving zombies); with seccomp relaxed the browser sandbox WORKS
+          // and a hostile page never gets the whole container (which holds
+          // the cookie library). Exec-plane containers keep default seccomp.
+          "--security-opt", "seccomp=unconfined",
+          "--entrypoint", "/usr/local/bin/box-init-exec",
+          "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081",
+        ]
       : ["--entrypoint", "/usr/local/bin/node"];
     return {
       image,
@@ -212,10 +221,10 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-// Schema 9: the desktop opt-in (SAND_LOCAL_ADMIN_DESKTOP=1) changes the
-// entrypoint to box-init-exec and carries a desktop mode label; the drift
-// replaces existing containers because entrypoints only apply at docker run.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "9";
+// Schema 10: desktop containers run with seccomp=unconfined so Chromium's
+// own sandbox can start (default seccomp kills it instantly); drift replaces
+// existing schema-9 desktop containers.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "10";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
