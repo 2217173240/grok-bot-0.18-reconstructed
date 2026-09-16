@@ -48,7 +48,7 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 1. `/workspace` 从 named volume 换 bind mount（Colima 共享 `/Users`），`resolveAgentWorkspace()` 与 daemon `workspaceRoot` 收敛到同一目录，Mac 侧可见（Archive `MAC_BOT_WORKSPACE_HOST` 双径回报现成）✅ 2026-09-16 已落地：schema 7、`SAND_WORKSPACE_ROOT`/`SAND_AGENT_WORKSPACE`/`SAND_WORKSPACE_HOST` 三 env 钉同一目录、创建即记 `workspace-bind-mount` 事件 + 状态面双径行；
 2. 默认路径缺自建镜像时的 QEMU 回退：记 intercept 事件 + `start-local` 状态面一行标注（保留开箱即用，修复"说的和做的不一致"）✅ 2026-09-16 已落地：`decideDockerImage` 判别选择 + `official-image-qemu-fallback` 账本事件（每进程一次）+ 状态面告警，活体双向验证过；
 3. 镜像新鲜度：package-lock + `apply-third-party-patches.mjs` hash 打进 image label，连接器/门禁比对，不符报"跑 `build-arm64-box.sh`"；
-4. G3 端到端化：容器内 node 直连 1337 走 ExecService 真 exec（顺带冷启动 <15s 阈值当性能哨兵）。
+4. G3 端到端化：容器内 node 直连 1337 走 ExecService 真 exec（顺带冷启动 <15s 阈值当性能哨兵）✅ 2026-09-16 已落地：`source/box-exec-daemon/smoke.ts`（同传输/Bearer/shellArgs 流）+ `scripts/daemon-smoke.mjs` 编排，G3 锚精确输出；冷启动哨兵原生 arm64 生效（实测 3s）；生产盒直打验证 `pwd=/workspace` 且 daemon 写入即时落到 Mac 侧。
 
 **为什么 A 先于一切**：桌面模式会把文件面 ×4（工作区、截图、下载目录、浏览器 profile）、端口面 ×5 翻进来。先修契约再扩面，否则每条裂缝复制成多条；反过来，A 做完后 B 只是"在好契约上加面"。
 
