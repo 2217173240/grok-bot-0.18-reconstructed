@@ -163,6 +163,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /return dockerAvailable \? "docker" : "mac-host"/);
   assert.match(localDocker, /refusing to silently fall back to the emulated official image/);
   assert.match(localDocker, /SELF_BUILT_EXEC_BOX_IMAGE/);
+  // The default-path fallback (self-built image missing, no explicit pin) is
+  // annotated, never silent: the choice maps to an intercept record and the
+  // status surface carries the same warning.
+  assert.match(localDocker, /official-image-qemu-fallback/);
+  assert.match(localDocker, /officialImageQemuFallbackRecord\(imageChoice\)/);
+  assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /self-built arm64 image missing/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
