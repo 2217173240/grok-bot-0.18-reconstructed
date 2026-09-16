@@ -1,0 +1,34 @@
+#!/bin/bash
+# box-init 的 exec 变体：桌面面在后台，重建的 host 转前台（决定记录见主仓库
+# docs/ROADMAP.md 的 B1 拓扑决定）。镜像基底自带本脚本依赖的全部零件
+# （start-desktop.sh / box-common.sh / sand-window-router.mjs）。
+#
+#   桌面组件不监督不重启：死由探测暴露（xdpyinfo / VNC·noVNC 端口），
+#   修复走 recreate。exec 之后 node 就是 PID1，容器生命周期 == host 生命周期，
+#   后台组件归它收尸。
+set -u
+source /usr/local/bin/box-common.sh
+
+log "box-init-exec: 桌面面后台 + host 前台"
+
+# 休眠唤醒/重启会复用可写层，旧的 X 锁还在会让 Xvfb 以为显示被占用。
+rm -f /tmp/.X11-unix/X* /tmp/.X*-lock 2>/dev/null
+mkdir -p "$TOKEN_DIR" "$NOVNC_TOKEN_DIR" "$SUPERVISE_DIR" /home/box/sand-data
+
+# 主屏（自带 5900 画面与 6080 入口；浏览器不在这里起——按需另起，无头纪律）。
+start-desktop.sh "$PRIMARY_DISPLAY" || { log "主屏起不来，看 /tmp/xvfb:1.log 等"; exit 1; }
+
+# 副屏画面共用入口（6081，TokenFile 同一个凭证目录）。
+websockify --web=/usr/share/novnc/ \
+  --token-plugin=TokenFile --token-source="$NOVNC_TOKEN_DIR" \
+  "$NOVNC_FORKS" >/tmp/novnc-forks.log 2>&1 &
+
+# 窗口路由器（1339，多窗口契约在 S-3 接线）。
+node /usr/local/bin/sand-window-router.mjs >/tmp/router.log 2>&1 &
+
+log "桌面面就绪：屏 :$PRIMARY_DISPLAY，画面 5900，入口 $NOVNC_PRIMARY/$NOVNC_FORKS，路由器 $ROUTER_PORT——host 转前台"
+
+# S-3 的浏览器与 Computer 工具都要能找到主屏。
+export DISPLAY=":$PRIMARY_DISPLAY"
+
+exec /usr/local/bin/node "$@"

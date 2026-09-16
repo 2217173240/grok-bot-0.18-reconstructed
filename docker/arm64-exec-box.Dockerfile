@@ -44,6 +44,16 @@ RUN mkdir -p /home/box/sand-host /home/box/box-exec-daemon /home/box/sand-data /
 ENV NODE_PATH=/home/box/deps/node_modules \
     SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules
 
+# The exec-variant entrypoint (desktop plane in the background, host as the
+# foreground via exec) — see docs/ROADMAP.md B1. Placed after the npm ci layer
+# so editing the script does not invalidate the expensive dependency layer.
+COPY --chown=box:box docker/bin/box-init-exec /usr/local/bin/box-init-exec
+USER root
+RUN chmod 0755 /usr/local/bin/box-init-exec
+USER box
+
 # Keep the Archive entrypoint (desktop on the main display); the gateway and
 # daemon are spawned by the bind-mounted host process, not by the image.
+# The connector overrides the entrypoint per mode: box-init-exec when
+# SAND_LOCAL_ADMIN_DESKTOP=1 (schema 9+), node otherwise.
 CMD ["/usr/local/bin/box-init"]

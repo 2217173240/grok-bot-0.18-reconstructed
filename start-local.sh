@@ -192,6 +192,13 @@ do_start() {
     export SAND_LOCAL_ADMIN_TURN=host
     say "turns: host execution plane (experimental)"
   fi
+  # GROKBOT_DESKTOP=1 opts the Docker computer into the desktop plane
+  # (box-init-exec: desktop in the background, host as the foreground).
+  # Opt-in until the desktop gate profile is green; the default stays exec.
+  if [ "${GROKBOT_DESKTOP:-}" = "1" ]; then
+    export SAND_LOCAL_ADMIN_DESKTOP=1
+    say "desktop: opt-in (box-init-exec topology, schema 9)"
+  fi
 
   # Launch the binary directly — `open` would strip the environment.
   "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 &
@@ -272,6 +279,13 @@ do_status() {
     say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"
   fi
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
+  if resolve_docker_host && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
+    if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
+      say "computer:    desktop plane (box-init-exec, opt-in)"
+    else
+      say "computer:    exec plane (headless)"
+    fi
+  fi
   if [ -n "$hpid" ]; then say "host:        running (pid $hpid)"; else say "host:        not running"; fi
   if pgrep -f "dist/local-exec-daemon/main\.cjs" >/dev/null 2>&1; then
     say "exec-daemon: running (pid $(pgrep -f "dist/local-exec-daemon/main\.cjs" | head -1))"

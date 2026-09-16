@@ -136,6 +136,7 @@ export function localDockerRunPlan(options: {
   readonly workspaceHostPath?: string;
   readonly dataVolume?: string;
   readonly depsPin?: string;
+  readonly desktop?: boolean;
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
   readonly inferenceFileDir?: string;
@@ -160,6 +161,7 @@ export function localDockerRunPlan(options: {
     "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${options.boxExecDaemonSha256}`,
     "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
+    "--label", `${LOCAL_DOCKER_DESKTOP_LABEL}=${options.desktop === true ? "1" : "0"}`,
     "--label", `${SELF_BUILT_DEPS_PIN_LABEL}=${options.depsPin ?? "unknown"}`,
     "--restart", "unless-stopped",
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
@@ -174,15 +176,22 @@ export function localDockerRunPlan(options: {
     ...(options.authMounts ?? []),
   ];
   if (custom) {
-    // Self-built image: native arm64, host as the container process, daemon
-    // spawned by the host (no SAND_USE_EXISTING_BOX_EXEC_DAEMON).
+    // Self-built image: native arm64, daemon spawned by the host (no
+    // SAND_USE_EXISTING_BOX_EXEC_DAEMON). Desktop opt-in switches the
+    // entrypoint to box-init-exec: desktop plane in the background, host as
+    // the foreground via exec (B1 topology — the container lifecycle equals
+    // the host lifecycle and desktop deaths surface via probes, not restarts).
+    // Display env inheritance is baked into box-init-exec (DISPLAY=:1).
+    const desktopEntrypoint = options.desktop === true
+      ? ["--entrypoint", "/usr/local/bin/box-init-exec"]
+      : ["--entrypoint", "/usr/local/bin/node"];
     return {
       image,
       custom,
       args: [...common,
         "--env", "SAND_DATA_ROOT=/home/box/sand-data",
         "--env", "NODE_PATH=/home/box/deps/node_modules", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules",
-        "--entrypoint", "/usr/local/bin/node",
+        ...desktopEntrypoint,
         image, "/home/box/sand-host/host-main.cjs"],
     };
   }
@@ -203,12 +212,12 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-// Schema 8: the official-image branch converges on the shared workspace
-// contract (bind mount + env pins — schema 7 had left it on a named volume),
-// and containers now carry the app's expected deps pin for drift detection.
-// The drift forces replacement of existing containers, because -v/--mount
-// only take effect at docker run.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "8";
+// Schema 9: the desktop opt-in (SAND_LOCAL_ADMIN_DESKTOP=1) changes the
+// entrypoint to box-init-exec and carries a desktop mode label; the drift
+// replaces existing containers because entrypoints only apply at docker run.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "9";
+export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
+export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
 // sibling layout. v1 (flat) directories are never reused.
@@ -311,9 +320,9 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "" };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
     return {
@@ -325,6 +334,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
+      desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
     };
   } catch { throw new Error("Docker returned malformed container inspection data."); }
 }
@@ -421,17 +431,22 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   }
   const hostBundle = await stageCurrentHostBundle(settingsPath);
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
+  // Desktop mode is opt-in (SAND_LOCAL_ADMIN_DESKTOP=1) until the dual gate
+  // profiles are green; the flip is a separate, deliberate change.
+  const desktop = process.env[SAND_LOCAL_ADMIN_DESKTOP_ENV] === "1";
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
   // Pin drift on an existing container means it predates the current app's
-  // dependencies: replace it, the same as a schema or host-bundle change.
+  // dependencies: replace it, the same as a schema or host-bundle change. A
+  // desktop-mode mismatch replaces too — the entrypoint only applies at run.
   const pinDrifted = expectedDepsPin != null && inspected.depsPin !== expectedDepsPin;
-  if (inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || (inferenceCredential != null && !inspected.hasInferenceCredential))) {
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || inspected.desktop !== desktop || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
   }
-  const shouldReplace = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const shouldReplace = drifted;
   const current = shouldReplace ? await inspectContainer() : inspected;
   if (current.exists && !current.running) {
     const started = await runDocker(["start", LOCAL_DOCKER_BOX_CONTAINER]);
@@ -450,6 +465,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       hostSha256: hostBundle.sha256,
       boxExecDaemonSha256: hostBundle.boxExecDaemonSha256,
       workspaceHostPath,
+      ...(desktop ? { desktop } : {}),
       ...(expectedDepsPin == null ? {} : { depsPin: expectedDepsPin }),
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
