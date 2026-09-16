@@ -315,6 +315,11 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     const desktop = loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", desktop: true });
     assert.ok(desktop.args.includes("/usr/local/bin/box-init-exec"));
     assert.ok(desktop.args.includes("com.grok-bot.local-vm.desktop=1"));
+    // The noVNC entries publish to the Mac loopback only in desktop mode —
+    // the human handover surface; the exec plan must not publish them.
+    assert.ok(desktop.args.includes("127.0.0.1:6080:6080"));
+    assert.ok(desktop.args.includes("127.0.0.1:6081:6081"));
+    assert.equal(cases[0][1].args.includes("127.0.0.1:6080:6080"), false);
     assert.equal(cases[0][1].args.includes("/usr/local/bin/box-init-exec"), false);
     assert.ok(cases[0][1].args.includes("com.grok-bot.local-vm.desktop=0"));
     // No Mac-side directory, no plan — for either image: silently falling
@@ -329,7 +334,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
 
 test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
   const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
-  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile"]);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec"]);
   const contents = ["alpha", "beta", "gamma"];
   assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
   // Concatenation order is part of the pin: reordering inputs must change it,

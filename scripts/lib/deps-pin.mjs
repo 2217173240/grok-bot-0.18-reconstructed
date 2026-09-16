@@ -15,6 +15,7 @@ export const DEPS_PIN_FILES = [
   "package-lock.json",
   "scripts/apply-third-party-patches.mjs",
   "docker/arm64-exec-box.Dockerfile",
+  "docker/bin/box-init-exec",
 ];
 
 export function computeDepsPin(contents) {
