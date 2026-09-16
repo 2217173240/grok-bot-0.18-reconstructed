@@ -163,6 +163,10 @@ export function localDockerRunPlan(options: {
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
     "--label", `${LOCAL_DOCKER_DESKTOP_LABEL}=${options.desktop === true ? "1" : "0"}`,
     "--label", `${SELF_BUILT_DEPS_PIN_LABEL}=${options.depsPin ?? "unknown"}`,
+    // Memory cap: ~200MB base + ~800MB per Chromium, inside a 6GiB Colima VM
+    // — the desktop plane gets headroom for several browsers, the exec plane
+    // stays lean. The cap keeps a runaway browser from starving the host.
+    "--memory", options.desktop === true ? "4g" : "2g",
     "--restart", "unless-stopped",
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
     "--env", "SAND_WORKSPACE_ROOT=/workspace", "--env", "SAND_AGENT_WORKSPACE=/workspace", "--env", `SAND_WORKSPACE_HOST=${options.workspaceHostPath}`,
@@ -221,12 +225,21 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-// Schema 10: desktop containers run with seccomp=unconfined so Chromium's
-// own sandbox can start (default seccomp kills it instantly); drift replaces
-// existing schema-9 desktop containers.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "10";
+// Schema 11: memory caps land on the run contract (2g exec, 4g desktop —
+// the Archive measurement: ~200MB base + ~800MB per Chromium inside a 6GiB
+// Colima VM). Drift replaces existing schema-10 containers.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "11";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
+
+// The desktop plane is the DEFAULT for the self-built computer (the goal is
+// the complete bot; both gate profiles are green). SAND_LOCAL_ADMIN_DESKTOP=0
+// opts back to the headless exec plane; the official image never gets a
+// desktop (its branch does not know the contract).
+export function resolveDesktopMode(env: NodeJS.ProcessEnv, customImage: boolean): boolean {
+  if (env[SAND_LOCAL_ADMIN_DESKTOP_ENV]?.trim() === "0") return false;
+  return customImage;
+}
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
 // sibling layout. v1 (flat) directories are never reused.
@@ -440,9 +453,9 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   }
   const hostBundle = await stageCurrentHostBundle(settingsPath);
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
-  // Desktop mode is opt-in (SAND_LOCAL_ADMIN_DESKTOP=1) until the dual gate
-  // profiles are green; the flip is a separate, deliberate change.
-  const desktop = process.env[SAND_LOCAL_ADMIN_DESKTOP_ENV] === "1";
+  // Desktop mode: default for the self-built image once the dual gate
+  // profiles were green (S-4); SAND_LOCAL_ADMIN_DESKTOP=0 opts out.
+  const desktop = resolveDesktopMode(process.env, image !== LOCAL_DOCKER_BOX_IMAGE);
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
