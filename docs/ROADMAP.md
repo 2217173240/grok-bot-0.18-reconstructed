@@ -52,6 +52,22 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 
 **为什么 A 先于一切**：桌面模式会把文件面 ×4（工作区、截图、下载目录、浏览器 profile）、端口面 ×5 翻进来。先修契约再扩面，否则每条裂缝复制成多条；反过来，A 做完后 B 只是"在好契约上加面"。
 
+### B1 拓扑决定（2026-09-16，S-1 落地版）
+
+1. **PID1 = host**。入口是 box-init 的 exec 变体（镜像内 `/usr/local/bin/box-init-exec`）：
+   起桌面面（start-desktop.sh 主屏 → 自带 6080 入口；6081 forks 入口与 1339 路由器后台）
+   后 `exec /usr/local/bin/node host-main.cjs` 转前台。不造新 supervisor——Archive 的
+   register-pid 监督表语义保留在 start-desktop.sh 内部，用于精确拆除；容器级收尸归 Docker。
+   **不并入**：box-service(18765) 是 Q4 明确不做；session-sync 归 C3（S-7）。
+2. **桌面组件不自动重启**。死由探测暴露（xdpyinfo / VNC·noVNC 端口，"探活必须打端口"），
+   修复走 recreate——不做机械重试。host 侧 S-3 的 Computer 工具遇到死桌面诚实报错。
+3. **`--restart unless-stopped` 交互**：host 崩 → 容器整体重启（桌面面随 PID1 一起回来）；
+   桌面崩 → 容器活着、host 活着、门禁/探测抓（S-4 的 desktop profile 断言这一条）。
+4. **opt-in 先行**：`SAND_LOCAL_ADMIN_DESKTOP=1`（start-local `GROKBOT_DESKTOP=1`）才走
+   desktop 入口；默认仍 exec 入口，**翻转推迟到 S-4 双 profile 全绿后**（门禁先行，PR #7 模式）。
+   run 契约变更 → schema 9 + `com.grok-bot.local-vm.desktop` label（0/1 进漂移检测）。
+   host 进程继承 `DISPLAY=:1`（S-3 的浏览器/Computer 工具要用）。
+
 **切片 B「桌面模式」**——唤醒睡着的界面：
 
 1. **先做拓扑决定**（其余三件事的地基）：推荐 box-init 出一个 exec 变体——起桌面+路由后台、`exec node host-main.cjs` 当前台（进程收尸归 Docker；避免再造 supervisor）；

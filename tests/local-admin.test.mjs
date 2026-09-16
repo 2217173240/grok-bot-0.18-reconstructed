@@ -308,6 +308,15 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     }
     assert.equal(cases[0][1].custom, true);
     assert.equal(cases[1][1].custom, false);
+    // Desktop opt-in (B1 topology): the entrypoint becomes box-init-exec so
+    // the desktop plane runs in the background and the host is the foreground
+    // via exec; the mode rides as a label for drift replacement. The default
+    // plan keeps the plain node entrypoint and the headless discipline.
+    const desktop = loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", desktop: true });
+    assert.ok(desktop.args.includes("/usr/local/bin/box-init-exec"));
+    assert.ok(desktop.args.includes("com.grok-bot.local-vm.desktop=1"));
+    assert.equal(cases[0][1].args.includes("/usr/local/bin/box-init-exec"), false);
+    assert.ok(cases[0][1].args.includes("com.grok-bot.local-vm.desktop=0"));
     // No Mac-side directory, no plan — for either image: silently falling
     // back to a named volume would reinstate the dual track the contract
     // exists to remove.

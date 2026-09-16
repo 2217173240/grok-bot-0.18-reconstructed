@@ -197,6 +197,13 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8"), /depsPin/);
   assert.match(await readFile(path.join(repoRoot, "docker", "build-arm64-box.sh"), "utf8"), /com\.grok-bot\.local-vm\.deps-pin=/);
   assert.match(gates, /G0 image deps pin/);
+  // Desktop opt-in (B1): box-init-exec topology, mode label, opt-in env.
+  assert.match(localDocker, /SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP"/);
+  assert.match(localDocker, /box-init-exec/);
+  assert.match(localDocker, /inspected\.desktop !== desktop/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /exec \/usr\/local\/bin\/node/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /box-init-exec/);
+  assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /GROKBOT_DESKTOP/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
