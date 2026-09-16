@@ -34,11 +34,13 @@ docker run --detach --name "$NAME" \
   --env "SAND_GATEWAY_TOKEN=$TOKEN" \
   --env SAND_GATEWAY_REQUIRE_AUTH=1 \
   --env SAND_DATA_ROOT=/home/box/sand-data \
+  --env SAND_WORKSPACE_ROOT=/workspace \
+  --env SAND_AGENT_WORKSPACE=/workspace \
   --publish "127.0.0.1:${GATEWAY_PORT}:1340" \
   --mount "type=bind,src=$V2DIR/sand-host/host-main.cjs,dst=/home/box/sand-host/host-main.cjs,readonly" \
   --mount "type=bind,src=$V2DIR/box-exec-daemon,dst=/home/box/box-exec-daemon,readonly" \
   --volume grok-bot-exec-eval-data:/home/box/sand-data \
-  --volume grok-bot-exec-eval-workspace:/home/box/workspace \
+  --volume grok-bot-exec-eval-workspace:/workspace \
   "$IMAGE" /home/box/sand-host/host-main.cjs >/dev/null
 
 echo "container $NAME up; waiting up to ${WAIT}s for the gateway (host spawns the daemon itself)"

@@ -176,6 +176,18 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /SAND_WORKSPACE_ROOT=\/workspace/);
   assert.match(localDocker, /workspace-bind-mount/);
   assert.match(await readFile(path.join(repoRoot, "source", "host", "main.ts"), "utf8"), /SAND_WORKSPACE_ROOT\?\.trim\(\) \|\| path\.join\(getSandRootDir\(\), "box-workspace"\)/);
+  // The container gate must exercise the daemon's real wire (ConnectRPC on
+  // 1337, Bearer credential, workspace cwd) — not a docker-exec shell that
+  // bypasses protocol, token, and path mapping (F3).
+  const smoke = await readFile(path.join(repoRoot, "source", "box-exec-daemon", "smoke.ts"), "utf8");
+  assert.match(smoke, /SAND_BOX_EXEC_DAEMON_AUTH_TOKEN/);
+  assert.match(smoke, /message\.case !== "shellResult"/);
+  assert.match(smoke, /workingDirectory: "\/workspace"/);
+  const gates = await readFile(path.join(repoRoot, "docker", "container-gates.sh"), "utf8");
+  assert.match(gates, /scripts\/daemon-smoke\.mjs/);
+  assert.doesNotMatch(gates, /bash -c "echo \$MARKER"/);
+  assert.match(gates, /15s performance sentinel/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "run-arm64-box.sh"), "utf8"), /SAND_WORKSPACE_ROOT=\/workspace/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);
   // Local admin never mints official credentials.
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/box/box-host-connector.ts"), "utf8"), /if \(isLocalAdminEnabled\(\)\) return undefined;/);
