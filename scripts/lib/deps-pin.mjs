@@ -16,6 +16,7 @@ export const DEPS_PIN_FILES = [
   "scripts/apply-third-party-patches.mjs",
   "docker/arm64-exec-box.Dockerfile",
   "docker/bin/box-init-exec",
+  "docker/bin/xtest-input-local.py",
 ];
 
 export function computeDepsPin(contents) {

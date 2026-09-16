@@ -214,6 +214,16 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(boxInitExec, /websockify\?token=%s/);
   assert.match(boxInitExec, /novnc-url/);
   assert.match(localDocker, /127\.0\.0\.1:6080:6080/);
+  // The real Computer tool (B3): XTEST input via the in-image helper plus
+  // desktop-level screenshots, mounted only under the desktop opt-in.
+  const localComputerUse = await readFile(path.join(repoRoot, "source", "host", "box", "local-computer-use.ts"), "utf8");
+  assert.match(localComputerUse, /xtest-input-local\.py/);
+  assert.match(localComputerUse, /LOCAL_DESKTOP_GEOMETRY = \{ width: 1280, height: 800 \}/);
+  assert.match(localComputerUse, /xwd -root/);
+  assert.match(localComputerUse, /cursor position query is not available/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /localDesktopComputerUseEnabled\(\)\s*\?\s*\(accessor => generated\.withLocalDesktopComputerUse\(accessor\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "generated-production.ts"), "utf8"), /resourceEntry\(computerUseExecutorResource, localComputerUseExecutor\)/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /xtest-input-local\.py/);
   assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /box-init-exec/);
   assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /GROKBOT_DESKTOP/);
   assert.match(localDocker, /stopLocalAdminHost\(\);/);

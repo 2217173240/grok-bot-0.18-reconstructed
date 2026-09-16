@@ -72,7 +72,7 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 
 1. **先做拓扑决定**（其余三件事的地基）：推荐 box-init 出一个 exec 变体——起桌面+路由后台、`exec node host-main.cjs` 当前台（进程收尸归 Docker；避免再造 supervisor）；
 2. 端口与 token：6080/6081/1339 publish 到回环；noVNC token 用 Archive `novnc-auth.mjs` 的随机签发（镜像里现成的 TokenFile 机制，**别用显示号**）；
-3. Computer 去 stub：XTEST 输入 + 整屏截图（Archive 参考实现）；浏览器侧零改动（`driver-v2.mjs` 自包含）；
+3. Computer 去 stub：XTEST 输入 + 整屏截图（Archive 参考实现）；浏览器侧零改动（`driver-v2.mjs` 自包含）✅ 2026-09-16 已落地：`local-computer-use.ts` 执行器（仅 desktop opt-in 挂载）+ `docker/bin/xtest-input-local.py`（Archive ctypes 核心扩 move/down/up）；截图走 `xwd|convert` 整屏、落 /workspace 可 Mac 侧读取；几何镜像 1280x800 有单测；桌面容器 `seccomp=unconfined`（schema 10）否则 Chromium 自沙箱秒死成僵尸；活体：点击 dock 启动真浏览器 + 窗口截图确认；
 4. 契约演进：G4 拆成 exec/desktop 两个门禁 profile（无头纪律保留给 exec 模式）；加资源上限（Archive 实测每只 Chromium ~800MB）。
 
 **切片 C「人机面」**——让浏览器从"能打开"变"能登录"：

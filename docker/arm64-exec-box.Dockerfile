@@ -45,11 +45,13 @@ ENV NODE_PATH=/home/box/deps/node_modules \
     SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules
 
 # The exec-variant entrypoint (desktop plane in the background, host as the
-# foreground via exec) — see docs/ROADMAP.md B1. Placed after the npm ci layer
-# so editing the script does not invalidate the expensive dependency layer.
+# foreground via exec) and the XTEST input helper for the Computer tool — see
+# docs/ROADMAP.md B1/B3. Placed after the npm ci layer so editing these does
+# not invalidate the expensive dependency layer.
 COPY --chown=box:box docker/bin/box-init-exec /usr/local/bin/box-init-exec
+COPY --chown=box:box docker/bin/xtest-input-local.py /usr/local/bin/xtest-input-local.py
 USER root
-RUN chmod 0755 /usr/local/bin/box-init-exec
+RUN chmod 0755 /usr/local/bin/box-init-exec /usr/local/bin/xtest-input-local.py
 USER box
 
 # Keep the Archive entrypoint (desktop on the main display); the gateway and
