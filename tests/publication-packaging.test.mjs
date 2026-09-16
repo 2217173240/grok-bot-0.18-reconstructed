@@ -104,6 +104,10 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /maxTurns: 8/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
+  // Local-admin turns carry the local identity: the assistant must know it IS
+  // the sandbox and never present cursor/xai remotes as its backend.
+  assert.match(providers, /there is no cloud sandbox behind you/i);
+  assert.match(providers, /isLocalAdminEnabled\(\) \? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES/);
   assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
   assert.match(providers, /OpenRouter needs OPENROUTER_API_KEY/);

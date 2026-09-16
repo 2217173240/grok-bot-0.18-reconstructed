@@ -274,11 +274,26 @@ function recordClaudeToolTraffic(message: SDKMessage): void {
   }
 }
 
-const CLAUDE_LOCAL_TOOLS_PROMPT = [
+const CLAUDE_LOCAL_TOOLS_PROMPT_LINES = [
   "You have real local tools (Bash, file read/write/edit, search) for this machine's workspace — your current working directory.",
   "When asked to run a command, inspect files, or check this machine, actually call the tools and report their real output.",
   "Never simulate, guess, or invent command output or file contents. If a tool call is denied or fails, say so plainly and show the real error.",
-].join("\n");
+];
+
+// Local admin runs with no cloud behind it. Without this block the assistant
+// inherits the stock cloud-centric self-image and answers sandbox questions
+// by probing remote endpoints as if they were its backend (observed live:
+// asked to "check the cloud sandbox", it verified connectivity to the very
+// endpoints this deployment is independent of).
+const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
+  "This deployment is fully local: your computer IS the sandbox — an isolated Linux box running on this Mac, with its workspace at your current working directory. There is no cloud sandbox behind you.",
+  "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
+  "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
+];
+
+function claudeLocalToolsPrompt(): string {
+  return [...CLAUDE_LOCAL_TOOLS_PROMPT_LINES, ...(isLocalAdminEnabled() ? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES : [])].join("\n");
+}
 
 function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
   const executable = resolveClaudeCodeCliPath();
@@ -291,7 +306,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     try {
       let final: SDKResultMessage | undefined;
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
-      for await (const message of queryClaude({ prompt: providerPrompt(messages, CLAUDE_LOCAL_TOOLS_PROMPT), options: {
+      for await (const message of queryClaude({ prompt: providerPrompt(messages, claudeLocalToolsPrompt()), options: {
         pathToClaudeCodeExecutable: executable,
         cwd: resolveAgentWorkspace(),
         tools: [...CLAUDE_LOCAL_TOOLS, ...(mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"])],
