@@ -15,12 +15,20 @@ export function isCursorProductionBackendUrl(url: string): boolean {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
     if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".lclhst.build")) return false;
+    // The zero-remote contract covers both remote families the goal names
+    // (cursor and xai). No xai call sites exist in this tree today; they are
+    // listed anyway so a future one is blocked by the guard from day one
+    // instead of being discovered by egress.
     return hostname === "api2.cursor.sh"
       || hostname === "api3.cursor.sh"
       || hostname === "authenticator.cursor.sh"
       || hostname === "cursor.com"
       || hostname.endsWith(".cursor.sh")
-      || hostname.endsWith(".cursor.com");
+      || hostname.endsWith(".cursor.com")
+      || hostname === "x.ai"
+      || hostname.endsWith(".x.ai")
+      || hostname === "grok.com"
+      || hostname.endsWith(".grok.com");
   } catch {
     return false;
   }

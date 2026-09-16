@@ -73,6 +73,18 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 - 不并入 Archive 的 `:18765` 窗口服务与 mcp-server（driver 自包含，最小合并集 = box-image + 行为规格）。
 - 多屏配额等运行时调参，不做结构性工作。
 
+## 4.5 横切：零远端证明 gate ✅（2026-09-16，S-0）
+
+切片 B 开线前落地。出口清单以已 patch 的调用点为准（connect-node 绕过 fetch 拦截的教训）：
+fetch 全局拦截（`blocked-fetch` 记账+抛错）、cursor-inference / cursor-marketplace 两处
+connect-node 传输（上游 fail-closed），清单由 `tests/zero-remote.test.mjs` 钉死——新出口
+文件出现即测试失败，强迫有意识的清单决策。matcher 覆盖 cursor+xai 两族。
+`scripts/zero-remote-live.sh` = 活体剧本（重启→真工具调用→关停→窗口+全量账本断言）；
+分类器只认 URL 形状字段（`url`/`baseUrl`/`backendUrl`/`endpoint`），文本提及不算出网声明
+（agent 命令串/日志尾里的域名是审计文本，网络层独立性由毕业验收封锁证明）。
+活体基线：1905 行账本、470 次 blocked-fetch、0 出网观测；伪造违规行必被抓（exit 1）。
+已知边界：turn 级 API 驱动待 pr/14 落地后扩展剧本。
+
 ## 5. 与旧清单的对照（重排了什么）
 
 | 旧条目 | 去向 |
