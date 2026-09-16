@@ -79,11 +79,15 @@ const verification = await verifyReconstructedMacPackage({
 console.log(`Packaged application: ${outputApp} (${verification.runtime.nodeFileCount} native manifest entries, ${verification.runtime.runtimeFileCount} unpacked runtime files)`);
 
 // Freshness stamp: launch tooling compares this against the repository HEAD so
-// a silently failed rebuild can never ship as a stale dist unnoticed.
+// a silently failed rebuild can never ship as a stale dist unnoticed. The
+// depsPin field is the container twin: the connector refuses a present-but-
+// stale self-built image whose dependency pin does not match this value.
 const sourceRevision = (() => {
   try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: "utf8" }).trim(); }
   catch { return "unknown"; }
 })();
-const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId }, null, 2)}\n`;
+const { readDepsPin } = await import("./lib/deps-pin.mjs");
+const depsPin = await readDepsPin(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId, depsPin }, null, 2)}\n`;
 await writeFile(path.join(resources, "build-stamp.json"), buildStamp);
 await writeFile(path.join(outputDir, "build-stamp.json"), buildStamp);

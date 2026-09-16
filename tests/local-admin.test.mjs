@@ -163,20 +163,24 @@ test("docker image selection annotates the QEMU fallback instead of hiding it", 
   const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
   try {
     const { decideDockerImage, officialImageQemuFallbackRecord, SELF_BUILT_EXEC_BOX_IMAGE, LOCAL_DOCKER_BOX_IMAGE, SAND_LOCAL_ADMIN_IMAGE_ENV } = loaded.module;
+    const pin = "a".repeat(64);
     // An explicit pin wins whatever it points at and is never annotated.
-    const explicit = decideDockerImage({ [SAND_LOCAL_ADMIN_IMAGE_ENV]: "my-image:dev" }, false);
+    const explicit = decideDockerImage({ [SAND_LOCAL_ADMIN_IMAGE_ENV]: "my-image:dev" }, { present: false, depsPin: undefined }, pin);
     assert.equal(explicit.selection, "explicit");
     assert.equal(explicit.image, "my-image:dev");
     assert.equal(officialImageQemuFallbackRecord(explicit), undefined);
-    // Self-built image present → the native image, no annotation.
-    const native = decideDockerImage({}, true);
-    assert.equal(native.selection, "self-built");
-    assert.equal(native.image, SELF_BUILT_EXEC_BOX_IMAGE);
-    assert.equal(officialImageQemuFallbackRecord(native), undefined);
+    // Self-built image present with a matching pin (or no expectation) → the
+    // native image, no annotation.
+    for (const expectation of [pin, undefined]) {
+      const native = decideDockerImage({}, { present: true, depsPin: pin }, expectation);
+      assert.equal(native.selection, "self-built");
+      assert.equal(native.image, SELF_BUILT_EXEC_BOX_IMAGE);
+      assert.equal(officialImageQemuFallbackRecord(native), undefined);
+    }
     // Default path with the image missing → the official image MUST carry an
     // annotation record: the fallback stays available, it just stops being
     // silent. Reachability, not an error string.
-    const fallback = decideDockerImage({}, false);
+    const fallback = decideDockerImage({}, { present: false, depsPin: undefined }, pin);
     assert.equal(fallback.selection, "official-fallback");
     assert.equal(fallback.image, LOCAL_DOCKER_BOX_IMAGE);
     const record = officialImageQemuFallbackRecord(fallback);
@@ -184,6 +188,17 @@ test("docker image selection annotates the QEMU fallback instead of hiding it", 
     assert.equal(record.event, "official-image-qemu-fallback");
     assert.equal(record.image, LOCAL_DOCKER_BOX_IMAGE);
     assert.match(String(record.hint), /build-arm64-box\.sh/);
+    // The ordering trap: stale is NOT missing. A present image whose pin
+    // disagrees (including unlabelled pre-pin images) must select the stale
+    // error — it must never fall through to the QEMU fallback, which would
+    // trade an actionable rebuild hint for a silent downgrade.
+    for (const imagePin of ["b".repeat(64), undefined]) {
+      const stale = decideDockerImage({}, { present: true, depsPin: imagePin }, pin);
+      assert.equal(stale.selection, "self-built-stale", `image pin ${imagePin ?? "(unlabelled)"} with expectation must be stale, never a fallback`);
+      assert.equal(stale.imageDepsPin, imagePin);
+      assert.equal(stale.expectedDepsPin, pin);
+      assert.equal(officialImageQemuFallbackRecord(stale), undefined, "stale is an error to surface, not a fallback to annotate");
+    }
   } finally {
     await loaded.dispose();
   }
@@ -261,7 +276,7 @@ test("local admin host resolves when the gateway answers and passes deps + inert
   }
 });
 
-test("the self-built computer plan converges every file surface on one bind-mounted workspace", async () => {
+test("the computer plan converges every file surface on one bind-mounted workspace", async () => {
   const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
   try {
     const base = {
@@ -271,28 +286,48 @@ test("the self-built computer plan converges every file surface on one bind-moun
       hostSha256: "a".repeat(64),
       boxExecDaemonSha256: "b".repeat(64),
     };
-    const custom = loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace" });
-    assert.equal(custom.custom, true);
-    const args = custom.args.join(" ");
-    // One workspace, bind-mounted from the Mac side (Finder-visible).
-    assert.match(args, /type=bind,src=\/Users\/me\/\.grokbot-local\/box-workspace,dst=\/workspace(?!\S)/);
-    assert.doesNotMatch(args, /--volume [^ ]+:\/workspace/);
-    // The daemon's workspaceRoot, the agent cwd, and the Mac-side alias are
-    // all pinned to the same directory — no second volume, no dual track.
-    assert.ok(custom.args.includes("SAND_WORKSPACE_ROOT=/workspace"));
-    assert.ok(custom.args.includes("SAND_AGENT_WORKSPACE=/workspace"));
-    assert.ok(custom.args.includes("SAND_WORKSPACE_HOST=/Users/me/.grokbot-local/box-workspace"));
-    // No Mac-side directory, no plan: silently falling back to a named volume
-    // would reinstate the dual track the contract exists to remove.
+    const pin = "c".repeat(64);
+    const cases = [
+      ["custom", loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", depsPin: pin })],
+      ["official", loaded.module.localDockerRunPlan({ ...base, workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", depsPin: pin })],
+    ];
+    for (const [label, plan] of cases) {
+      const args = plan.args.join(" ");
+      // One workspace, bind-mounted from the Mac side (Finder-visible) — the
+      // fallback image converges on the same contract instead of keeping a
+      // second file face on a named volume.
+      assert.match(args, /type=bind,src=\/Users\/me\/\.grokbot-local\/box-workspace,dst=\/workspace(?!\S)/, `${label} plan must bind-mount /workspace`);
+      assert.doesNotMatch(args, /--volume [^ ]+:\/workspace/, `${label} plan must not use a workspace volume`);
+      // The daemon's workspaceRoot, the agent cwd, and the Mac-side alias are
+      // all pinned to the same directory — no second volume, no dual track.
+      assert.ok(plan.args.includes("SAND_WORKSPACE_ROOT=/workspace"), label);
+      assert.ok(plan.args.includes("SAND_AGENT_WORKSPACE=/workspace"), label);
+      assert.ok(plan.args.includes("SAND_WORKSPACE_HOST=/Users/me/.grokbot-local/box-workspace"), label);
+      // The expected deps pin rides along as a container label for drift.
+      assert.ok(plan.args.includes(`com.grok-bot.local-vm.deps-pin=${pin}`), label);
+    }
+    assert.equal(cases[0][1].custom, true);
+    assert.equal(cases[1][1].custom, false);
+    // No Mac-side directory, no plan — for either image: silently falling
+    // back to a named volume would reinstate the dual track the contract
+    // exists to remove.
     assert.throws(() => loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64" }), /requires a Mac-side workspace directory/);
-    // The official (QEMU) branch keeps its named volume and pins nothing.
-    const official = loaded.module.localDockerRunPlan(base);
-    assert.equal(official.custom, false);
-    assert.ok(official.args.join(" ").includes("--volume grok-bot-local-vm-workspace:/workspace"));
-    assert.ok(!official.args.some(argument => argument.startsWith("SAND_AGENT_WORKSPACE=")));
+    assert.throws(() => loaded.module.localDockerRunPlan(base), /requires a Mac-side workspace directory/);
   } finally {
     await loaded.dispose();
   }
+});
+
+test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
+  const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile"]);
+  const contents = ["alpha", "beta", "gamma"];
+  assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
+  // Concatenation order is part of the pin: reordering inputs must change it,
+  // or the bash/node consumers could drift apart unnoticed.
+  assert.notEqual(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([contents[1], contents[0], contents[2]]));
+  const fromRepo = await depsPinModule.readDepsPin(repoRoot);
+  assert.match(fromRepo, /^[0-9a-f]{64}$/);
 });
 
 test("local host connector opens a breaker after repeated failures and resets on recreate", async () => {

@@ -26,22 +26,39 @@ export const SELF_BUILT_EXEC_BOX_IMAGE = "grok-bot-exec-box:arm64";
 // QEMU; keeping it as the no-build default preserves out-of-the-box usability,
 // but the choice must never be silent — the fallback carries a ledger record
 // and a status line so a 5-16x execution penalty is a fact the user can act on.
+// A present-but-stale self-built image is a separate case: it is an honest
+// error, never a downgrade — an expired pin that silently fell into the
+// fallback would trade an actionable failure for a silent one.
+export const SELF_BUILT_DEPS_PIN_LABEL = "com.grok-bot.local-vm.deps-pin";
+
+export interface SelfBuiltImageProbe {
+  readonly present: boolean;
+  /** The image's baked deps-pin label; undefined when absent or unlabelled. */
+  readonly depsPin: string | undefined;
+}
+
 export type DockerImageChoice =
   | { readonly selection: "explicit"; readonly image: string }
   | { readonly selection: "self-built"; readonly image: string }
+  | { readonly selection: "self-built-stale"; readonly image: string; readonly reason: "deps-pin-mismatch"; readonly expectedDepsPin: string; readonly imageDepsPin: string | undefined }
   | { readonly selection: "official-fallback"; readonly image: string; readonly reason: "self-built-image-missing" };
 
-export function decideDockerImage(env: NodeJS.ProcessEnv, selfBuiltImagePresent: boolean): DockerImageChoice {
+export function decideDockerImage(env: NodeJS.ProcessEnv, probe: SelfBuiltImageProbe, expectedDepsPin?: string): DockerImageChoice {
   const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
   if (explicit != null && explicit.length > 0) return { selection: "explicit", image: explicit };
-  return selfBuiltImagePresent
-    ? { selection: "self-built", image: SELF_BUILT_EXEC_BOX_IMAGE }
-    : { selection: "official-fallback", image: LOCAL_DOCKER_BOX_IMAGE, reason: "self-built-image-missing" };
+  if (!probe.present) return { selection: "official-fallback", image: LOCAL_DOCKER_BOX_IMAGE, reason: "self-built-image-missing" };
+  // Stale is not missing: pin mismatch selects the stale error even though a
+  // QEMU-capable image exists — the caller must fail with the rebuild action.
+  if (expectedDepsPin != null && probe.depsPin !== expectedDepsPin) {
+    return { selection: "self-built-stale", image: SELF_BUILT_EXEC_BOX_IMAGE, reason: "deps-pin-mismatch", expectedDepsPin, imageDepsPin: probe.depsPin };
+  }
+  return { selection: "self-built", image: SELF_BUILT_EXEC_BOX_IMAGE };
 }
 
 // The reachability seam for the fallback honesty contract: a default-path
-// fallback MUST map to an intercept record; explicit and native choices map to
-// none. Undefined means "nothing to annotate", never "annotation optional".
+// fallback MUST map to an intercept record; explicit, native, and stale
+// choices map to none. Undefined means "nothing to annotate", never
+// "annotation optional".
 export function officialImageQemuFallbackRecord(choice: DockerImageChoice): Readonly<Record<string, unknown>> | undefined {
   if (choice.selection !== "official-fallback") return undefined;
   return {
@@ -53,9 +70,44 @@ export function officialImageQemuFallbackRecord(choice: DockerImageChoice): Read
   };
 }
 
-async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env): Promise<DockerImageChoice> {
-  const present = await runDocker(["image", "inspect", "--format", "1", SELF_BUILT_EXEC_BOX_IMAGE]);
-  return decideDockerImage(env, present.ok);
+async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env, expectedDepsPin?: string): Promise<DockerImageChoice> {
+  const inspected = await runDocker(["image", "inspect", "--format", `{{index .Config.Labels "${SELF_BUILT_DEPS_PIN_LABEL}"}}`, SELF_BUILT_EXEC_BOX_IMAGE]);
+  const trimmed = inspected.output.trim();
+  const probe: SelfBuiltImageProbe = inspected.ok
+    ? { present: true, depsPin: trimmed.length > 0 ? trimmed : undefined }
+    : { present: false, depsPin: undefined };
+  return decideDockerImage(env, probe, expectedDepsPin);
+}
+
+// The app's expected deps pin, stamped at package time next to the bundle.
+// The connector's compiled location varies by layout (bundled inside
+// app.asar/dist/electron-main, mirrored in app.asar.unpacked, or a bare
+// esbuild output during tests), so search upward for the stamp instead of
+// guessing one relative depth. No stamp (dev/test bundles) means the pin
+// cannot be verified — the connector then runs the present image rather than
+// guessing staleness.
+let expectedDepsPinRead = false;
+let expectedDepsPinValue: string | undefined;
+async function readExpectedDepsPin(): Promise<string | undefined> {
+  if (!expectedDepsPinRead) {
+    expectedDepsPinRead = true;
+    let directory = dirname(fileURLToPath(import.meta.url));
+    for (let depth = 0; depth < 8; depth += 1) {
+      for (const candidate of [join(directory, "build-stamp.json"), join(directory, "Resources", "build-stamp.json")]) {
+        try {
+          const parsed = JSON.parse(await readFile(candidate, "utf8")) as { depsPin?: unknown };
+          if (typeof parsed.depsPin === "string" && /^[0-9a-f]{64}$/.test(parsed.depsPin)) {
+            expectedDepsPinValue = parsed.depsPin;
+            return expectedDepsPinValue;
+          }
+        } catch {}
+      }
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  return expectedDepsPinValue;
 }
 
 // Where the local-admin computer executes. Docker is the default when its
@@ -83,6 +135,7 @@ export function localDockerRunPlan(options: {
   readonly boxExecDaemonSha256: string;
   readonly workspaceHostPath?: string;
   readonly dataVolume?: string;
+  readonly depsPin?: string;
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
   readonly inferenceFileDir?: string;
@@ -91,16 +144,29 @@ export function localDockerRunPlan(options: {
   const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
   const dataVolume = options.dataVolume ?? (custom ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data");
   const hasCredential = options.inferenceCredential != null;
+  // One workspace, one owner — on BOTH images: /workspace is a bind mount of
+  // the Mac-side directory (Finder-visible, Archive's MAC_BOT_WORKSPACE_HOST
+  // lesson), and every file-facing surface in the box is pinned to it: the
+  // daemon's workspaceRoot, the Claude SDK cwd, and the upload root. The
+  // fallback image converges on the same contract instead of reinstating the
+  // dual track. SAND_WORKSPACE_HOST tells in-box code where the same
+  // directory lives on the Mac so it can report a path the caller can open.
+  if (options.workspaceHostPath == null || options.workspaceHostPath.length === 0) {
+    throw new Error("The local computer requires a Mac-side workspace directory to bind-mount at /workspace.");
+  }
   const common = [
     "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
     "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${options.hostSha256}`,
     "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${options.boxExecDaemonSha256}`,
     "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
+    "--label", `${SELF_BUILT_DEPS_PIN_LABEL}=${options.depsPin ?? "unknown"}`,
     "--restart", "unless-stopped",
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
+    "--env", "SAND_WORKSPACE_ROOT=/workspace", "--env", "SAND_AGENT_WORKSPACE=/workspace", "--env", `SAND_WORKSPACE_HOST=${options.workspaceHostPath}`,
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
     "--publish", "127.0.0.1:1340:1340",
+    "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
     "--volume", `${dataVolume}:/home/box/sand-data`,
     "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host/host-main.cjs,readonly`,
     "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
@@ -108,35 +174,26 @@ export function localDockerRunPlan(options: {
     ...(options.authMounts ?? []),
   ];
   if (custom) {
-    // One workspace, one owner: /workspace is a bind mount of the Mac-side
-    // directory (Finder-visible, Archive's MAC_BOT_WORKSPACE_HOST lesson), and
-    // every file-facing surface inside the box is pinned to it — the daemon's
-    // workspaceRoot, the Claude SDK cwd, and the upload root all resolve to
-    // /workspace instead of splitting across the data volume and a named
-    // volume. SAND_WORKSPACE_HOST tells in-box code where the same directory
-    // lives on the Mac so it can report a path the caller can open.
-    if (options.workspaceHostPath == null || options.workspaceHostPath.length === 0) {
-      throw new Error("The self-built computer requires a Mac-side workspace directory to bind-mount at /workspace.");
-    }
+    // Self-built image: native arm64, host as the container process, daemon
+    // spawned by the host (no SAND_USE_EXISTING_BOX_EXEC_DAEMON).
     return {
       image,
       custom,
       args: [...common,
         "--env", "SAND_DATA_ROOT=/home/box/sand-data",
-        "--env", "SAND_WORKSPACE_ROOT=/workspace", "--env", "SAND_AGENT_WORKSPACE=/workspace", "--env", `SAND_WORKSPACE_HOST=${options.workspaceHostPath}`,
         "--env", "NODE_PATH=/home/box/deps/node_modules", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules",
-        "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
         "--entrypoint", "/usr/local/bin/node",
         image, "/home/box/sand-host/host-main.cjs"],
     };
   }
-  // Official image: amd64 via QEMU, supervisor entrypoint, pre-provisioned daemon.
+  // Official image: amd64 via QEMU, supervisor entrypoint, pre-provisioned daemon
+  // (its workspaceRoot is already /workspace, so only the agent-side pins are
+  // new here; the workspace mount and the dual-track removal are shared).
   return {
     image,
     custom,
     args: [...common,
       "--platform", "linux/amd64",
-      "--volume", "grok-bot-local-vm-workspace:/workspace",
       "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps",
       "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339",
       "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
@@ -146,10 +203,12 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-// Schema 7: /workspace moved from a named volume to a bind mount of the
-// Mac-side directory — the drift forces existing schema-6 containers to be
-// replaced, because -v/--mount only take effect at docker run.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "7";
+// Schema 8: the official-image branch converges on the shared workspace
+// contract (bind mount + env pins — schema 7 had left it on a named volume),
+// and containers now carry the app's expected deps pin for drift detection.
+// The drift forces replacement of existing containers, because -v/--mount
+// only take effect at docker run.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "8";
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
 // sibling layout. v1 (flat) directories are never reused.
@@ -252,9 +311,9 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "" };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "" };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
     return {
@@ -265,6 +324,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       hostSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.host-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.host-sha256"] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
+      depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
     };
   } catch { throw new Error("Docker returned malformed container inspection data."); }
 }
@@ -337,7 +397,15 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   const token = await readOrCreateToken(settingsPath);
   const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
   if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
-  const imageChoice = await resolveDockerImageForComputer();
+  const expectedDepsPin = await readExpectedDepsPin();
+  const imageChoice = await resolveDockerImageForComputer(process.env, expectedDepsPin);
+  // Stale is not missing: a present image whose dependency pin disagrees with
+  // this app is refused with the rebuild action — it must never reach the
+  // annotated QEMU fallback, which is reserved for a genuinely missing image.
+  if (imageChoice.selection === "self-built-stale") {
+    appendLocalIntercept({ kind: "docker", event: "stale-image-refused", image: imageChoice.image, expectedDepsPin: imageChoice.expectedDepsPin, imageDepsPin: imageChoice.imageDepsPin ?? "(unlabelled)" });
+    throw new Error(`The self-built computer image is stale: its dependency pin ${imageChoice.imageDepsPin ?? "(unlabelled)"} does not match this app's ${imageChoice.expectedDepsPin}. Rebuild it with docker/build-arm64-box.sh; refusing to run outdated dependencies or to silently fall back to the emulated official image.`);
+  }
   // Annotated, not silent: the default path without the self-built image runs
   // the emulated official image. One record per process — reconnects must not
   // spam the bounded ledger with the same fact.
@@ -356,11 +424,14 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
-  if (inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || (inferenceCredential != null && !inspected.hasInferenceCredential))) {
+  // Pin drift on an existing container means it predates the current app's
+  // dependencies: replace it, the same as a schema or host-bundle change.
+  const pinDrifted = expectedDepsPin != null && inspected.depsPin !== expectedDepsPin;
+  if (inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || (inferenceCredential != null && !inspected.hasInferenceCredential))) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
   }
-  const shouldReplace = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const shouldReplace = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || (inferenceCredential != null && !inspected.hasInferenceCredential));
   const current = shouldReplace ? await inspectContainer() : inspected;
   if (current.exists && !current.running) {
     const started = await runDocker(["start", LOCAL_DOCKER_BOX_CONTAINER]);
@@ -379,6 +450,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       hostSha256: hostBundle.sha256,
       boxExecDaemonSha256: hostBundle.boxExecDaemonSha256,
       workspaceHostPath,
+      ...(expectedDepsPin == null ? {} : { depsPin: expectedDepsPin }),
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
       ...(inferenceFile == null ? {} : { inferenceFileDir: dirname(inferenceFile) }),
