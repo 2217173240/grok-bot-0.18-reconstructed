@@ -46,7 +46,7 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 **切片 A「运行契约 v2」**——把执行面的四处裂缝一次收拢（它们都改同一个工件：run plan / 镜像契约）：
 
 1. `/workspace` 从 named volume 换 bind mount（Colima 共享 `/Users`），`resolveAgentWorkspace()` 与 daemon `workspaceRoot` 收敛到同一目录，Mac 侧可见（Archive `MAC_BOT_WORKSPACE_HOST` 双径回报现成）；
-2. 默认路径缺自建镜像时的 QEMU 回退：记 intercept 事件 + `start-local` 状态面一行标注（保留开箱即用，修复"说的和做的不一致"）；
+2. 默认路径缺自建镜像时的 QEMU 回退：记 intercept 事件 + `start-local` 状态面一行标注（保留开箱即用，修复"说的和做的不一致"）✅ 2026-09-16 已落地：`decideDockerImage` 判别选择 + `official-image-qemu-fallback` 账本事件（每进程一次）+ 状态面告警，活体双向验证过；
 3. 镜像新鲜度：package-lock + `apply-third-party-patches.mjs` hash 打进 image label，连接器/门禁比对，不符报"跑 `build-arm64-box.sh`"；
 4. G3 端到端化：容器内 node 直连 1337 走 ExecService 真 exec（顺带冷启动 <15s 阈值当性能哨兵）。
 
