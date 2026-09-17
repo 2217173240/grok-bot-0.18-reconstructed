@@ -109,6 +109,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /Never handle credentials yourself/);
   assert.match(providers, /display notification/);
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /redactTypedDesktopInput/);
+  // Session persistence (C3, S-7): the browser profile rides the data volume
+  // so a handoff login survives container replacement; the Archive
+  // session-sync daemon mirrors login state across screens (no-op single).
+  const dockerfile = await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8");
+  assert.match(dockerfile, /ln -s \/home\/box\/sand-data\/chrome-profile \/home\/box\/chrome-profile/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /session-sync\.mjs/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
   // Local-admin turns carry the local identity: the assistant must know it IS

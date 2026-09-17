@@ -41,6 +41,16 @@ RUN cd /tmp/runtime-deps && npm ci --omit=dev --silent \
 # unset, so the container needs no supervisor for the exec plane.
 RUN mkdir -p /home/box/sand-host /home/box/box-exec-daemon /home/box/sand-data /home/box/workspace
 
+# The browser profile must outlive the container: a human's handoff login
+# lives there, and container replacement (schema/pin drift, recreate) wipes
+# the writable layer. Point the base image's fixed profile path at the data
+# volume (box-common.sh keeps PRIMARY_PROFILE=/home/box/chrome-profile; the
+# symlink makes that transparent). The volume is box-writable (the -arm64
+# fresh-volume lesson), and box-chrome mkdirs the target on first run.
+USER root
+RUN rm -rf /home/box/chrome-profile && ln -s /home/box/sand-data/chrome-profile /home/box/chrome-profile
+USER box
+
 ENV NODE_PATH=/home/box/deps/node_modules \
     SAND_TREE_SITTER_NODE_DEPS=/home/box/deps/node_modules
 

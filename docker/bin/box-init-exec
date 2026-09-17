@@ -14,6 +14,12 @@ log "box-init-exec: 桌面面后台 + host 前台"
 # 休眠唤醒/重启会复用可写层，旧的 X 锁还在会让 Xvfb 以为显示被占用。
 rm -f /tmp/.X11-unix/X* /tmp/.X*-lock 2>/dev/null
 mkdir -p "$TOKEN_DIR" "$NOVNC_TOKEN_DIR" "$SUPERVISE_DIR" /home/box/sand-data
+# 卷挂载会遮蔽镜像层：chrome-profile 的符号链接目标必须在这里现建（卷对 box 可写），
+# 否则 mkdir -p 穿不过悬空链接、box-chrome 起不来。
+mkdir -p /home/box/sand-data/chrome-profile
+# 持久化 profile 的代价：上个容器被 SIGKILL 时留下的 Singleton 锁指向旧主机名-PID，
+# 新容器里按构造就是陈旧的——不清掉，chromium 认为别人持锁、起不来（实测）。
+rm -f /home/box/sand-data/chrome-profile/Singleton*
 
 # 主屏（自带 5900 画面与 6080 入口；浏览器不在这里起——按需另起，无头纪律）。
 start-desktop.sh "$PRIMARY_DISPLAY" || { log "主屏起不来，看 /tmp/xvfb:1.log 等"; exit 1; }
@@ -25,6 +31,10 @@ websockify --web=/usr/share/novnc/ \
 
 # 窗口路由器（1339，多窗口契约在 S-3 接线）。
 node /usr/local/bin/sand-window-router.mjs >/tmp/router.log 2>&1 &
+
+# 登录态镜像（S-7）：跨屏只补缺地同步 cookie/localStorage。单屏时是 no-op，
+# 多窗口一到即工作；断路器/忙屏不重载的语义都在脚本里（Archive 原版）。
+node /usr/local/bin/session-sync.mjs >/tmp/sand-session-sync.log 2>&1 &
 
 # noVNC 真鉴权：TokenFile 的 token 是随机签发的，绝不是显示号（Archive 规格 §9.4
 # 那笔债）。本拓扑没有窗口服务当签发权威，由这里在开机时签——每次容器启动重写，
