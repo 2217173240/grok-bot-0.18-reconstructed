@@ -17,6 +17,7 @@ export const DEPS_PIN_FILES = [
   "docker/arm64-exec-box.Dockerfile",
   "docker/bin/box-init-exec",
   "docker/bin/xtest-input-local.py",
+  "docker/bin/box-navigate",
 ];
 
 export function computeDepsPin(contents) {

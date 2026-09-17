@@ -1,0 +1,136 @@
+#!/usr/bin/env node
+// 盒内浏览器导航门（S-8）：这是被教的导航原语——目的地先过闸再进浏览器。
+//
+// 拒绝清单的语义逐条对齐 source/shared/node/egress-tunnel/exit-client.ts 的
+// isBlockedV4/V6（私网/回环/链路本地/组播/保留段/CGNAT/全零/全广播），拒绝时
+// 在盒侧账本留一行（kind=egress-gate），然后才轮到 CDP 的 Page.navigate。
+// 域名先解析再判（解析失败也拒——诚实报错，不静默放行）。
+//
+//   box-navigate <url>          导航主屏浏览器（display :1 → CDP 9223）
+//   box-navigate --check <url>  只判目的地不导航（门禁用）
+import dns from "node:dns";
+import http from "node:http";
+import fs from "node:fs";
+
+const DISPLAY = 1;
+const CDP = 9222 + DISPLAY;
+const LEDGER = "/home/box/sand-data/local-intercept.jsonl";
+
+function isBlockedV4(o) {
+  const [a, b] = o;
+  const privateIp = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  const cgnat = a === 100 && b >= 64 && b <= 127;
+  // 198.18/15 从这里拿掉：在这台部署上它是 Clash fake-IP 段（DNS 对所有公网域名
+  // 都回这个合成段，TUN 层还原后走代理）。作字面 IP 直连时仍然拒（见
+  // destinationBlocked 的 strict 分支与 isFakeIp）。
+  const reserved = a === 192 && b === 0 || a === 240 || a === 255;
+  return privateIp || cgnat || reserved || a === 127 || (a === 169 && b === 254)
+    || o.every(x => x === 255) || (a === 192 && b === 0 && o[2] === 2)
+    || (a === 198 && b === 51 && o[2] === 100) || (a === 203 && b === 0 && o[2] === 113)
+    || o.every(x => x === 0) || (a >= 224 && a <= 239);
+}
+
+// fake-IP 段（198.18.0.0/15）：本部署的 DNS 对公网域名一律回这里（Clash 合成），
+// 真实目的地由代理在远端解析。域名解析**全部**落在 fake-IP → 放行并记账标注
+// （除非 SAND_EGRESS_STRICT=1）；字面 IP 直指 fake-IP 段仍然拒——没有正当场景。
+function isFakeIp(o) { return o[0] === 198 && (o[1] === 18 || o[1] === 19); }
+
+function isBlockedV6(ip) {
+  const seg = ip.replaceAll("::", ":".repeat(9 - ip.split(":").filter(Boolean).length || 1)).split(":").map(s => parseInt(s || "0", 16) || 0);
+  while (seg.length < 8) seg.push(0);
+  const head = seg[0] || 0;
+  const loopback = seg.slice(0, 7).every(x => x === 0) && seg[7] === 1;
+  const unspecified = seg.every(x => x === 0);
+  // ::ffff:0:0/96 映射 v4；fe80::/10 链路本地；fc00::/7 ULA
+  const embedded = ip.toLowerCase().startsWith("::ffff:") ? ip.slice(7) : null;
+  if (embedded && embedded.includes(".")) return isBlockedV4(embedded.split(".").map(Number));
+  return loopback || unspecified || (head & 0xffc0) === 0xfe80 || (head & 0xfe00) === 0xfc00;
+}
+
+function isBlockedIp(ip) {
+  if (ip.includes(":")) return isBlockedV6(ip);
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  return isBlockedV4(parts);
+}
+
+function ledger(event, url, reason) {
+  try {
+    fs.mkdirSync("/home/box/sand-data", { recursive: true });
+    fs.appendFileSync(LEDGER, `${JSON.stringify({ at: new Date().toISOString(), kind: "egress-gate", event, url, reason })}\n`);
+  } catch { /* 账本写不进不该拦住导航本身 */ }
+}
+
+async function destinationBlocked(urlText) {
+  let url;
+  try { url = new URL(urlText); } catch { return { blocked: true, reason: "invalid URL" }; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return { blocked: true, reason: `scheme not allowed: ${url.protocol}` };
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const literal = host.includes(":") ? host : host.split(".").map(Number);
+  const isLiteralIp = host.includes(":") || (literal.length === 4 && literal.every(n => Number.isInteger(n) && n >= 0 && n <= 255));
+  const strict = process.env.SAND_EGRESS_STRICT === "1";
+  if (isLiteralIp) {
+    // 字面 fake-IP 直连仍然拒（strict 与否一样）——真实流量不以合成 IP 为目的地。
+    const parts = host.includes(":") ? null : literal;
+    return isBlockedIp(host) || (parts != null && isFakeIp(parts))
+      ? { blocked: true, reason: `private/reserved address: ${host}` }
+      : { blocked: false };
+  }
+  if (host === "localhost") return { blocked: true, reason: "private/reserved address: localhost" };
+  let addresses;
+  try { addresses = await dns.promises.lookup(host, { all: true }); }
+  catch { return { blocked: true, reason: `DNS resolution failed: ${host}` }; }
+  const allFake = addresses.length > 0 && addresses.every(({ address }) => address.includes(".") && isFakeIp(address.split(".").map(Number)));
+  if (allFake && !strict) {
+    ledger("proxy-fronted", urlText, "DNS answers are the local proxy's fake-IP range; destination decided at the proxy");
+    return { blocked: false };
+  }
+  for (const { address } of addresses) {
+    if (isBlockedIp(address)) return { blocked: true, reason: `resolves to private/reserved ${address}` };
+  }
+  return { blocked: false };
+}
+
+const getJson = (path) => new Promise((resolve) => {
+  const req = http.get({ host: "127.0.0.1", port: CDP, path, timeout: 2000 }, (res) => {
+    let b = ""; res.on("data", c => b += c); res.on("end", () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } });
+  });
+  req.on("error", () => resolve(null)); req.on("timeout", () => { req.destroy(); resolve(null); });
+});
+
+async function navigate(urlText) {
+  const pages = (await getJson("/json/list")) ?? [];
+  const page = pages.find(t => t.type === "page" && t.webSocketDebuggerUrl);
+  if (page == null) { console.error("box-navigate: no browser page target (is box-chrome up?)"); process.exit(1); }
+  const { default: WebSocket } = await import("/usr/local/lib/node_modules/ws/index.js");
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
+  ws.on("open", () => {
+    ws.send(JSON.stringify({ id: 1, method: "Page.enable" }));
+    ws.send(JSON.stringify({ id: 2, method: "Page.navigate", params: { url: urlText } }));
+  });
+  ws.on("message", (m) => {
+    const r = JSON.parse(m.toString());
+    if (r.id === 2) {
+      const errorText = r.result?.errorText;
+      if (errorText) { console.error(`box-navigate: navigation error: ${errorText}`); ws.close(); process.exit(1); }
+      console.log(`box-navigate: ${urlText}`);
+      ws.close(); process.exit(0);
+    }
+  });
+  ws.on("error", () => { console.error("box-navigate: CDP connection failed"); process.exit(1); });
+  setTimeout(() => { console.error("box-navigate: CDP timeout"); process.exit(1); }, 8000);
+}
+
+const args = process.argv.slice(2);
+const checkOnly = args[0] === "--check";
+const urlText = checkOnly ? args[1] : args[0];
+if (urlText == null) { console.error("usage: box-navigate [--check] <url>"); process.exit(2); }
+
+const verdict = await destinationBlocked(urlText);
+if (verdict.blocked) {
+  ledger("blocked", urlText, verdict.reason);
+  console.error(`box-navigate: REFUSED ${urlText} — ${verdict.reason} (ledger line written)`);
+  process.exit(1);
+}
+if (checkOnly) { console.log(`box-navigate: allowed ${urlText}`); process.exit(0); }
+await navigate(urlText);

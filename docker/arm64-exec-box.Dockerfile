@@ -60,8 +60,9 @@ ENV NODE_PATH=/home/box/deps/node_modules \
 # not invalidate the expensive dependency layer.
 COPY --chown=box:box docker/bin/box-init-exec /usr/local/bin/box-init-exec
 COPY --chown=box:box docker/bin/xtest-input-local.py /usr/local/bin/xtest-input-local.py
+COPY --chown=box:box docker/bin/box-navigate /usr/local/bin/box-navigate
 USER root
-RUN chmod 0755 /usr/local/bin/box-init-exec /usr/local/bin/xtest-input-local.py
+RUN chmod 0755 /usr/local/bin/box-init-exec /usr/local/bin/xtest-input-local.py /usr/local/bin/box-navigate
 USER box
 
 # Keep the Archive entrypoint (desktop on the main display); the gateway and

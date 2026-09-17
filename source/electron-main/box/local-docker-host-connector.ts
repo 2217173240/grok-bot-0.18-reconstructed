@@ -173,6 +173,10 @@ export function localDockerRunPlan(options: {
     // Awaiting-human deadline override (tests/gates drive a short one);
     // unset keeps the 15-minute default.
     ...(process.env.SAND_AWAITING_HUMAN_TIMEOUT_MS == null ? [] : ["--env", `SAND_AWAITING_HUMAN_TIMEOUT_MS=${process.env.SAND_AWAITING_HUMAN_TIMEOUT_MS}`]),
+    // Browser egress proxy (Archive's MAC_BOT_PROXY semantics): an HTTP proxy
+    // port fixes DNS poisoning (CONNECT resolves at the far end); Chromium
+    // bypasses loopback by default, so the CDP/noVNC surfaces stay local.
+    ...(process.env.SAND_BOT_PROXY == null || process.env.SAND_BOT_PROXY.trim() === "" ? [] : ["--env", `MAC_BOT_PROXY=${process.env.SAND_BOT_PROXY.trim()}`]),
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
