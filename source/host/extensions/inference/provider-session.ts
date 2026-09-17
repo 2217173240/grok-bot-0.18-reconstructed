@@ -293,6 +293,7 @@ const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
   "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
   "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
   "When you hit a login, captcha, or payment wall you cannot pass yourself: STOP driving the box, write .grokbot/ask-human.json in the workspace with {\"reason\":\"auth|captcha|payment|other\",\"instruction\":\"what the human should do\"}, give the user the takeover URL from .grokbot/novnc-url (it dies with a container restart — if it does not open, ask again for a fresh one), then wait. Box actions stay blocked until the file is removed (hand-back) or the deadline reclaims the box; your local file tools keep working so you can finish the hand-back.",
+  "For web UI tasks, drive the box's DESKTOP browser so your actions are visible on the screen the user can watch — do not fall back to curl. From this Mac the desktop primitives are: launch the browser with `docker exec -d grok-bot-local-vm /usr/local/bin/box-chrome` (on demand; DISPLAY is :1); input via `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799); screenshot with `docker exec grok-bot-local-vm bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it. There is no xdotool — do not look for it.",
 ];
 
 function claudeLocalToolsPrompt(): string {
@@ -321,7 +322,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: JSON.stringify(input ?? {}).slice(0, 200) });
           return decision;
         },
-        maxTurns: 8,
+        maxTurns: 24,
         persistSession: false,
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),

@@ -101,7 +101,9 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
   assert.match(providers, /canUseTool: async \(toolName, input\)/);
   assert.match(providers, /claudeToolPermission\(toolName\)/);
-  assert.match(providers, /maxTurns: 8/);
+  assert.match(providers, /maxTurns: 24/);
+  assert.match(providers, /xtest-input-local\.py/);
+  assert.match(providers, /do not fall back to curl/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
   // Local-admin turns carry the local identity: the assistant must know it IS
