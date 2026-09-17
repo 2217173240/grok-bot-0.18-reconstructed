@@ -136,6 +136,74 @@ test("the agent workspace converges on the shared box-workspace directory", asyn
   }
 });
 
+test("awaiting-human gates the box with a server-side deadline and honest records", async () => {
+  const loaded = await loadModule("source/host/box/awaiting-human.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-awaiting-"));
+  const ledgerRoot = await mkdtemp(path.join(os.tmpdir(), "grok-awaiting-ledger-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  process.env.SAND_DATA_ROOT = ledgerRoot;
+  let clock = 1_000_000;
+  const state = loaded.module.createAwaitingHumanState({
+    root,
+    env: { SAND_AWAITING_HUMAN_TIMEOUT_MS: "60000" },
+    now: () => clock,
+    pollIntervalMs: 1_000_000_000, // the timer never fires; poll() is driven by the test
+  });
+  try {
+    const askPath = path.join(root, "ask-human.json");
+    // Idle: no gate, no awaiting.
+    assert.equal(state.snapshot().awaiting, false);
+    state.assertNotAwaiting("shell");
+    // A valid ask enters awaiting and starts the server-side clock.
+    await writeFile(askPath, JSON.stringify({ reason: "auth", instruction: "sign in with the work account" }));
+    await state.poll();
+    assert.equal(state.snapshot().awaiting, true);
+    assert.equal(state.snapshot().reason, "auth");
+    assert.equal(state.snapshot().remainingMs, 60000);
+    // The gate refuses box actions with the remaining time and the URL note.
+    assert.throws(() => state.assertNotAwaiting("shell"), /awaiting a human handoff \(auth\): shell is blocked for the remaining 60s/);
+    assert.throws(() => state.assertNotAwaiting("shell"), /novnc-url/);
+    // ask_human idempotence: a repeated ask must NOT reset the deadline.
+    clock += 30_000;
+    await writeFile(askPath, JSON.stringify({ reason: "captcha", instruction: "solve the captcha" }));
+    await state.poll();
+    assert.equal(state.snapshot().reason, "captcha");
+    assert.equal(state.snapshot().remainingMs, 30_000, "a repeated ask keeps the original deadline");
+    // Hand-back: removing the file returns the box and records the wait.
+    await rm(askPath, { force: true });
+    await state.poll();
+    assert.equal(state.snapshot().awaiting, false);
+    state.assertNotAwaiting("shell");
+    // Timeout: the deadline reclaims the box honestly, file and all.
+    await writeFile(askPath, JSON.stringify({ reason: "payment", instruction: "complete checkout" }));
+    await state.poll();
+    assert.equal(state.snapshot().awaiting, true);
+    clock += 61_000;
+    await state.poll();
+    assert.equal(state.snapshot().awaiting, false);
+    await assert.rejects(() => readFile(askPath), /ENOENT/);
+    // Malformed asks engage the gate in reason-less mode instead of passing.
+    await writeFile(askPath, "{not json");
+    await state.poll();
+    assert.equal(state.snapshot().awaiting, true);
+    assert.equal(state.snapshot().reason, undefined);
+    state.stop();
+    // The ledger carries the whole story.
+    const ledger = await readFile(path.join(ledgerRoot, "local-intercept.jsonl"), "utf8");
+    assert.match(ledger, /"kind":"awaiting-human","event":"ask","reason":"auth"/);
+    assert.match(ledger, /"event":"hand-back","reason":"captcha"/);
+    assert.match(ledger, /"kind":"awaiting-human","event":"timeout","reason":"payment"/);
+    assert.match(ledger, /"event":"ask-malformed"/);
+  } finally {
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    state.stop?.();
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await rm(ledgerRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("local admin intercept blocks Cursor production fetches and records them", async () => {
   const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-intercept-"));

@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { errorLogTag } from "../../shared/errors.js";
 import { reportHostDiagnostic } from "../host-diagnostics.js";
 import type { HostBoxInner } from "../extensions/forever-box/host-box.js";
@@ -29,6 +31,16 @@ import type {
 } from "./loopback-sand-box.js";
 import { resolveExecDaemonAuthTokenFromEnv } from "./loopback-sand-box.js";
 import { localDesktopComputerUseEnabled } from "./local-computer-use.js";
+import { createAwaitingHumanState, type AwaitingHumanState } from "./awaiting-human.js";
+import { computerUseExecutorResource } from "../../packages/agent-exec/computer-use.js";
+import { shellExecutorResource } from "../../packages/agent-exec/shell.js";
+import { shellStreamExecutorResource } from "../../packages/agent-exec/shell-stream.js";
+import { CombinedResourceAccessor, resourceEntry } from "../../packages/agent-exec/resource-provider.js";
+import { getSandRootDir } from "../host-paths.js";
+import type { Context } from "../../packages/context/core.js";
+import type { Executor, ExecutorOptions, StreamExecutor } from "../../packages/agent-exec/remote.js";
+import type { ShellArgs, ShellResult, ShellStream } from "../../packages/proto/generated/agent/v1/shell_exec_pb.js";
+import type { ComputerUseArgs, ComputerUseResult } from "../../packages/proto/generated/agent/v1/computer_use_tool_pb.js";
 import type { ShellAccessor } from "./box-windows.js";
 
 export type ProductionBoxControlClient = BoxPingControlClient &
@@ -89,12 +101,55 @@ function createStandaloneProductionBoxInner<
   loopback: ReturnType<typeof createSandBox<Accessor>>,
   withNoMonitorComputerUse: (accessor: Accessor) => Accessor
 ): ProductionBoxInner {
+  // The awaiting-human gate is host-side and lazily created once: box-facing
+  // executors refuse while a handoff is pending (the ask/hand-back files
+  // live in the shared workspace, so the agent's Mac-side tools can still
+  // resolve the handoff — no deadlock).
+  let gate: AwaitingHumanState | undefined;
+  const awaitingHumanGate = (): AwaitingHumanState => {
+    gate ??= createAwaitingHumanState({
+      root: join(process.env.SAND_WORKSPACE_ROOT?.trim() || join(getSandRootDir(), "box-workspace"), ".grokbot"),
+    });
+    return gate;
+  };
+  const withAwaitingHuman = (accessor: Accessor): Accessor => {
+    const state = awaitingHumanGate();
+    const base = accessor as unknown as {
+      get(resource: typeof shellExecutorResource): Executor<ShellArgs, ShellResult>;
+      get(resource: typeof shellStreamExecutorResource): StreamExecutor<ShellArgs, ShellStream>;
+      get(resource: typeof computerUseExecutorResource): Executor<ComputerUseArgs, ComputerUseResult>;
+    };
+    const wrapped = new CombinedResourceAccessor(
+      accessor as unknown as ConstructorParameters<typeof CombinedResourceAccessor>[0],
+      [
+        resourceEntry(shellExecutorResource, {
+          async execute(ctx: Context, args: ShellArgs, options?: ExecutorOptions): Promise<ShellResult> {
+            state.assertNotAwaiting("shell");
+            return await base.get(shellExecutorResource).execute(ctx, args, options);
+          },
+        } satisfies Executor<ShellArgs, ShellResult>),
+        resourceEntry(shellStreamExecutorResource, {
+          async *execute(ctx: Context, args: ShellArgs, options?: ExecutorOptions): AsyncIterable<ShellStream> {
+            state.assertNotAwaiting("shell stream");
+            yield* base.get(shellStreamExecutorResource).execute(ctx, args, options);
+          },
+        } satisfies StreamExecutor<ShellArgs, ShellStream>),
+        resourceEntry(computerUseExecutorResource, {
+          async execute(ctx: Context, args: ComputerUseArgs, options?: ExecutorOptions): Promise<ComputerUseResult> {
+            state.assertNotAwaiting("computer use");
+            return await base.get(computerUseExecutorResource).execute(ctx, args, options);
+          },
+        } satisfies Executor<ComputerUseArgs, ComputerUseResult>),
+      ],
+    );
+    return wrapped as unknown as Accessor;
+  };
   return {
     ensureReady: async (ctx, agentId) => {
       const primary = await loopback.ensureReady(ctx, agentId);
       return {
         ...primary,
-        remoteAccessor: withNoMonitorComputerUse(primary.remoteAccessor),
+        remoteAccessor: withAwaitingHuman(withNoMonitorComputerUse(primary.remoteAccessor)),
         vncUrl: "",
       };
     },

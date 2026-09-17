@@ -108,6 +108,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   // the sandbox and never present cursor/xai remotes as its backend.
   assert.match(providers, /there is no cloud sandbox behind you/i);
   assert.match(providers, /isLocalAdminEnabled\(\) \? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES/);
+  // The human-handoff contract (C1): the identity teaches the ask protocol
+  // with the staleness note; the box gate wraps shell/stream/computer use.
+  assert.match(providers, /ask-human\.json/);
+  assert.match(providers, /it dies with a container restart/);
+  const awaiting = await readFile(path.join(repoRoot, "source", "host", "box", "awaiting-human.ts"), "utf8");
+  assert.match(awaiting, /AWAITING_HUMAN_DEFAULT_TIMEOUT_MS = 15 \* 60 \* 1000/);
+  assert.match(awaiting, /REPEATED ask while awaiting must NOT/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /withAwaitingHuman\(withNoMonitorComputerUse\(primary\.remoteAccessor\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /resourceEntry\(shellExecutorResource/);
   assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
   assert.match(providers, /OpenRouter needs OPENROUTER_API_KEY/);

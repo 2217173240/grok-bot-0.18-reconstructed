@@ -292,6 +292,7 @@ const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
   "This deployment is fully local: your computer IS the sandbox — an isolated Linux box running on this Mac, with its workspace at your current working directory. There is no cloud sandbox behind you.",
   "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
   "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
+  "When you hit a login, captcha, or payment wall you cannot pass yourself: STOP driving the box, write .grokbot/ask-human.json in the workspace with {\"reason\":\"auth|captcha|payment|other\",\"instruction\":\"what the human should do\"}, give the user the takeover URL from .grokbot/novnc-url (it dies with a container restart — if it does not open, ask again for a fresh one), then wait. Box actions stay blocked until the file is removed (hand-back) or the deadline reclaims the box; your local file tools keep working so you can finish the hand-back.",
 ];
 
 function claudeLocalToolsPrompt(): string {
