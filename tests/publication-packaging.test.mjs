@@ -115,6 +115,14 @@ test("Router settings use the trusted backend and display recorded inference usa
   const dockerfile = await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8");
   assert.match(dockerfile, /ln -s \/home\/box\/sand-data\/chrome-profile \/home\/box\/chrome-profile/);
   assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /session-sync\.mjs/);
+  // Egress gate (C4, S-8): navigation passes a private/reserved destination
+  // check with a ledger line; the browser proxy rides MAC_BOT_PROXY.
+  const navigate = await readFile(path.join(repoRoot, "docker", "bin", "box-navigate"), "utf8");
+  assert.match(navigate, /isBlockedV4/);
+  assert.match(navigate, /kind: "egress-gate"/);
+  assert.match(navigate, /Page\.navigate/);
+  assert.match(localDocker, /MAC_BOT_PROXY=\$\{process\.env\.SAND_BOT_PROXY\.trim\(\)\}/);
+  assert.match(providers, /box-navigate/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
   // Local-admin turns carry the local identity: the assistant must know it IS
