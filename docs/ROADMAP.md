@@ -68,6 +68,11 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
    start-local `GROKBOT_DESKTOP=0`）。官方镜像永不 desktop。run 契约 → schema 9→11
    （9=入口+label，10=seccomp，11=内存 cap 2g/4g）+ `com.grok-bot.local-vm.desktop` label
    （0/1 进漂移检测）。host 进程继承 `DISPLAY=:1`。
+5. **知情债务登记（seccomp）**：desktop 默认 ⇒ 默认容器运行在 `seccomp=unconfined` 上。
+   这是知情取舍而非疏忽：默认 profile 下 Chromium 自带沙箱无法启动（秒死成僵尸，实测），
+   放开后浏览器沙箱**保留并生效**，恶意页面拿不到容器（也就拿不到全机 cookie 库）——
+   补偿控制存在且被 D 门禁覆盖。`BOX_NO_SANDBOX=1`（丢弃浏览器沙箱）永不默认。
+   exec 道维持默认 seccomp。
 
 **切片 B「桌面模式」**——唤醒睡着的界面：
 
@@ -78,12 +83,18 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 
 **切片 C「人机面」**——让浏览器从"能打开"变"能登录"：
 
-1. `request_box_help` 合同 + awaiting_human 状态机（15 分钟服务端超时、闸门先于读请求体、`ask_human` 幂等——Archive 语义照抄）；
+1. `request_box_help` 合同 + awaiting_human 状态机（15 分钟服务端超时、闸门先于读请求体、`ask_human` 幂等——Archive 语义照抄）；**接管 URL 生命周期显性化**：token 随容器启动重签即作废，交接文案与错误信息必须说清「链接已随重启失效，请重新 ask」，不许人对白屏猜（S-4 review watch item）；
 2. 敏感字段闸门（fill/select/press 白名单、快照抹值）+ noVNC 接管 URL；
-3. session-sync（cookie/localStorage 只补缺 + 重载断路器，多窗口共享登录态）；
+3. session-sync（cookie/localStorage 只补缺 + 重载断路器，多窗口共享登录态）；**内存预算复核**：每只 Chromium ~800MB，多窗口会顶 4g cap——届时提 cap 或限窗数，OOM-kill 要诚实报错不许容器内静默死（S-4 review watch item）；
 4. egress 治理在此刻兑现：凭据进盒、noVNC 暴露后，私网拒绝 + 代理模式才有完整意义（私网拒绝本身便宜，可提前进 A）。
 
 **完成定义**：A = 同一 agent 的所有工具写同一目录、所有回退都有标注、门禁走真执行链；B = Computer 工具在容器里点得动真浏览器、人能在浏览器里看到那块屏；C = agent 遇到登录页会停下来把屏交给人、15 分钟后诚实收回。
+
+**C 后、S-9 前的结构修（S-4 review 定案）**：`SAND_LOCAL_ADMIN_TURN=host` 转正为默认——
+路由轮次真正在容器内执行（现在推理/本地工具跑在 Mac coordinator，只有 computer 面在容器；
+身份块的「我就是沙箱」要等这一步才是完整事实）。毕业 golden path 的「agent 写的文件人能
+在 Mac 看到」只有在执行面与文件面都对齐后才成立。热修已先把 agent cwd 与两形态 daemon
+的 workspaceRoot 收敛到 `<root>/box-workspace`（2026-09-16），执行面收敛由此项完成。
 
 ## 4. 边界（不变）
 
