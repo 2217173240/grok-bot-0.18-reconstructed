@@ -170,6 +170,9 @@ export function localDockerRunPlan(options: {
     "--restart", "unless-stopped",
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0", "--env", "SAND_HOST_PORT=1340", "--env", `SAND_GATEWAY_TOKEN=${options.token}`, "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
     "--env", "SAND_WORKSPACE_ROOT=/workspace", "--env", "SAND_AGENT_WORKSPACE=/workspace", "--env", `SAND_WORKSPACE_HOST=${options.workspaceHostPath}`,
+    // Awaiting-human deadline override (tests/gates drive a short one);
+    // unset keeps the 15-minute default.
+    ...(process.env.SAND_AWAITING_HUMAN_TIMEOUT_MS == null ? [] : ["--env", `SAND_AWAITING_HUMAN_TIMEOUT_MS=${process.env.SAND_AWAITING_HUMAN_TIMEOUT_MS}`]),
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
