@@ -105,6 +105,37 @@ test("local admin forbids production Cursor RPC and remote box", async () => {
   }
 });
 
+test("the agent workspace converges on the shared box-workspace directory", async () => {
+  const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-agent-workspace-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  const previousOverride = process.env.SAND_AGENT_WORKSPACE;
+  process.env.SAND_DATA_ROOT = root;
+  delete process.env.SAND_AGENT_WORKSPACE;
+  try {
+    const { resolveAgentWorkspace } = loaded.module;
+    // Both layouts present: the shared directory wins — it is what the
+    // container bind-mounts at /workspace, so routed-tool artifacts and the
+    // computer's files are one directory in either form.
+    await mkdir(path.join(root, "box-workspace"), { recursive: true });
+    await mkdir(path.join(root, "box-data", "box-workspace"), { recursive: true });
+    assert.equal(resolveAgentWorkspace(), path.join(root, "box-workspace"));
+    // Legacy-only deployments fall back to the box-data layout.
+    await rm(path.join(root, "box-workspace"), { recursive: true, force: true });
+    assert.equal(resolveAgentWorkspace(), path.join(root, "box-data", "box-workspace"));
+    // The explicit override still wins outright.
+    process.env.SAND_AGENT_WORKSPACE = "/explicit/workspace";
+    assert.equal(resolveAgentWorkspace(), "/explicit/workspace");
+  } finally {
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    if (previousOverride == null) delete process.env.SAND_AGENT_WORKSPACE;
+    else process.env.SAND_AGENT_WORKSPACE = previousOverride;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("local admin intercept blocks Cursor production fetches and records them", async () => {
   const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-intercept-"));

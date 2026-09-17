@@ -240,10 +240,13 @@ export function resolveAgentWorkspace(): string {
   const override = process.env.SAND_AGENT_WORKSPACE?.trim();
   if (override != null && override.length > 0) return override;
   const root = getSandRootDir();
-  // The host child runs with SAND_DATA_ROOT=<root>/box-data; the Mac
-  // coordinator runs with <root>. Accept either layout, prefer the shared
-  // box workspace so tool artifacts land where the computer's files live.
-  for (const candidate of [join(root, "box-data", "box-workspace"), join(root, "box-workspace")]) {
+  // The shared workspace first: since the container binds /workspace to
+  // <root>/box-workspace, preferring it here converges the routed tools' cwd
+  // with the computer's file plane in BOTH forms (Mac-host daemon and Docker
+  // container) — the tool artifacts land where the computer's files live and
+  // where the Mac user can see them. The legacy box-data layout stays as a
+  // fallback for pre-convergence deployments.
+  for (const candidate of [join(root, "box-workspace"), join(root, "box-data", "box-workspace")]) {
     try { if (lstatSync(candidate).isDirectory()) return candidate; } catch {}
   }
   return root;

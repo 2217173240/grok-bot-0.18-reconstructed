@@ -124,6 +124,11 @@ export async function ensureLocalAdminHost(options: {
     SAND_GATEWAY_TOKEN: options.token,
     SAND_GATEWAY_REQUIRE_AUTH: "1",
     SAND_DATA_ROOT: join(dirname(options.settingsPath), "box-data"),
+    // Converge the Mac-host daemon's file plane with the container contract:
+    // its workspaceRoot becomes the same <root>/box-workspace the Docker form
+    // bind-mounts at /workspace, so the agent cwd and the computer's files
+    // are one directory in either form.
+    SAND_WORKSPACE_ROOT: join(dirname(options.settingsPath), "box-workspace"),
     ...(env.SAND_BACKEND_URL == null || env.SAND_BACKEND_URL.trim() === "" ? { SAND_BACKEND_URL: INERT_BACKEND_URL } : {}),
     ...(deps.nodePath == null ? {} : { NODE_PATH: deps.nodePath }),
     ...(deps.treeSitterDeps == null ? {} : { SAND_TREE_SITTER_NODE_DEPS: deps.treeSitterDeps }),
