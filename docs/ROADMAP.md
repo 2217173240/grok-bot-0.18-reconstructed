@@ -84,7 +84,7 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 **切片 C「人机面」**——让浏览器从"能打开"变"能登录"：
 
 1. `request_box_help` 合同 + awaiting_human 状态机（15 分钟服务端超时、闸门先于读请求体、`ask_human` 幂等——Archive 语义照抄）✅ 2026-09-16 已落地（S-5）：状态机在容器内 host（`awaiting-human.ts`），ask/交回用文件契约（`.grokbot/ask-human.json`，与 novnc-url 同形；agent 的 Mac 侧工具能删它解禁——无死锁），门禁挂 shell/shellStream/computerUse 三个执行器，服务端 15 分钟期限（`SAND_AWAITING_HUMAN_TIMEOUT_MS` 可覆写），重复 ask 不重置计时，坏 ask 进 reason-less 门禁不静默放行；账本记 ask/hand-back/timeout/ask-malformed；URL staleness 文案进交接报错与身份提示词。活体：ask→hand-back（waitedMs 实测）与短期限→诚实收回+文件清除均在容器账本落证；**接管 URL 生命周期显性化**：token 随容器启动重签即作废，交接文案与错误信息必须说清「链接已随重启失效，请重新 ask」，不许人对白屏猜（S-4 review watch item）；
-2. 敏感字段闸门（fill/select/press 白名单、快照抹值）+ noVNC 接管 URL；
+2. 敏感字段闸门（fill/select/press 白名单、快照抹值）+ noVNC 接管 URL ✅ 2026-09-17 已落地（S-6，拓扑适配版）：本拓扑的"快照"是像素级桌面截图——密码框自掩码，明文不进像素（DoD 的截图侧天然满足）；真正的暴露面在审计账本记录的工具输入——xtest 载荷的 text/key（含逐字符 key 路径，Archive 的 press 敞口）在**记录副本**抹值（执行不受影响，非 xtest 命令保真）；账本 0600 并对已松的旧账本收紧；提示词钉死凭据纪律——agent 永不自持凭据、secret 只走 noVNC 人工交接、不在聊天里复述；ask 时 osascript 弹系统通知；接管 URL autoconnect 已随 S-2 落；
 3. session-sync（cookie/localStorage 只补缺 + 重载断路器，多窗口共享登录态）；**内存预算复核**：每只 Chromium ~800MB，多窗口会顶 4g cap——届时提 cap 或限窗数，OOM-kill 要诚实报错不许容器内静默死（S-4 review watch item）；
 4. egress 治理在此刻兑现：凭据进盒、noVNC 暴露后，私网拒绝 + 代理模式才有完整意义（私网拒绝本身便宜，可提前进 A）。
 

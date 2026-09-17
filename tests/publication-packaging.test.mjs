@@ -104,6 +104,11 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /maxTurns: 24/);
   assert.match(providers, /xtest-input-local\.py/);
   assert.match(providers, /do not fall back to curl/);
+  // Sensitive-input discipline (C2): typed desktop input is redacted in the
+  // ledger copy, the ledger is 0600, and the agent never handles credentials.
+  assert.match(providers, /Never handle credentials yourself/);
+  assert.match(providers, /display notification/);
+  assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /redactTypedDesktopInput/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
   // Local-admin turns carry the local identity: the assistant must know it IS

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -201,6 +201,48 @@ test("awaiting-human gates the box with a server-side deadline and honest record
     await loaded.dispose();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     await rm(ledgerRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("typed desktop input is redacted in the ledger copy only", async () => {
+  const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
+  const { redactTypedDesktopInput } = loaded.module;
+  // The executed command is untouched; the RECORDED copy masks typed text and
+  // single-key presses (char-by-char passwords) for xtest payloads.
+  const secret = `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1 <<< '{"action":"type","text":"hunter2SuperSecret!"}'`;
+  const redacted = redactTypedDesktopInput(secret);
+  assert.match(redacted, /<redacted 19 chars>/);
+  assert.doesNotMatch(redacted, /hunter2/);
+  const perKey = `docker exec -i grok-bot-local-vm python3 xtest-input-local.py :1 <<< '{"action":"key","key":"a"}'`;
+  assert.doesNotMatch(redactTypedDesktopInput(perKey), /"key":"a"/);
+  // Non-xtest commands pass through verbatim — the audit keeps its fidelity.
+  const plain = `echo hello && cat /workspace/notes.txt`;
+  assert.equal(redactTypedDesktopInput(plain), plain);
+  // URLs typed into the omnibox are redacted too (same seam) — acceptable:
+  // the screenshots still show where the browser went.
+  await loaded.dispose();
+});
+
+test("the intercept ledger is created 0600 and tightened when loose", async () => {
+  const loaded = await loadModule("source/shared/node/local-admin-intercept.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-ledger-perm-"));
+  const previous = process.env.SAND_DATA_ROOT;
+  process.env.SAND_DATA_ROOT = root;
+  try {
+    loaded.module.appendLocalIntercept({ kind: "tool-use", tool: "Bash", input: "ls" });
+    const ledger = path.join(root, "local-intercept.jsonl");
+    let mode = (await stat(ledger)).mode;
+    assert.equal(mode & 0o077, 0, `ledger created with loose mode ${mode.toString(8)}`);
+    // A pre-existing loose ledger is tightened on the next append.
+    await chmod(ledger, 0o644);
+    loaded.module.appendLocalIntercept({ kind: "tool-use", tool: "Bash", input: "ls" });
+    mode = (await stat(ledger)).mode;
+    assert.equal(mode & 0o077, 0, `loose ledger not tightened (${mode.toString(8)})`);
+  } finally {
+    if (previous == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previous;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

@@ -11,7 +11,7 @@ import { routedProviderToolSteps, type SandInferenceProvider } from "../../../sh
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
-import { appendLocalIntercept } from "../../../shared/node/local-admin-intercept.js";
+import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
@@ -223,7 +223,17 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         metadata.resolve({ openai: { responseId: event.responseId, direct: true } });
         resultResponse.resolve(response(text, invocationId, model));
       }
-    } catch (error) { usage.reject(error); extendedUsage.reject(error); metadata.reject(error); resultResponse.reject(error); throw error; }
+    } catch (error) {
+      // Reject the deferreds for any late awaiter, then mark each rejection
+      // handled: the error already propagates through fullStream, and an
+      // unawaited rejected promise here crashes the coordinator as an
+      // unhandledRejection (observed live when the CLI died mid-turn).
+      for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
+        settled.reject(error);
+        settled.promise.catch(() => undefined);
+      }
+      throw error;
+    }
   })();
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
@@ -269,7 +279,7 @@ function recordClaudeToolTraffic(message: SDKMessage): void {
     if (!block || typeof block !== "object") continue;
     const record = block as { type?: string; name?: string; input?: unknown; content?: unknown; is_error?: boolean };
     if (record.type === "tool_use") {
-      appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "request", tool: record.name ?? "unknown", input: JSON.stringify(record.input ?? {}).slice(0, 400) });
+      appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "request", tool: record.name ?? "unknown", input: redactTypedDesktopInput(JSON.stringify(record.input ?? {}).slice(0, 400)) });
     } else if (record.type === "tool_result") {
       const body = typeof record.content === "string" ? record.content : JSON.stringify(record.content ?? "");
       appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "result", tool: "result", output: body.slice(0, 400), isError: record.is_error === true });
@@ -293,6 +303,7 @@ const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
   "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
   "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
   "When you hit a login, captcha, or payment wall you cannot pass yourself: STOP driving the box, write .grokbot/ask-human.json in the workspace with {\"reason\":\"auth|captcha|payment|other\",\"instruction\":\"what the human should do\"}, give the user the takeover URL from .grokbot/novnc-url (it dies with a container restart — if it does not open, ask again for a fresh one), then wait. Box actions stay blocked until the file is removed (hand-back) or the deadline reclaims the box; your local file tools keep working so you can finish the hand-back.",
+  "Never handle credentials yourself: a password, OTP, or card number is exactly the handoff case — the human types it in the noVNC takeover. Never ask the user to paste secrets into chat; if they do, tell them to use the takeover instead and never repeat the secret back. When you write ask-human.json, also fire a Mac notification so the user notices: osascript -e 'display notification \"需要人工接管盒子\" with title \"Grok Bot\"'.",
   "For web UI tasks, drive the box's DESKTOP browser so your actions are visible on the screen the user can watch — do not fall back to curl. From this Mac the desktop primitives are: launch the browser with `docker exec -d grok-bot-local-vm /usr/local/bin/box-chrome` (on demand; DISPLAY is :1); input via `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799); screenshot with `docker exec grok-bot-local-vm bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it. There is no xdotool — do not look for it.",
 ];
 
@@ -319,7 +330,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
           const decision = claudeToolPermission(toolName);
-          if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: JSON.stringify(input ?? {}).slice(0, 200) });
+          if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },
         maxTurns: 24,
@@ -340,7 +351,17 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
       metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
       resultResponse.resolve(response(text, invocationId, "claude-code"));
-    } catch (error) { usage.reject(error); extendedUsage.reject(error); metadata.reject(error); resultResponse.reject(error); throw error; }
+    } catch (error) {
+      // Reject the deferreds for any late awaiter, then mark each rejection
+      // handled: the error already propagates through fullStream, and an
+      // unawaited rejected promise here crashes the coordinator as an
+      // unhandledRejection (observed live when the CLI died mid-turn).
+      for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
+        settled.reject(error);
+        settled.promise.catch(() => undefined);
+      }
+      throw error;
+    }
   })();
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }

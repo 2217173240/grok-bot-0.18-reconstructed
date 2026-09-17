@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isCursorProductionBackendUrl, isLocalAdminEnabled } from "./local-admin.js";
@@ -33,6 +33,28 @@ function rotateIfNeeded(path: string): void {
   } catch {}
 }
 
+// The ledger records tool traffic; anything the agent types into the box's
+// desktop (XTEST payloads) may be a credential the user handed it despite the
+// handoff design. Redact the typed values in the RECORDED copy only — the
+// executed command is untouched. Passwords typed char-by-char via key
+// presses are covered too (Archive's "press loophole" fix).
+export function redactTypedDesktopInput(command: string): string {
+  if (!command.includes("xtest-input")) return command;
+  return command
+    .replace(/("text"\s*:\s*")((?:\\.|[^"\\])*)(")/g, (_all, head: string, value: string, tail: string) => `${head}<redacted ${value.length} chars>${tail}`)
+    .replace(/('text'\s*:\s*')([^']*)(')/g, (_all, head: string, value: string, tail: string) => `${head}<redacted ${value.length} chars>${tail}`)
+    .replace(/("key"\s*:\s*")((?:\\.|[^"\\])*)(")/g, (_all, head: string, value: string, tail: string) => `${head}<redacted>${tail}`);
+}
+
+function ensureLedgerPermissions(path: string): void {
+  // One stat per record — cheap enough, and a ledger loosened after the
+  // first append (restore, manual edit) must still be tightened.
+  try {
+    const mode = statSync(path).mode;
+    if ((mode & 0o077) !== 0) chmodSync(path, 0o600);
+  } catch {}
+}
+
 export function appendLocalIntercept(record: Readonly<Record<string, unknown>>, env: NodeJS.ProcessEnv = process.env): void {
   if (record.kind === "local-host" && HEARTBEAT_KINDS.has(String(record.event))) {
     const now = Date.now();
@@ -41,7 +63,8 @@ export function appendLocalIntercept(record: Readonly<Record<string, unknown>>, 
   }
   const path = localInterceptLogPath(env);
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
+  appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`, { mode: 0o600 });
+  ensureLedgerPermissions(path);
   rotateIfNeeded(path);
 }
 
