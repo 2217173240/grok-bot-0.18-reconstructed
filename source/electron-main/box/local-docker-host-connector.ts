@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -193,7 +193,7 @@ export function localDockerRunPlan(options: {
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
     "--volume", `${dataVolume}:/home/box/sand-data`,
-    "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host/host-main.cjs,readonly`,
+    "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host,readonly`,
     "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
     ...(options.inferenceFileDir == null ? [] : ["--mount", `type=bind,src=${options.inferenceFileDir},dst=/run/grok-bot,readonly`]),
     ...(options.authMounts ?? []),
@@ -244,10 +244,11 @@ export function localDockerRunPlan(options: {
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
 export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
-// Schema 11: memory caps land on the run contract (2g exec, 4g desktop —
-// the Archive measurement: ~200MB base + ~800MB per Chromium inside a 6GiB
-// Colima VM). Drift replaces existing schema-10 containers.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "11";
+// Schema 12: the staged host runtime mounts as a DIRECTORY (the host spawns
+// agent-isolation and extension workers relative to argv[1] at runtime; the
+// single-file mount left them missing and killed in-box turns). Drift
+// replaces existing schema-11 containers.
+export const LOCAL_DOCKER_SCHEMA_VERSION = "12";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 // The host-turn mount plane (token bind) only applies at docker run; the
 // label lets drift replace a container whose mounts no longer match.
@@ -265,7 +266,7 @@ export function resolveDesktopMode(env: NodeJS.ProcessEnv, customImage: boolean)
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
 // sibling layout. v1 (flat) directories are never reused.
-export const LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "2";
+export const LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "3";
 // A local host that exits is a deterministic failure (layout, deps, port);
 // identical automatic respawns are mechanical retries. Three strikes open a
 // 60s breaker; the user-driven recreate paths reset it.
@@ -405,6 +406,24 @@ async function isDirectory(path: string): Promise<boolean> {
 
 async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const readRuntimeTree = async (relative: string): Promise<readonly { name: string; bytes: Buffer }[]> => {
+    const readDir = async (prefix: string): Promise<{ name: string; bytes: Buffer }[]> => {
+      const root = [resolve(moduleDirectory, `../${join(relative, prefix)}`), resolve(moduleDirectory, `../../${join(relative, prefix)}`)];
+      const entries: { name: string; bytes: Buffer }[] = [];
+      for (const candidate of root) {
+        try {
+          for (const item of await readdir(candidate, { withFileTypes: true })) {
+            const name = join(prefix, item.name);
+            if (item.isDirectory()) entries.push(...await readDir(name));
+            else if (item.isFile()) entries.push({ name, bytes: await readFile(join(candidate, item.name)) });
+          }
+          return entries;
+        } catch {}
+      }
+      return entries;
+    };
+    return await readDir("");
+  };
   const readRuntime = async (relative: string): Promise<Buffer> => {
     const candidates = [resolve(moduleDirectory, `../${relative}`), resolve(moduleDirectory, `../../${relative}`)];
     for (const candidate of candidates) {
@@ -417,6 +436,11 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   const sha256 = createHash("sha256").update(hostBytes).digest("hex");
   const boxExecDaemonSha256 = createHash("sha256").update(boxExecDaemonBytes).digest("hex");
   const directory = join(dirname(settingsPath), "local-docker-runtime", `v${LOCAL_HOST_RUNTIME_LAYOUT_VERSION}-${sha256}-${boxExecDaemonSha256}`);
+  // The host spawns sibling artifacts relative to argv[1] at RUNTIME
+  // (agent-isolation workers, extension workers — caught live when an in-box
+  // turn died on agent-store-worker.cjs). Staging must carry the whole tree,
+  // not the single entry file.
+  const hostTree = await readRuntimeTree("host");
   const persistRuntime = async (name: string, bytes: Buffer): Promise<string> => {
     const target = join(directory, name);
     await mkdir(dirname(target), { recursive: true });
@@ -432,8 +456,16 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
     return target;
   };
   await mkdir(directory, { recursive: true });
+  const hostMainPath = await persistRuntime("sand-host/host-main.cjs", hostBytes);
+  for (const sibling of hostTree) {
+    if (sibling.name === "host-main.cjs") continue;
+    await persistRuntime(join("sand-host", sibling.name), sibling.bytes);
+  }
   return {
-    path: await persistRuntime("sand-host/host-main.cjs", hostBytes),
+    // The mount unit is the sand-host DIRECTORY: the host resolves worker
+    // artifacts relative to argv[1] at runtime, so single-file mounts leave
+    // it without agent-isolation/ and extension workers.
+    path: dirname(hostMainPath),
     sha256,
     boxExecDaemonPath: await persistRuntime("box-exec-daemon/main.cjs", boxExecDaemonBytes),
     boxExecDaemonSha256,
@@ -506,6 +538,23 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // docker-created directory would be root-owned and awkward outside Docker.
     const workspaceHostPath = join(dirname(settingsPath), "box-workspace");
     await mkdir(workspaceHostPath, { recursive: true });
+    // Seed the box's settings into the data volume (idempotent, only when
+    // absent): without a settings file the in-box host defaults its inference
+    // provider to cursor and host turns die against the blocked backend
+    // (observed live). The provider mirrors the Mac's setting; the file lives
+    // in the volume, so container replacement keeps it.
+    const dataVolume = image !== LOCAL_DOCKER_BOX_IMAGE ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data";
+    let provider = "claude-code";
+    try {
+      const macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown };
+      if (typeof macSettings.inferenceProvider === "string" && macSettings.inferenceProvider.length > 0) provider = macSettings.inferenceProvider;
+    } catch {}
+    // Force-merge the provider key (the host persists the file itself, and a
+    // pre-existing provider-less file from an older boot would survive a
+    // write-only-if-absent seed — observed live). The Mac is the source of
+    // truth; the merge runs only at container creation.
+    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
+    await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     const authMounts = await localAuthMountArguments();
     const plan = localDockerRunPlan({
       image,

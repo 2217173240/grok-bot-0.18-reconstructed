@@ -78,7 +78,11 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /public\.ecr\.aws\/k0i0n2g5\/cursorenvironments\/universal:sand-box-latest/);
   assert.match(localDocker, /"127\.0\.0\.1:1340:1340"/);
   assert.match(localDocker, /SAND_BOX_AUTO_UPDATE=0/);
-  assert.match(localDocker, /dst=\/home\/box\/sand-host\/host-main\.cjs,readonly/);
+  assert.match(localDocker, /dst=\/home\/box\/sand-host,readonly/);
+  // The staged host tree carries its runtime siblings (agent-isolation and
+  // extension workers) — an in-box turn died on a missing worker when the
+  // mount was the single entry file.
+  assert.match(localDocker, /LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "3"/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(inference, /recordInferenceUsage\(provider/);
   assert.match(inference, /routerSettings\.getInferenceProvider\(\)/);

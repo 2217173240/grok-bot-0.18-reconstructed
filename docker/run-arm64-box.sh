@@ -53,7 +53,7 @@ docker run --detach --name "$NAME" \
   --env SAND_WORKSPACE_ROOT=/workspace \
   --env SAND_AGENT_WORKSPACE=/workspace \
   --publish "127.0.0.1:${GATEWAY_PORT}:1340" \
-  --mount "type=bind,src=$V2DIR/sand-host/host-main.cjs,dst=/home/box/sand-host/host-main.cjs,readonly" \
+  --mount "type=bind,src=$V2DIR/sand-host,dst=/home/box/sand-host,readonly" \
   --mount "type=bind,src=$V2DIR/box-exec-daemon,dst=/home/box/box-exec-daemon,readonly" \
   --volume grok-bot-exec-eval-data:/home/box/sand-data \
   --volume grok-bot-exec-eval-workspace:/workspace \

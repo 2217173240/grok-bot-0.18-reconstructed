@@ -196,11 +196,15 @@ do_start() {
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
     say "image: $GROKBOT_IMAGE (pinned)"
   fi
-  # GROKBOT_TURN=host executes routed turns inside the local host process
-  # (single execution plane; the host journal becomes the transcript of record).
-  if [ "${GROKBOT_TURN:-}" = "host" ]; then
+  # Turns execute INSIDE the box by default (the single execution plane —
+  # the bot's own evidence carries the box's Linux fingerprint). GROKBOT_TURN=mac
+  # opts back to the Mac coordinator plane. Known limit: the plugins MCP bridge
+  # listens on the Mac loopback and is unreachable from in-box turns.
+  if [ "${GROKBOT_TURN:-}" = "mac" ]; then
+    say "turns: Mac coordinator plane (GROKBOT_TURN=mac)"
+  else
     export SAND_LOCAL_ADMIN_TURN=host
-    say "turns: host execution plane (experimental)"
+    say "turns: in-box execution plane (default; GROKBOT_TURN=mac to opt out)"
   fi
   # The desktop plane is the default computer (complete bot; both gate
   # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.
