@@ -12,7 +12,10 @@ import dns from "node:dns";
 import http from "node:http";
 import fs from "node:fs";
 
-const DISPLAY = 1;
+// 显示号取自 $DISPLAY（box-init-exec 导出 :1），不硬编码——多窗口时导航
+// 跟着调用方所在的屏走（CDP = 9222+N，box-common.sh 的公式）。
+const displayEnv = (process.env.DISPLAY ?? "").replace(/^:/, "").split(".")[0];
+const DISPLAY = /^\d+$/.test(displayEnv) ? Number.parseInt(displayEnv, 10) : 1;
 const CDP = 9222 + DISPLAY;
 const LEDGER = "/home/box/sand-data/local-intercept.jsonl";
 

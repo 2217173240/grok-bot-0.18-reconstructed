@@ -136,6 +136,44 @@ test("the agent workspace converges on the shared box-workspace directory", asyn
   }
 });
 
+test("the Mac permission layer enforces the awaiting-human handoff", async () => {
+  const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
+  const root = await mkdtemp(path.join(os.tmpdir(), "grok-awaiting-perm-"));
+  const previousRoot = process.env.SAND_DATA_ROOT;
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const previousOverride = process.env.SAND_AGENT_WORKSPACE;
+  process.env.SAND_DATA_ROOT = root;
+  process.env.SAND_ADMIN = "1";
+  process.env.SAND_LOCAL_ADMIN = "1";
+  delete process.env.SAND_AGENT_WORKSPACE;
+  try {
+    const { claudeToolPermission } = loaded.module;
+    await mkdir(path.join(root, "box-workspace", ".grokbot"), { recursive: true });
+    const askPath = path.join(root, "box-workspace", ".grokbot", "ask-human.json");
+    // No ask file: local admin allows everything (unchanged behavior).
+    assert.equal(claudeToolPermission("Bash", { command: "docker exec xtest" }).behavior, "allow");
+    // Ask file present: box-driving tools pause with the waiting message…
+    await writeFile(askPath, JSON.stringify({ reason: "auth", instruction: "sign in" }));
+    const denied = claudeToolPermission("Bash", { command: "docker exec -i grok-bot-local-vm python3 xtest-input-local.py :1" });
+    assert.equal(denied.behavior, "deny");
+    assert.match(denied.message, /awaiting a human handoff/);
+    assert.match(denied.message, /novnc-url/);
+    // …reads stay available, and the hand-back command (rm the ask file) passes.
+    assert.equal(claudeToolPermission("Read", {}).behavior, "allow");
+    const handBack = claudeToolPermission("Bash", { command: `rm ${askPath}` });
+    assert.equal(handBack.behavior, "allow");
+  } finally {
+    if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
+    else process.env.SAND_DATA_ROOT = previousRoot;
+    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    if (previousOverride == null) delete process.env.SAND_AGENT_WORKSPACE;
+    else process.env.SAND_AGENT_WORKSPACE = previousOverride;
+    await loaded.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("awaiting-human gates the box with a server-side deadline and honest records", async () => {
   const loaded = await loadModule("source/host/box/awaiting-human.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-awaiting-"));

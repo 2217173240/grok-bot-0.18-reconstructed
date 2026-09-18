@@ -96,6 +96,14 @@ do_start() {
     health_ok && say "gateway: healthy" || say "gateway: not ready (host may still be starting)"
     exit 0
   fi
+  # Reap our own orphaned host BEFORE classifying the 1340 holder — the
+  # guard cannot tell an orphan host from a foreign process, but host_pid can;
+  # with the guard first, our own leftover host killed the boot instead.
+  if [ "$(host_pid)" ]; then
+    say "note: leftover host pid $(host_pid); stopping it first"
+    kill "$(host_pid)" 2>/dev/null || true
+    sleep 1
+  fi
   # 1340 held by a NON-app listener is fine when it is the Docker computer's
   # port forward (ssh/docker-proxy for grok-bot-local-vm) and that gateway is
   # healthy — the app connects to it. Anything else holding the port blocks.
@@ -105,11 +113,6 @@ do_start() {
     else
       die "port 1340 is held by something that is not our app or computer; refusing to start"
     fi
-  fi
-  if [ "$(host_pid)" ]; then
-    say "note: leftover host pid $(host_pid); stopping it first"
-    kill "$(host_pid)" 2>/dev/null || true
-    sleep 1
   fi
 
   # One-time migration from the /tmp smoke root.
@@ -254,14 +257,19 @@ do_stop() {
     kill "$hpid" 2>/dev/null || true
   fi
   rm -f "$PID_FILE"
-  # A Docker computer outlives the app by design (restart: unless-stopped) and
-  # keeps the published gateway port; remove it so the next Mac-host start is
-  # not blocked. The workspace is a bind mount — files stay in Finder view at
-  # $DATA_ROOT/box-workspace — and the sand-data volume persists.
+  # The Docker computer outlives the app by design: desktop session, browser
+  # state, and the handover URL all survive an app restart (the login profile
+  # rides the data volume regardless). Removing it on every stop was a
+  # Mac-host-era reflex — a host-mode start stops the computer itself when
+  # actually switching (the connector's host branch owns that).
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ]; then
     resolve_docker_host || true
-    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
-      docker rm -f grok-bot-local-vm >/dev/null 2>&1 && say "docker computer removed (workspace persists at $DATA_ROOT/box-workspace)"
+    if docker info >/dev/null 2>&1; then
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
+        say "computer:   left running by design (a GROKBOT_BOX=host start will stop it)"
+      fi
+    else
+      say "computer:   docker unreachable — container state untouched"
     fi
   fi
   say "note: the detached local-exec-daemon is left running by design; it reattaches on next start"
@@ -288,7 +296,9 @@ do_status() {
     say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"
   fi
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
-  if resolve_docker_host && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
+  if ! resolve_docker_host 2>/dev/null || ! docker info >/dev/null 2>&1; then
+    say "computer:    docker unreachable (colima start?) — cannot inspect the container"
+  elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
     if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
       say "computer:    desktop plane (box-init-exec, opt-in)"
       if [ -f "$DATA_ROOT/box-workspace/.grokbot/novnc-url" ]; then
