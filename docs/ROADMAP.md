@@ -90,11 +90,18 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 
 **完成定义**：A = 同一 agent 的所有工具写同一目录、所有回退都有标注、门禁走真执行链；B = Computer 工具在容器里点得动真浏览器、人能在浏览器里看到那块屏；C = agent 遇到登录页会停下来把屏交给人、15 分钟后诚实收回。
 
-**C 后、S-9 前的结构修（S-4 review 定案）**：`SAND_LOCAL_ADMIN_TURN=host` 转正为默认——
+**C 后、S-9 前的结构修（S-4 review 定案）✅ 2026-09-18 已落地**：`SAND_LOCAL_ADMIN_TURN=host` 转正为默认——
 路由轮次真正在容器内执行（现在推理/本地工具跑在 Mac coordinator，只有 computer 面在容器；
 身份块的「我就是沙箱」要等这一步才是完整事实）。毕业 golden path 的「agent 写的文件人能
 在 Mac 看到」只有在执行面与文件面都对齐后才成立。热修已先把 agent cwd 与两形态 daemon
 的 workspaceRoot 收敛到 `<root>/box-workspace`（2026-09-16），执行面收敛由此项完成。
+落地时连环修了三个真 bug（全部有账本/栈证据）：staging 只挂单文件 → 盒内 turn 死于
+`agent-store-worker.cjs` 缺失（修：staging 整棵 host 树 + 目录挂载，layout v3 + schema 12）；
+demo 插件 Mac 路径在盒内死（修：重定位到 /workspace）；盒无 settings.json → provider 默认
+cursor、turn 撞封锁后端（修：创建时把 Mac 的 provider 强制合并进卷内 settings.json）。
+活体验收：探针回复即 `Linux <容器hostname> ... aarch64`，盒内账本记录 claude-code provider
+的真实 Bash 执行。已知限：插件 MCP 桥在 Mac 回环、盒内轮次不可达（登记待桥接）；
+死轮次留下的 transcript journal 需恢复（清理 agents/ 即愈，登记为 watch item）。
 
 ## 3.5 跨拓扑加固清扫（2026-09-18，三路审计 + 第二跳核实）
 
