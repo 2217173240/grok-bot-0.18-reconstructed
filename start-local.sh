@@ -96,8 +96,15 @@ do_start() {
     health_ok && say "gateway: healthy" || say "gateway: not ready (host may still be starting)"
     exit 0
   fi
+  # 1340 held by a NON-app listener is fine when it is the Docker computer's
+  # port forward (ssh/docker-proxy for grok-bot-local-vm) and that gateway is
+  # healthy — the app connects to it. Anything else holding the port blocks.
   if lsof -nP -iTCP:1340 -sTCP:LISTEN >/dev/null 2>&1; then
-    die "port 1340 is held by something that is not our app; refusing to start"
+    if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ]        && resolve_docker_host 2>/dev/null        && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'        && health_ok; then
+      say "port 1340: held by the Docker computer's forward (healthy) — the app will connect to it"
+    else
+      die "port 1340 is held by something that is not our app or computer; refusing to start"
+    fi
   fi
   if [ "$(host_pid)" ]; then
     say "note: leftover host pid $(host_pid); stopping it first"
