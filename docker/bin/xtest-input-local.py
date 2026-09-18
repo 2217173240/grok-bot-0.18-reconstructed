@@ -81,7 +81,17 @@ def tap_btn(dpy, button):
     xtst.XTestFakeButtonEvent(dpy, button, False, NOW)
 def hold_btn(dpy, button, down):
     xtst.XTestFakeButtonEvent(dpy, button, bool(down), NOW)
+def precheck_text(text):
+    # 注入前整段扫一遍：不支持字符必须在任何按键落屏之前报出来——
+    # 逐字符中途 die 会留下"半个前缀已打进输入框"且错误类别失实。
+    for i, ch in enumerate(text):
+        ok = "a" <= ch <= "z" or "0" <= ch <= "9" or "A" <= ch <= "Z" or ch in PUNCT
+        if not ok:
+            die(f"unsupported char {ch!r} (U+{ord(ch):04X}) at position {i} of {len(text)} — only ASCII + mapped punctuation; CJK/emoji need the clipboard or the noVNC human hand")
+    return
+
 def type_text(dpy, text):
+    precheck_text(text)
     for ch in text:
         if "a" <= ch <= "z" or "0" <= ch <= "9":
             tap_key(dpy, ch); continue

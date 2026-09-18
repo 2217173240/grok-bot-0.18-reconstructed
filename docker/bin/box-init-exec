@@ -19,10 +19,15 @@ mkdir -p "$TOKEN_DIR" "$NOVNC_TOKEN_DIR" "$SUPERVISE_DIR" /home/box/sand-data
 mkdir -p /home/box/sand-data/chrome-profile
 # 持久化 profile 的代价：上个容器被 SIGKILL 时留下的 Singleton 锁指向旧主机名-PID，
 # 新容器里按构造就是陈旧的——不清掉，chromium 认为别人持锁、起不来（实测）。
-rm -f /home/box/sand-data/chrome-profile/Singleton*
+rm -f /home/box/sand-data/chrome-profile*/Singleton*
 
 # 主屏（自带 5900 画面与 6080 入口；浏览器不在这里起——按需另起，无头纪律）。
-start-desktop.sh "$PRIMARY_DISPLAY" || { log "主屏起不来，看 /tmp/xvfb:1.log 等"; exit 1; }
+# 启动失败不 exit：B1 的语义是桌面死由探测暴露、修复走 recreate——启动期死亡
+# 若 exit 1 会落进 dockerd 的 restart 循环（容器反复翻滚、token 反复作废），
+# 而 host 前台本可以带着无桌面的盒子继续服务，探测（xdpyinfo）会如实暴露。
+if ! start-desktop.sh "$PRIMARY_DISPLAY"; then
+  log "警告：主屏起不来（看 /tmp/xvfb:1.log 等）——host 继续前台，桌面面由探测暴露为死"
+fi
 
 # 副屏画面共用入口（6081，TokenFile 同一个凭证目录）。
 websockify --web=/usr/share/novnc/ \

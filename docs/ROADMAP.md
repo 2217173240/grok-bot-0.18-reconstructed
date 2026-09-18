@@ -96,6 +96,21 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 在 Mac 看到」只有在执行面与文件面都对齐后才成立。热修已先把 agent cwd 与两形态 daemon
 的 workspaceRoot 收敛到 `<root>/box-workspace`（2026-09-16），执行面收敛由此项完成。
 
+## 3.5 跨拓扑加固清扫（2026-09-18，三路审计 + 第二跳核实）
+
+bug 族：为单一拓扑/时代写的守卫与假设在另一形态或异常序列下失真。已修（活体验证）：
+host 分支先停容器（曾静默把容器当 Mac host 用）、forceRecreate 丢弃陈旧 in-flight +
+探测绕过缓存、非 admin recreate 容器缺失容忍、QEMU 回退账本后置到全部拒绝守卫之后、
+配置类错误（stale/镜像错配）不烧自动断路器、host-turn 挂载面进 drift（label）、
+孤儿 host 清理先于端口分类、stop 不再销毁电脑（桌面会话存活；host 切换由连接器负责）、
+status 对 docker 不可达如实报告、桌面启动失败不再崩溃循环（host 带死桌面继续、探测暴露）、
+box-navigate 读 $DISPLAY（CDP=9222+N 单源）、xtest 注入前整段预扫（部分注入前就报字符位）、
+awaiting 门禁补上 Mac 权限层强制（Bash 仅放行交回命令；docker exec 旁路关闭）。
+**登记未修**（低频/未来形态）：1339 路由器与 session-sync 死亡无生产探测（多窗口落地时修）；
+SAND_LOCAL_ADMIN_DESKTOP 读进程 env，两个启动环境交替会乒乓重建容器（落 settings 时修）；
+box-mode 三态文件仍是"上次 start 的快照"（A6，现为纯展示层，风险已降）；
+awaiting 的 hand-back 无法认证"人真的来过"（拓扑边界，文档已载）。
+
 ## 4. 边界（不变）
 
 - 不并入 Archive 的 `:18765` 窗口服务与 mcp-server（driver 自包含，最小合并集 = box-image + 行为规格）。

@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -262,8 +262,39 @@ export function resolveAgentWorkspace(): string {
   return root;
 }
 
-export function claudeToolPermission(toolName: string): PermissionResult {
-  if (isLocalAdminEnabled()) return { behavior: "allow", updatedInput: {} };
+// The awaiting-human gate, enforced at the Mac permission layer. The box-side
+// gate covers the box executors, but the taught desktop primitives run from
+// THIS Mac via docker exec — without this seam the agent could keep driving
+// the box (typing into the very screen the human is taking over) during a
+// handoff. While the ask file exists, only the hand-back itself (removing the
+// ask file) and reads pass; everything else gets the waiting message.
+export function awaitingHumanAskFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const root = process.env.SAND_WORKSPACE_ROOT?.trim() || resolveAgentWorkspace();
+  if (root.length === 0) return null;
+  return join(root, ".grokbot", "ask-human.json");
+}
+
+export function claudeToolPermission(toolName: string, input?: unknown): PermissionResult {
+  if (isLocalAdminEnabled()) {
+    const askPath = awaitingHumanAskFilePath();
+    if (askPath != null && existsSync(askPath)) {
+      const command = typeof (input as { command?: unknown } | undefined)?.command === "string" ? (input as { command: string }).command : "";
+      const isHandBack = /ask-human\.json/.test(command) && /(^|\s)(rm|unlink)\b/.test(command);
+      if (isHandBack) {
+        appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-handback-allowed", tool: toolName });
+        return { behavior: "allow", updatedInput: {} };
+      }
+      if (toolName === "Read" || toolName === "Glob" || toolName === "Grep" || toolName === "LS" || toolName === "TodoWrite") {
+        return { behavior: "allow", updatedInput: {} };
+      }
+      appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-denied", tool: toolName });
+      return {
+        behavior: "deny",
+        message: "The box is awaiting a human handoff (ask-human.json present): box-driving tools are paused so the human has the screen. Pass the takeover URL from .grokbot/novnc-url to the user, then wait. Resume by removing the ask file (rm .grokbot/ask-human.json) once the human confirms, or let the deadline reclaim the box.",
+      };
+    }
+    return { behavior: "allow", updatedInput: {} };
+  }
   if (CLAUDE_READ_ONLY_TOOLS.has(toolName)) return { behavior: "allow", updatedInput: {} };
   appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
   return {
@@ -329,7 +360,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }),
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
-          const decision = claudeToolPermission(toolName);
+          const decision = claudeToolPermission(toolName, input);
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },

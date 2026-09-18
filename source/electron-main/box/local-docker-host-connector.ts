@@ -137,6 +137,8 @@ export function localDockerRunPlan(options: {
   readonly dataVolume?: string;
   readonly depsPin?: string;
   readonly desktop?: boolean;
+  readonly hostTurn?: boolean;
+  readonly anthropicTokenPath?: string;
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
   readonly inferenceFileDir?: string;
@@ -162,6 +164,7 @@ export function localDockerRunPlan(options: {
     "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
     "--label", `${LOCAL_DOCKER_DESKTOP_LABEL}=${options.desktop === true ? "1" : "0"}`,
+    "--label", `${LOCAL_DOCKER_HOST_TURN_LABEL}=${options.hostTurn === true ? "1" : "0"}`,
     "--label", `${SELF_BUILT_DEPS_PIN_LABEL}=${options.depsPin ?? "unknown"}`,
     // Memory cap: ~200MB base + ~800MB per Chromium, inside a 6GiB Colima VM
     // — the desktop plane gets headroom for several browsers, the exec plane
@@ -177,6 +180,15 @@ export function localDockerRunPlan(options: {
     // port fixes DNS poisoning (CONNECT resolves at the far end); Chromium
     // bypasses loopback by default, so the CDP/noVNC surfaces stay local.
     ...(process.env.SAND_BOT_PROXY == null || process.env.SAND_BOT_PROXY.trim() === "" ? [] : ["--env", `MAC_BOT_PROXY=${process.env.SAND_BOT_PROXY.trim()}`]),
+    // Host-turn plane (turns execute inside the box): the SDK-vendored CLI
+    // plus the inference endpoint ride in as env; the token arrives as a
+    // read-only file mount at the path claudeChildEnv resolves.
+    ...(options.hostTurn !== true ? [] : [
+      "--env", "CLAUDE_CODE_PATH=/home/box/deps/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+      ...(process.env.ANTHROPIC_BASE_URL == null ? [] : ["--env", `ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL}`]),
+      ...(process.env.SAND_CLAUDE_MODEL == null ? [] : ["--env", `SAND_CLAUDE_MODEL=${process.env.SAND_CLAUDE_MODEL}`]),
+      ...(options.anthropicTokenPath == null ? [] : ["--mount", `type=bind,src=${options.anthropicTokenPath},dst=/home/box/sand-data/anthropic-token,readonly`]),
+    ]),
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
@@ -237,6 +249,9 @@ export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
 // Colima VM). Drift replaces existing schema-10 containers.
 export const LOCAL_DOCKER_SCHEMA_VERSION = "11";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
+// The host-turn mount plane (token bind) only applies at docker run; the
+// label lets drift replace a container whose mounts no longer match.
+export const LOCAL_DOCKER_HOST_TURN_LABEL = "com.grok-bot.local-vm.host-turn";
 export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
 
 // The desktop plane is the DEFAULT for the self-built computer (the goal is
@@ -349,9 +364,9 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
     return {
@@ -364,6 +379,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
       desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
+      hostTurn: value.Config?.Labels?.[LOCAL_DOCKER_HOST_TURN_LABEL] === "1",
     };
   } catch { throw new Error("Docker returned malformed container inspection data."); }
 }
@@ -445,14 +461,6 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     appendLocalIntercept({ kind: "docker", event: "stale-image-refused", image: imageChoice.image, expectedDepsPin: imageChoice.expectedDepsPin, imageDepsPin: imageChoice.imageDepsPin ?? "(unlabelled)" });
     throw new Error(`The self-built computer image is stale: its dependency pin ${imageChoice.imageDepsPin ?? "(unlabelled)"} does not match this app's ${imageChoice.expectedDepsPin}. Rebuild it with docker/build-arm64-box.sh; refusing to run outdated dependencies or to silently fall back to the emulated official image.`);
   }
-  // Annotated, not silent: the default path without the self-built image runs
-  // the emulated official image. One record per process — reconnects must not
-  // spam the bounded ledger with the same fact.
-  const fallbackRecord = officialImageQemuFallbackRecord(imageChoice);
-  if (fallbackRecord != null && !officialImageFallbackAnnotated) {
-    officialImageFallbackAnnotated = true;
-    appendLocalIntercept(fallbackRecord);
-  }
   const image = imageChoice.image;
   if (imageChoice.selection === "explicit") {
     const present = await runDocker(["image", "inspect", "--format", "1", image]);
@@ -463,14 +471,27 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // Desktop mode: default for the self-built image once the dual gate
   // profiles were green (S-4); SAND_LOCAL_ADMIN_DESKTOP=0 opts out.
   const desktop = resolveDesktopMode(process.env, image !== LOCAL_DOCKER_BOX_IMAGE);
+  // Host-turn wiring mounts only when the turn plane actually runs in the box.
+  const hostTurn = process.env.SAND_LOCAL_ADMIN_TURN === "host" && image !== LOCAL_DOCKER_BOX_IMAGE;
+  const anthropicTokenPath = existsSync(join(dirname(settingsPath), "anthropic-token")) ? join(dirname(settingsPath), "anthropic-token") : undefined;
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
+  // Annotated, not silent — but only once every refusal guard has passed: the
+  // record claims the official image is about to run, and writing it before
+  // the guards made the ledger narrate a fallback that never happened (seen
+  // when the image tag was removed while its container kept running). One
+  // record per process; reconnects must not spam the bounded ledger.
+  const fallbackRecord = officialImageQemuFallbackRecord(imageChoice);
+  if (fallbackRecord != null && !officialImageFallbackAnnotated) {
+    officialImageFallbackAnnotated = true;
+    appendLocalIntercept(fallbackRecord);
+  }
   // Pin drift on an existing container means it predates the current app's
   // dependencies: replace it, the same as a schema or host-bundle change. A
   // desktop-mode mismatch replaces too — the entrypoint only applies at run.
   const pinDrifted = expectedDepsPin != null && inspected.depsPin !== expectedDepsPin;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || inspected.desktop !== desktop || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
@@ -495,6 +516,8 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       boxExecDaemonSha256: hostBundle.boxExecDaemonSha256,
       workspaceHostPath,
       ...(desktop ? { desktop } : {}),
+      ...(hostTurn ? { hostTurn } : {}),
+      ...(anthropicTokenPath == null ? {} : { anthropicTokenPath }),
       ...(expectedDepsPin == null ? {} : { depsPin: expectedDepsPin }),
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
@@ -553,7 +576,12 @@ export function createSettingsRoutedHostConnector(
       return value;
     };
   };
-  const probeDockerAvailable = cachedProbe(60_000, async () => (await runDocker(["info", "--format", "{{.ServerVersion}}"])).ok);
+  // Short cache for AUTOMATIC probes (hammering the CLI per task is waste);
+  // user-driven recreate/forceRecreate bypass it — acting on a cached
+  // "unavailable" after the user just started Colima lands on the wrong
+  // computer (mac-host) while the UI says Docker.
+  const probeDocker = async (): Promise<boolean> => (await runDocker(["info", "--format", "{{.ServerVersion}}"])).ok;
+  const probeDockerAvailable = cachedProbe(60_000, probeDocker);
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
       if (isLocalAdminEnabled()) {
@@ -569,12 +597,21 @@ export function createSettingsRoutedHostConnector(
         try {
           const connection = box === "docker"
             ? await (stopLocalAdminHost(), ensureLocalDockerBox(settings.settingsPath, undefined))
-            : await ensureMacHostComputer();
+            // The Mac host and the container share port 1340 and the token
+            // file; without stopping the container first, the host branch's
+            // already-ready probe answers from the CONTAINER and silently
+            // returns the wrong computer as if it were the Mac host.
+            : await (await stopLocalDockerBox().catch(() => undefined), ensureMacHostComputer());
           resetLocalHostBreaker();
           return connection;
         } catch (error) {
           localHostLastFailure = error instanceof Error ? error.message : String(error);
-          localHostConsecutiveFailures += 1;
+          // Deterministic configuration errors (stale pin, image mismatch,
+          // missing explicit image) are not transient failures — counting
+          // them toward the breaker burned 60s of "computer broken" on what
+          // is a rebuild-me instruction; they surface identically every time.
+          const isConfigurationError = /is stale:|unexpected image|is not built locally|unowned container/.test(localHostLastFailure);
+          if (!isConfigurationError) localHostConsecutiveFailures += 1;
           if (localHostConsecutiveFailures >= LOCAL_HOST_AUTO_FAILURE_LIMIT) {
             localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
             appendLocalIntercept({ kind: "local-computer", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
@@ -607,7 +644,7 @@ export function createSettingsRoutedHostConnector(
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
       if (isLocalAdminEnabled()) {
-        if ((await probeDockerAvailable()) && resolveLocalAdminBox(process.env, true) === "docker") {
+        if (await probeDocker() && resolveLocalAdminBox(process.env, true) === "docker") {
           const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
           if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
           resetLocalHostBreaker();
@@ -623,8 +660,11 @@ export function createSettingsRoutedHostConnector(
         if (remote.recreate == null) throw new Error("Remote computer recreation is unavailable.");
         return await remote.recreate(args);
       }
+      // A missing container is not a restart failure — connect() creates it
+      // (mirrors the local-admin branch's fallback instead of hard-failing).
       const stopped = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]);
-      if (!stopped.ok) throw new Error(`Could not restart the local Docker VM: ${stopped.output}`);
+      if (!stopped.ok && !/no such container/i.test(stopped.output)) throw new Error(`Could not restart the local Docker VM: ${stopped.output}`);
+      if (!stopped.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
       await localConnect();
       return { status: "started-untrackable" };
     },
@@ -632,7 +672,11 @@ export function createSettingsRoutedHostConnector(
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
         resetLocalHostBreaker();
-        if ((await probeDockerAvailable()) && resolveLocalAdminBox(process.env, true) === "docker") await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        if (await probeDocker() && resolveLocalAdminBox(process.env, true) === "docker") await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        // Discard any in-flight ensure from a concurrent connect: it is
+        // polling the world we just destroyed and would fail with a
+        // misleading "stopped before ready" instead of building the new one.
+        ensureInFlight = undefined;
         await localConnect();
         return { status: "started-untrackable" };
       }
