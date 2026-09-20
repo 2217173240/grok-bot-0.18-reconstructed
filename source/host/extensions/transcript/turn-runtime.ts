@@ -553,13 +553,13 @@ export class TurnRuntime {
     let streamOutputProduced = result.streamOutputProduced === true;
     // Local-admin text delivery, checked BEFORE nudging: routed CLI sessions
     // have no SendMessage tool, so nudging can never succeed — it would only
-    // burn extra turns before the seam below delivers the run's own text.
-    const textDeliveryRunner = isLocalAdminEnabled()
-      ? (runner as unknown as { getLastUndeliveredText?: () => string | undefined })
-      : undefined;
-    const deliverUndeliveredText = (): boolean => {
-      const undelivered = textDeliveryRunner?.getLastUndeliveredText?.();
-      if (undelivered == null || undelivered.trim().length === 0) return false;
+    // burn extra turns. The settle result carries the run's accumulated text
+    // (turn-settle's collectText); deliver it through the stock pipeline.
+    const deliverUndeliveredText = (result: unknown): boolean => {
+      const undeliveredRaw = (result as { readonly text?: unknown }).text;
+      if (typeof undeliveredRaw !== "string") return false;
+      const undelivered = undeliveredRaw.trim();
+      if (undelivered.length === 0) return false;
       if (epoch !== this.tm.sendPipeline.currentTurnEpoch(session)) return false;
       this.handleAgentUpdate({
         type: "send-message",
@@ -568,7 +568,7 @@ export class TurnRuntime {
       }, session);
       return true;
     };
-    if (delivered !== true && deliverUndeliveredText()) delivered = true;
+    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     while (
       isDeliveryOwed(latest) &&
       attempts < MAX_REPLY_NUDGES &&
@@ -619,7 +619,7 @@ export class TurnRuntime {
     // it and have no SendMessage tool — without this seam their completed
     // answer stays invisible while the backend logs look perfectly green
     // (observed live). When nudging cannot help, deliver the run's own text.
-    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && deliverUndeliveredText()) delivered = true;
+    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     return {
       result: latest,
       replyNudgeAttempts: attempts,
