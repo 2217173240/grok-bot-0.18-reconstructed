@@ -185,10 +185,13 @@ export function localDockerRunPlan(options: {
     // intent. The env override outranks the bootstrap, cannot be reset by the
     // desktop's settings sync (which rewrites the override FILE with its own
     // table), and pins the risky live-read gates to their code defaults:
-    // the transcript journal (first-checkpoint stock defect), backend-facing
-    // streams/audit/review (blocked here -> retry loops and noise), and the
-    // tool-surface changers. Dev-builds only — the box host is one.
-    "--env", "SAND_FEATURE_GATE_OVERRIDES=sand_new_transcript_journal=0,sand_notify_bus=0,sand_action_audit_logs=0,sand_auto_review=0,sand_browser_use_subagent=0,sand_send_message_delivery_owed=0,grok_bot_dynamic_tools=0,sand_agent_network=0",
+    // the transcript journal (first-checkpoint stock defect) and the
+    // backend-facing audit/review/network changers. NOT pinned: notify_bus
+    // and send_message_delivery_owed carry the UI's live event flow — pinning
+    // them made turns run perfectly in-box while the renderer stayed blind
+    // (caught live); browser_use_subagent/dynamic_tools are tool-surface only
+    // and left to the bootstrap. Dev-builds only — the box host is one.
+    "--env", "SAND_FEATURE_GATE_OVERRIDES=sand_new_transcript_journal=0,sand_action_audit_logs=0,sand_auto_review=0,sand_agent_network=0",
     // Host-turn plane (turns execute inside the box): the SDK-vendored CLI
     // plus the inference endpoint ride in as env; the token arrives as a
     // read-only file mount at the path claudeChildEnv resolves.
@@ -265,7 +268,7 @@ export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
 // agent-isolation and extension workers relative to argv[1] at runtime; the
 // single-file mount left them missing and killed in-box turns). Drift
 // replaces existing schema-11 containers.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "14";
+export const LOCAL_DOCKER_SCHEMA_VERSION = "15";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 // The host-turn mount plane (token bind) only applies at docker run; the
 // label lets drift replace a container whose mounts no longer match.
