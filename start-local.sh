@@ -189,8 +189,14 @@ do_start() {
     echo mac-host > "$DATA_ROOT/box-mode"
     say "computer: Mac host process (forced)"
   else
-    echo auto > "$DATA_ROOT/box-mode"
-    say "computer: auto (Docker when reachable, else Mac host)"
+    if resolve_docker_host 2>/dev/null && docker info >/dev/null 2>&1; then
+      export SAND_LOCAL_ADMIN_BOX=docker
+      echo docker > "$DATA_ROOT/box-mode"
+      say "computer: Docker VM (auto; daemon reachable)"
+    else
+      echo auto > "$DATA_ROOT/box-mode"
+      say "computer: auto (Mac host fallback; Docker unavailable)"
+    fi
   fi
   if [ -n "${GROKBOT_IMAGE:-}" ]; then
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
