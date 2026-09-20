@@ -221,7 +221,7 @@ do_start() {
   fi
 
   # Launch the binary directly — `open` would strip the environment.
-  "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 &
+  nohup "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" > "$PID_FILE"
   say "launched: app pid $pid, log $APP_LOG"
