@@ -14,12 +14,12 @@ IMAGE=grok-bot-exec-box:arm64
 WAIT="${1:-90}"
 GATEWAY_PORT="${GROKBOT_EVAL_PORT:-1341}"
 
-V2DIR="$(ls -td "$DATA_ROOT"/local-docker-runtime/v2-* 2>/dev/null | head -1)"
-if [ -z "$V2DIR" ]; then
-  echo "no staged v2 runtime under $DATA_ROOT — start the app once first" >&2
+V3DIR="$(ls -td "$DATA_ROOT"/local-docker-runtime/v3-* 2>/dev/null | head -1)"
+if [ -z "$V3DIR" ]; then
+  echo "no staged v3 runtime under $DATA_ROOT — start the app once first" >&2
   exit 1
 fi
-echo "staged runtime: $(basename "$V2DIR" | cut -c1-24)…"
+echo "staged runtime: $(basename "$V3DIR" | cut -c1-24)…"
 
 TOKEN_FILE="$DATA_ROOT/local-docker-vm.json"
 TOKEN=$(python3 -c "import json; print(json.load(open('$TOKEN_FILE'))['token'])")
@@ -53,8 +53,8 @@ docker run --detach --name "$NAME" \
   --env SAND_WORKSPACE_ROOT=/workspace \
   --env SAND_AGENT_WORKSPACE=/workspace \
   --publish "127.0.0.1:${GATEWAY_PORT}:1340" \
-  --mount "type=bind,src=$V2DIR/sand-host,dst=/home/box/sand-host,readonly" \
-  --mount "type=bind,src=$V2DIR/box-exec-daemon,dst=/home/box/box-exec-daemon,readonly" \
+  --mount "type=bind,src=$V3DIR/sand-host,dst=/home/box/sand-host,readonly" \
+  --mount "type=bind,src=$V3DIR/box-exec-daemon,dst=/home/box/box-exec-daemon,readonly" \
   --volume grok-bot-exec-eval-data:/home/box/sand-data \
   --volume grok-bot-exec-eval-workspace:/workspace \
   "$IMAGE" /home/box/sand-host/host-main.cjs >/dev/null

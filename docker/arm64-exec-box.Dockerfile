@@ -3,7 +3,7 @@
 # v2 host and the reconstructed box-exec-daemon run natively (no QEMU).
 #
 # Build:  see docker/build-arm64-box.sh
-# Run:    see docker/run-arm64-box.sh (bind-mounts the v2 staged runtime)
+# Run:    see docker/run-arm64-box.sh (bind-mounts the v3 staged runtime)
 FROM grok-box-base:arm64
 
 # The host bundle requires the node:sqlite builtin (Node >= 22.5); the base
@@ -35,7 +35,7 @@ RUN cd /tmp/runtime-deps && npm ci --omit=dev --silent \
     && node -e "require('/home/box/deps/node_modules/tree-sitter'); console.log('tree-sitter loads natively')"
 
 # Mount points matching the official image layout the connector expects:
-#   /home/box/sand-host/host-main.cjs   (bind, from local-docker-runtime v2-*)
+#   /home/box/sand-host/host-main.cjs   (bind, from local-docker-runtime v3-*)
 #   /home/box/box-exec-daemon/          (bind, ditto)
 # The host spawns the daemon itself when SAND_USE_EXISTING_BOX_EXEC_DAEMON is
 # unset, so the container needs no supervisor for the exec plane.

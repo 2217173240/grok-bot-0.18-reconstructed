@@ -22,7 +22,7 @@
 
 - 症结是"测试绿、活体旧"：测试测 `source/host`，活体跑 `dist/recovered-source` 的 artifact。
 - Archive 的对应纪律（`Archive/cli/lib/up.js` 的 `runArgs()` + `Archive/tests/lib/run-args.mjs`）：**验收只从交付物派生的单一事实源出发，不手写第二份**——他们曾在 tests 里各自手写 `docker run` 参数，结果"从 Mac 侧复核端口隔离"实际在核对测试自己刚写的三行 `-p`，产品真正走的函数零断言。
-- 落地建议：publication/packaging 测试加一条——断言 staged `v2-<sha>/sand-host/host-main.cjs` 包含本批次新引入的标记串（如 `SAND_BOX_EXEC_DAEMON_AUTH_TOKEN` resolver 的报错文本），或哈希等于 `source/host` 新编译产物；artifact-fallback 静默胜出时 CI 直接红，而不是靠事后三 proof 才发现。
+- 落地建议：publication/packaging 测试加一条——断言 staged `v3-<sha>/sand-host/host-main.cjs` 包含本批次新引入的标记串（如 `SAND_BOX_EXEC_DAEMON_AUTH_TOKEN` resolver 的报错文本），或哈希等于 `source/host` 新编译产物；artifact-fallback 静默胜出时 CI 直接红，而不是靠事后三 proof 才发现。
 
 ## 2. 本会话完全未覆盖、Archive 独有的资产
 
@@ -130,5 +130,4 @@
 4. **P1 原队列表不动**：Computer use（注意 exec 模式 entrypoint 双模式设计：桌面要跑就得 host 前台 + box-init 后台，或引 supervisor）、人机交接、egress 治理。
 5. **门禁 CI 接线**：`workflow_dispatch` + nightly schedule；amd64 runner 只能跑 ECR 变体，双 arch 化前置 = Archive Dockerfile 的 bun/uv 钉版参数化。
 6. F1 标注修法、资源上限（防编译负载拖垮网关）按需。
-
 
