@@ -196,17 +196,19 @@ do_start() {
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
     say "image: $GROKBOT_IMAGE (pinned)"
   fi
-  # Turns run on the Mac coordinator by default. The in-box plane
-  # (GROKBOT_TURN=host) is demonstrated working end to end — routing, in-box
-  # CLI execution, ledgered tool calls, streamed reply — but a stock
-  # transcript-journal defect hard-fails FRESH conversations in-box
-  # ("transcript checkpoint must recover before preparing"; new agents get
-  # conversation-blobs.db but never store.db). Opt-in until that lands.
-  if [ "${GROKBOT_TURN:-}" = "host" ]; then
-    export SAND_LOCAL_ADMIN_TURN=host
-    say "turns: in-box execution plane (experimental — fresh conversations hit a stock transcript-journal defect)"
+  # Turns execute INSIDE the box by default (the agent runs in the sandbox via
+  # the third-party API; its own evidence carries the box's Linux fingerprint).
+  # The second-round flip: the stock transcript-journal defect is pinned off
+  # via SAND_FEATURE_GATE_OVERRIDES in the run plan (env outranks the volume's
+  # statsig bootstrap and cannot be reset by desktop settings sync), the box
+  # carries local-admin semantics, and a FRESH conversation was verified live
+  # end to end (reply persisted via the legacy transcript route). GROKBOT_TURN=mac
+  # opts back to the Mac coordinator plane.
+  if [ "${GROKBOT_TURN:-}" = "mac" ]; then
+    say "turns: Mac coordinator plane (GROKBOT_TURN=mac)"
   else
-    say "turns: Mac coordinator plane (default; GROKBOT_TURN=host for in-box, experimental)"
+    export SAND_LOCAL_ADMIN_TURN=host
+    say "turns: in-box execution plane (default; GROKBOT_TURN=mac to opt out)"
   fi
   # The desktop plane is the default computer (complete bot; both gate
   # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.

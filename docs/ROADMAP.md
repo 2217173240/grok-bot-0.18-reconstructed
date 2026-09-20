@@ -90,7 +90,7 @@ Archive 桌面栈的整合完成度可以精确描述为"二进制在、进程�
 
 **完成定义**：A = 同一 agent 的所有工具写同一目录、所有回退都有标注、门禁走真执行链；B = Computer 工具在容器里点得动真浏览器、人能在浏览器里看到那块屏；C = agent 遇到登录页会停下来把屏交给人、15 分钟后诚实收回。
 
-**C 后、S-9 前的结构修（S-4 review 定案）◐ 执行面已证、转正被 stock 缺陷阻塞（2026-09-18）**：曾翻默认后回退——
+**C 后、S-9 前的结构修（S-4 review 定案）✅ 第二回合落地（2026-09-20）**：第一回合曾翻默认后回退——
 路由轮次真正在容器内执行（现在推理/本地工具跑在 Mac coordinator，只有 computer 面在容器；
 身份块的「我就是沙箱」要等这一步才是完整事实）。毕业 golden path 的「agent 写的文件人能
 在 Mac 看到」只有在执行面与文件面都对齐后才成立。热修已先把 agent cwd 与两形态 daemon
@@ -105,7 +105,20 @@ cursor、turn 撞封锁后端（修：创建时把 Mac 的 provider 强制合并
 （UI 报 Agent failed to respond）——新 agent 只建 `conversation-blobs.db` 从不建 `store.db`，
 journal 的 recover/prepare 路由状态错配（bundle 内 `isJournalEnabled` 为注入依赖，真源未定位）。
 修复路径：定位 journal 启用门槛与 store.db 的创建者（agent-isolation worker 侧），
-或给 host plane 配实验开关把 transcript 走 legacy 路由。已知限：插件 MCP 桥在 Mac 回环、盒内轮次不可达（登记待桥接）；
+或给 host plane 配实验开关把 transcript 走 legacy 路由。
+**第二回合（2026-09-20，三路子代理深挖 + 容器内活体验证）**：根因闭环——journal 首 checkpoint
+无 recover 播种是 stock 结构缺陷，Cursor 用 gate 默认 OFF 盖住，而数据卷里的 statsig bootstrap
+（2897 个哈希 gate、每分钟自维护）把它拨成了 ON；桌面 settings 同步还会整表重写覆盖文件（文件级
+override 不可靠）。修法=run plan env 三件套：`SAND_FEATURE_GATE_OVERRIDES` 钉 8 个危险 live gate
+到代码默认（journal 为首，另含 notify_bus/action_audit/auto_review/browser_use_subagent 等）、
+`SAND_LOCAL_ADMIN=1`（盒内权限层与 awaiting-human 强制复活）、`SAND_HOST_IN_BOX=1`（forever-box/
+日志船运走对分叉）；schema 12→14（13 曾短暂部署于本机，无中间部署承诺）。**活体验收（全新对话）**：
+journal 错误 0、permission-allowed + 真实执行（cwd=/workspace）、agent-transcripts 落 legacy jsonl
+零 marker、assistant 回复带 Linux 指纹持久化。默认重翻。
+**登记 watch items**：桌面 resync 的 account-scope null 推送会整批清空盒内
+localToolPermission/computerUseModel/MCP 禁用表（同族于 flag 文件覆盖，面更宽——待守卫）；
+探针首轮工具调用出现过一次瞬时 `Cannot read properties of undefined`（第二条命令即恢复，观察中）；
+S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教训固化）。已知限：插件 MCP 桥在 Mac 回环、盒内轮次不可达（登记待桥接）；
 死轮次留下的 transcript journal 需恢复（清理 agents/ 即愈，登记为 watch item）。
 
 ## 3.5 跨拓扑加固清扫（2026-09-18，三路审计 + 第二跳核实）
