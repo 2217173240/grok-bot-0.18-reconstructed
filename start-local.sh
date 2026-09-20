@@ -16,7 +16,7 @@ set -euo pipefail
 
 BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
 BUNDLE_ID="com.anysphere.sand.reconstructed"
-REPO="/Users/xinheyun/Desktop/grok-bot-0.18-reconstructed"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
 PROFILE="$DATA_ROOT/profile"
 TOKEN_FILE="$DATA_ROOT/anthropic-token"

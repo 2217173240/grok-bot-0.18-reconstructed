@@ -58,6 +58,16 @@ await run(SYSTEM_TOOLS.plutil, ["-insert", "CFBundleURLTypes", "-xml", "<array><
 // expected nested helper names from it, and this build intentionally reuses the
 // exact ABI-matched 0.18 runtime. CFBundleDisplayName provides the fork's name.
 
+// 版本信息必须包含在签名覆盖的资源中。
+const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: path.dirname(fileURLToPath(import.meta.url)),
+  encoding: "utf8",
+}).trim();
+const { readDepsPin } = await import("./lib/deps-pin.mjs");
+const depsPin = await readDepsPin(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId, depsPin }, null, 2)}\n`;
+await writeFile(path.join(resources, "build-stamp.json"), buildStamp);
+
 await rm(path.join(outputApp, "Contents", "_CodeSignature"), { recursive: true, force: true });
 try {
   await signAppBundleAdHoc(outputApp);
@@ -76,18 +86,6 @@ const verification = await verifyReconstructedMacPackage({
   packagedUnpackedRoot: packagedUnpacked,
 });
 
-console.log(`Packaged application: ${outputApp} (${verification.runtime.nodeFileCount} native manifest entries, ${verification.runtime.runtimeFileCount} unpacked runtime files)`);
-
-// Freshness stamp: launch tooling compares this against the repository HEAD so
-// a silently failed rebuild can never ship as a stale dist unnoticed. The
-// depsPin field is the container twin: the connector refuses a present-but-
-// stale self-built image whose dependency pin does not match this value.
-const sourceRevision = (() => {
-  try { return execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.dirname(fileURLToPath(import.meta.url)), encoding: "utf8" }).trim(); }
-  catch { return "unknown"; }
-})();
-const { readDepsPin } = await import("./lib/deps-pin.mjs");
-const depsPin = await readDepsPin(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId, depsPin }, null, 2)}\n`;
-await writeFile(path.join(resources, "build-stamp.json"), buildStamp);
 await writeFile(path.join(outputDir, "build-stamp.json"), buildStamp);
+
+console.log(`Packaged application: ${outputApp} (${verification.runtime.nodeFileCount} native manifest entries, ${verification.runtime.runtimeFileCount} unpacked runtime files)`);
