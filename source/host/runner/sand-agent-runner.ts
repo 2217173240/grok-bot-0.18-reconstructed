@@ -283,6 +283,9 @@ function createEmptyState(): RunnerConversationState {
 
 export class SandAgentRunner<T = unknown> {
   #state: RunnerConversationState;
+  // Captured at run end (the local-admin text-delivery seam reads it after
+  // #activeRun is cleared): the run's plain text when nothing was delivered.
+  #lastUndeliveredText: string | undefined;
   #runGeneration = 0;
   #fallbackConversationId = `sand-${randomUUID()}`;
   #fallbackBlobStore = new InMemoryBlobStore();
@@ -1074,6 +1077,16 @@ export class SandAgentRunner<T = unknown> {
     this.options.onRunLifecycle?.(event);
   }
 
+  // The last completed run's plain text when nothing was delivered — the
+  // local-admin text-delivery seam consumes this (stock delivery requires a
+  // SendMessage tool call; routed CLI sessions were never taught that
+  // discipline, so their answer would otherwise stay invisible).
+  getLastUndeliveredText(): string | undefined {
+    return this.#lastUndeliveredText?.trim().length === undefined || this.#lastUndeliveredText!.trim().length > 0
+      ? this.#lastUndeliveredText
+      : undefined;
+  }
+
   emitUpdate(update: RunnerUpdate): void {
     const active = this.#activeRun;
     if (
@@ -1313,7 +1326,12 @@ export class SandAgentRunner<T = unknown> {
       return result;
     } finally {
       this.emitRunLifecycle({ type: "ended", requestId });
-      if (this.#activeRun === active) this.#activeRun = null;
+      if (this.#activeRun === active) {
+        this.#lastUndeliveredText = active.sentMessageCount === 0 && active.text.trim().length > 0 && !active.awaitingUserSelection
+          ? active.text
+          : undefined;
+        this.#activeRun = null;
+      }
       this.#activeRunInterrupted = false;
       this.#activeTurnRequestSource = undefined;
       this.#activeTurnAutomationId = undefined;
