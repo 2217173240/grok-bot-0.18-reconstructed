@@ -180,31 +180,20 @@ export function localDockerRunPlan(options: {
     // port fixes DNS poisoning (CONNECT resolves at the far end); Chromium
     // bypasses loopback by default, so the CDP/noVNC surfaces stay local.
     ...(process.env.SAND_BOT_PROXY == null || process.env.SAND_BOT_PROXY.trim() === "" ? [] : ["--env", `MAC_BOT_PROXY=${process.env.SAND_BOT_PROXY.trim()}`]),
-    // The statsig bootstrap cached in the data volume carries Cursor's cloud
-    // gate values (2897 hashed gates, self-refreshed) — not this deployment's
-    // intent. The env override outranks the bootstrap, cannot be reset by the
-    // desktop's settings sync (which rewrites the override FILE with its own
-    // table), and pins the risky live-read gates to their code defaults:
-    // the transcript journal (first-checkpoint stock defect) and the
-    // backend-facing audit/review/network changers. NOT pinned: notify_bus
-    // and send_message_delivery_owed carry the UI's live event flow — pinning
-    // them made turns run perfectly in-box while the renderer stayed blind
-    // (caught live); browser_use_subagent/dynamic_tools are tool-surface only
-    // and left to the bootstrap. Dev-builds only — the box host is one.
+    // Gate pins: the transcript journal carries a stock first-checkpoint
+    // defect (no recover seeding) that hard-fails every fresh conversation
+    // at settle — pinned off; audit/review/network are backend-facing and
+    // blocked here. NOT pinned: notify_bus and send_message_delivery_owed
+    // carry the UI's live event flow (pinning them blinded the renderer —
+    // caught live).
     "--env", "SAND_FEATURE_GATE_OVERRIDES=sand_new_transcript_journal=0,sand_action_audit_logs=0,sand_auto_review=0,sand_agent_network=0",
     // Host-turn plane (turns execute inside the box): the SDK-vendored CLI
     // plus the inference endpoint ride in as env; the token arrives as a
     // read-only file mount at the path claudeChildEnv resolves.
+    "--env", "SAND_LOCAL_ADMIN=1",
+    "--env", "SAND_HOST_IN_BOX=1",
     ...(options.hostTurn !== true ? [] : [
       "--env", "CLAUDE_CODE_PATH=/home/box/deps/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
-      // The in-box turn plane IS a local-admin deployment: without this the
-      // box-side permission layer denies every non-read-only tool and the
-      // awaiting-human Mac-permission enforcement stays dead code in-box.
-      "--env", "SAND_LOCAL_ADMIN=1",
-      // The host runs inside the box it manages — forever-box/log-shipper/
-      // disk-pressure in-box branches key on this and currently walk the
-      // wrong side.
-      "--env", "SAND_HOST_IN_BOX=1",
       ...(process.env.ANTHROPIC_BASE_URL == null ? [] : ["--env", `ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL}`]),
       ...(process.env.SAND_CLAUDE_MODEL == null ? [] : ["--env", `SAND_CLAUDE_MODEL=${process.env.SAND_CLAUDE_MODEL}`]),
       ...(options.anthropicTokenPath == null ? [] : ["--mount", `type=bind,src=${options.anthropicTokenPath},dst=/home/box/sand-data/anthropic-token,readonly`]),
@@ -268,7 +257,7 @@ export const LOCAL_DOCKER_OWNER_LABEL = "com.grok-bot.local-vm=1";
 // agent-isolation and extension workers relative to argv[1] at runtime; the
 // single-file mount left them missing and killed in-box turns). Drift
 // replaces existing schema-11 containers.
-export const LOCAL_DOCKER_SCHEMA_VERSION = "15";
+export const LOCAL_DOCKER_SCHEMA_VERSION = "18";
 export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 // The host-turn mount plane (token bind) only applies at docker run; the
 // label lets drift replace a container whose mounts no longer match.

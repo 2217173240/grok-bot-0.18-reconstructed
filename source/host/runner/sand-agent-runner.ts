@@ -1074,6 +1074,7 @@ export class SandAgentRunner<T = unknown> {
     this.options.onRunLifecycle?.(event);
   }
 
+
   emitUpdate(update: RunnerUpdate): void {
     const active = this.#activeRun;
     if (

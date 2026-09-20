@@ -1,4 +1,5 @@
 import { isMessageAddress } from "../../../shared/message-reference.js";
+import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { sandDualSurfaceToolTelemetry } from "../../../shared/agents/agent-tool-names.js";
 import { SAND_REACTION_AGENT } from "../../../shared/transcript.js";
 import { UNKNOWN_CONNECTOR_TAG } from "../../../shared/observability/connector-auth-telemetry.js";
@@ -550,6 +551,24 @@ export class TurnRuntime {
     let attempts = 0;
     let delivered = !isDeliveryOwed(result);
     let streamOutputProduced = result.streamOutputProduced === true;
+    // Local-admin text delivery, checked BEFORE nudging: routed CLI sessions
+    // have no SendMessage tool, so nudging can never succeed — it would only
+    // burn extra turns. The settle result carries the run's accumulated text
+    // (turn-settle's collectText); deliver it through the stock pipeline.
+    const deliverUndeliveredText = (result: unknown): boolean => {
+      const undeliveredRaw = (result as { readonly text?: unknown }).text;
+      if (typeof undeliveredRaw !== "string") return false;
+      const undelivered = undeliveredRaw.trim();
+      if (undelivered.length === 0) return false;
+      if (epoch !== this.tm.sendPipeline.currentTurnEpoch(session)) return false;
+      this.handleAgentUpdate({
+        type: "send-message",
+        message: { type: "text", text: undelivered },
+        timestampMs: Date.now(),
+      }, session);
+      return true;
+    };
+    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     while (
       isDeliveryOwed(latest) &&
       attempts < MAX_REPLY_NUDGES &&
@@ -594,6 +613,13 @@ export class TurnRuntime {
         });
       }
     }
+    // Local-admin text delivery: stock semantics show the user ONLY
+    // SendMessage deliveries, and the nudge loop above exists to enforce that
+    // discipline. Routed CLI sessions (the local box plane) were never taught
+    // it and have no SendMessage tool — without this seam their completed
+    // answer stays invisible while the backend logs look perfectly green
+    // (observed live). When nudging cannot help, deliver the run's own text.
+    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     return {
       result: latest,
       replyNudgeAttempts: attempts,
