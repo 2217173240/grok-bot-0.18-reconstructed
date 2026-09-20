@@ -41,12 +41,11 @@ Colima VM (aarch64) ── grok-bot-local-vm 容器    ← 计算机（Linux 桌
 git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
 cd grok-bot-0.18-reconstructed && git checkout 671541a   # 或 main 最新
 
-# Archive 仓库（base 镜像的 Dockerfile 来源——外部依赖，别漏）
-# 拷贝源机的 /Users/xinheyun/Desktop/grok-compare/Archive 即可（它不在 GitHub 上）
-# 注意：Archive 仓库路径任意，但必须在 /Users 下（见 §3 Colima 挂载限制）
+# box 镜像源仓库（base 镜像 grok-box-base:arm64 的全部构建输入）
+git clone https://github.com/2217173240/grok-bot-box-image.git
+# 内容：box-image/Dockerfile + box-image/bin 全套治理脚本 + box-service + .dockerignore
+# 注意：仓库路径任意，但必须在 /Users 下（见 §3 Colima 挂载限制）
 ```
-
-> 若无源机 Archive 副本：base Dockerfile 依赖其中 `box-image/Dockerfile` + `box-image/bin/*` 全套脚本（桌面治理/box-chrome/路由/会话同步），缺一不可，务必完整拷贝。
 
 ## 3. 镜像链（二选一）
 
@@ -69,8 +68,8 @@ docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "c
 colima start --cpu 4 --memory 6 --disk 30 --arch aarch64
 # ⚠ Colima 默认只共享 /Users —— 仓库和数据根必须在 /Users 下，/tmp 下的 bind mount 对容器不可见（实测坑）
 
-# 2) base 镜像（Archive 仓库根为上下文；31 步全过为成功判据）
-cd <archive-repo>
+# 2) base 镜像（box 镜像源仓库根为上下文；31 步全过为成功判据）
+cd grok-bot-box-image
 docker build --platform linux/arm64 -f box-image/Dockerfile -t grok-box-base:arm64 .
 
 # 3) 薄层（自带临时小上下文，避免把仓库 node_modules 撑进去）
