@@ -16,7 +16,7 @@ set -euo pipefail
 
 BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
 BUNDLE_ID="com.anysphere.sand.reconstructed"
-REPO="/Users/xinheyun/Desktop/grok-bot-0.18-reconstructed"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
 PROFILE="$DATA_ROOT/profile"
 TOKEN_FILE="$DATA_ROOT/anthropic-token"
@@ -189,8 +189,14 @@ do_start() {
     echo mac-host > "$DATA_ROOT/box-mode"
     say "computer: Mac host process (forced)"
   else
-    echo auto > "$DATA_ROOT/box-mode"
-    say "computer: auto (Docker when reachable, else Mac host)"
+    if resolve_docker_host 2>/dev/null && docker info >/dev/null 2>&1; then
+      export SAND_LOCAL_ADMIN_BOX=docker
+      echo docker > "$DATA_ROOT/box-mode"
+      say "computer: Docker VM (auto; daemon reachable)"
+    else
+      echo auto > "$DATA_ROOT/box-mode"
+      say "computer: auto (Mac host fallback; Docker unavailable)"
+    fi
   fi
   if [ -n "${GROKBOT_IMAGE:-}" ]; then
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
@@ -221,7 +227,7 @@ do_start() {
   fi
 
   # Launch the binary directly — `open` would strip the environment.
-  "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 &
+  nohup "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" > "$PID_FILE"
   say "launched: app pid $pid, log $APP_LOG"
