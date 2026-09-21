@@ -138,6 +138,30 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 真正的账号离开仍由 `prepareAccountTransition` 与 `account-transition-cleanup.ts` 的显式清空负责。
 实测盒内 `localToolPermission=ask`、`computerUseModel` 与账号作用域均完好。
 
+**S-9 毕业验收（2026-09-21，三条自办项完成）**：
+
+1. **门禁**：`docker/container-gates.sh --profile desktop` 与 `--profile exec` 两个档位全部通过。
+   desktop 档 G0-G4 加 D1-D6 共十一项（含本批次新增的 D5 桌面守护进程探针）；exec 档 G0-G4 五项全过。
+2. **零远端证明**：`scripts/zero-remote-live.sh` 全绿——重启后经网关到宿主再到 daemon 的真实工具调用往返成功，
+   场景窗口与全量历史两次扫描均为 **3535 行账本、0 次出网观测**（其中 1625 行为被拦截的 cursor/xai 域名尝试）。
+3. **基准数字**（原生 arm64 容器，与 Mac 宿主同程序对照）：
+
+   | 项目 | 容器 | Mac 宿主 |
+   | --- | --- | --- |
+   | 网关冷启动（exec 档） | 2-3 s | — |
+   | 网关冷启动（desktop 档） | 4-6 s | — |
+   | cargo 首次构建（release，斐波那契样例，rustc 1.85.1） | 927 ms | 854 ms（rustc 1.97.1） |
+   | cargo 重建（保留工具链缓存） | 133 ms | 151 ms |
+   | go 首次构建（空缓存，go 1.24） | 5323 ms | 2035 ms |
+   | go 重建（缓存已填充） | 47 ms | 67 ms |
+
+   冷启动哨兵在门禁里强制为不超过 15 s。原生 arm64 与 QEMU 的差距沿用早前记录（QEMU 下网关约 21-25 s）。
+
+4. **扩展点核对**：见 `docs/EXTENSIBILITY.md`。三处扩展（provider、工具、屏）都位于已有的注册点或数据源上，
+   没有出现必须改动核心逻辑的情况；两条缺口已登记。
+
+剩余一项是封锁 golden path，需要真人在 noVNC 窗口里登录一次（凭据不进 agent 之手是这条链路的验证目标）。
+
 ## 3.5 跨拓扑加固清扫（2026-09-18，三路审计 + 第二跳核实）
 
 bug 族：为单一拓扑/时代写的守卫与假设在另一形态或异常序列下失真。已修（活体验证）：
