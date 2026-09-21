@@ -20,7 +20,9 @@
 #       WebSocket handshake (101), a wrong token is refused
 #   D4  the Computer round-trip works: XTEST motion + a non-empty desktop
 #       capture with the exact geometry
-#   D5  desktop death leaves the container and gateway alive (the B1
+#   D5  the window router and session-sync daemons are alive (their death is
+#       otherwise silent)
+#   D6  desktop death leaves the container and gateway alive (the B1
 #       unsupervised-desktop decision, asserted)
 #
 # CI note: GitHub runners are amd64; the self-built arm64 image runs under
@@ -176,7 +178,19 @@ run_desktop_gates() {
     fail "D4 XTEST motion failed"
   fi
 
-  # D5 — the B1 decision asserted: killing the display leaves container and
+  # D5 — the two desktop-plane daemons stay alive: the window router behind
+  # 1339 (whose port D2 only proves is bound) and the login-state sync guard.
+  # The sync daemon is a single-screen no-op until a second window exists, so
+  # process liveness is the honest probe; its death is otherwise silent.
+  ROUTER_PID=$(in_box 'pgrep -f "sand-window-router.mjs" | head -1')
+  SYNC_PID=$(in_box 'pgrep -f "session-sync.mjs" | head -1')
+  if [ -n "$ROUTER_PID" ] && [ -n "$SYNC_PID" ]; then
+    pass "D5 desktop daemons alive: window router (pid $ROUTER_PID), session-sync (pid $SYNC_PID)"
+  else
+    fail "D5 desktop daemon missing (router='${ROUTER_PID:-none}' session-sync='${SYNC_PID:-none}')"
+  fi
+
+  # D6 — the B1 decision asserted: killing the display leaves container and
   # gateway alive; the probe is what exposes the death. No auto-restart.
   XVFB_PID=$(in_box 'pgrep -f "Xvfb :1" | head -1')
   if [ -n "$XVFB_PID" ]; then
@@ -187,12 +201,12 @@ run_desktop_gates() {
     GW=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "authorization: Bearer $TOKEN_V" "http://127.0.0.1:${GROKBOT_EVAL_PORT:-1341}/health" 2>/dev/null || echo 000)
     DEAD=$(in_box 'DISPLAY=:1 xdpyinfo >/dev/null 2>&1 && echo alive || echo dead')
     if [ "$STATE" = "running" ] && [ "$GW" = "200" ] && [ "$DEAD" = "dead" ]; then
-      pass "D5 desktop death: container running, gateway healthy, probe exposes the death (no auto-restart)"
+      pass "D6 desktop death: container running, gateway healthy, probe exposes the death (no auto-restart)"
     else
-      fail "D5 desktop death semantics wrong (state='$STATE' gateway='$GW' display='$DEAD')"
+      fail "D6 desktop death semantics wrong (state='$STATE' gateway='$GW' display='$DEAD')"
     fi
   else
-    fail "D5 could not find Xvfb to kill"
+    fail "D6 could not find Xvfb to kill"
   fi
 }
 

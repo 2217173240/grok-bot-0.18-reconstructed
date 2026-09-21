@@ -121,6 +121,23 @@ localToolPermission/computerUseModel/MCP 禁用表（同族于 flag 文件覆盖
 S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教训固化）。已知限：插件 MCP 桥在 Mac 回环、盒内轮次不可达（登记待桥接）；
 死轮次留下的 transcript journal 需恢复（清理 agents/ 即愈，登记为 watch item）。
 
+**投递链贯通（2026-09-21）**：盒内轮次的 assistant 回复现在完整出现在 UI 里。两处修改共同完成：
+宿主出口的条目字段名投影（`renderer-entry-shape.ts`，接入 `host-gateway-api.ts` 的五个转录命令与
+`roster-projection.ts` 的事件发射）与打包阶段对 renderer 文字提取器的补丁
+（`router-renderer-patch.mjs` 的 `patchOriginalEntryTextExtractor`）。完整调用链、根因实证与验证剧本见
+`docs/HANDOFF-inbox-delivery.md`；产物分层与字段名约定见 `docs/ARCHITECTURE.md`。
+
+**登记 watch items（2026-09-21 追加）**：renderer 是打包阶段产物，修改 `frontend/src` 或
+`src/app/dist/renderer` 都不会改变发货内容，renderer 行为只能靠 `router-renderer-patch.mjs` 的补丁修改，
+且补丁锚点移动会让打包直接失败；`docker/arm64-exec-box.Dockerfile` 的注释计入 deps-pin，改注释必须重建薄层。
+
+**账号作用域同步（2026-09-21 加固）**：`reconcileMcp` 在没有账号作用域时不推送
+`mcpCustomInstructionsAccountScope: null`，因此常规同步不会触发宿主的 `clearAccountScope()`；该函数会删除
+`localToolPermission`、`computerUseModel`、`agentDefaultModel`、`autoReviewInstructions` 并清空三张 MCP 表。
+`coordinator-resync.ts` 的 `pushCurrent` 在该轮次内作用域变为空时同样不再推送，堵住原来会清空盒内设置的竞态窗口；
+真正的账号离开仍由 `prepareAccountTransition` 与 `account-transition-cleanup.ts` 的显式清空负责。
+实测盒内 `localToolPermission=ask`、`computerUseModel` 与账号作用域均完好。
+
 ## 3.5 跨拓扑加固清扫（2026-09-18，三路审计 + 第二跳核实）
 
 bug 族：为单一拓扑/时代写的守卫与假设在另一形态或异常序列下失真。已修（活体验证）：
@@ -131,7 +148,9 @@ host 分支先停容器（曾静默把容器当 Mac host 用）、forceRecreate 
 status 对 docker 不可达如实报告、桌面启动失败不再崩溃循环（host 带死桌面继续、探测暴露）、
 box-navigate 读 $DISPLAY（CDP=9222+N 单源）、xtest 注入前整段预扫（部分注入前就报字符位）、
 awaiting 门禁补上 Mac 权限层强制（Bash 仅放行交回命令；docker exec 旁路关闭）。
-**登记未修**（低频/未来形态）：1339 路由器与 session-sync 死亡无生产探测（多窗口落地时修）；
+**登记未修**（低频/未来形态）：1339 路由器与 session-sync 死亡无生产探测——桌面 profile 门禁的 D5 已加
+两者存活性探针（`docker/container-gates.sh`），但两个守护进程都由 `docker/bin/box-init-exec` 以普通后台
+进程启动，没有监督者，停止后需要重建容器（多窗口实现时决定是否加监督）；
 SAND_LOCAL_ADMIN_DESKTOP 读进程 env，两个启动环境交替会乒乓重建容器（落 settings 时修）；
 box-mode 三态文件仍是"上次 start 的快照"（A6，现为纯展示层，风险已降）；
 awaiting 的 hand-back 无法认证"人真的来过"（拓扑边界，文档已载）。

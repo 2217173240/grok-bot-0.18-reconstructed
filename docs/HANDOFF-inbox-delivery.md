@@ -8,9 +8,13 @@
 
 ## 0. 一句话现状
 
-**推理与工具执行已经完整跑在 Docker 容器内**（三方 Anthropic 兼容 API → Claude CLI，账本/转录/权限全绿），
-**但 assistant 的回复永远不会出现在 UI 里**。根因已定位并有实证（见 §4），
-修复的两次尝试一次因读错状态载体而无效（已回退）、一次已在工作区就绪但**未完成端到端验证**（见 §5）。
+**这条投递链已经完整贯通**：推理与工具执行跑在 Docker 容器内（三方 Anthropic 兼容 API → Claude CLI，
+账本/转录/权限全绿），assistant 回复经投递缝进入 stock 投递管线并出现在 UI 里。
+
+贯通由两处修改共同完成，两处都必须保留：宿主出口的条目形状投影（§5.1）与打包阶段对
+renderer 提取器的补丁（§5.2）。缺任何一处，普通消息文字都会在 renderer 里抛出
+`TypeError: Cannot read properties of undefined (reading 'matchAll')`，错误边界随即把整个聊天
+换成 "Something went wrong"。
 
 ---
 
@@ -137,33 +141,57 @@ listAgents 健康、journal 错误 0），UI 卡"正在执行"后无任何回复
 
 ---
 
-## 5. 已做的修复尝试（现状）
+## 5. 已实现的修复
 
-### 已提交（commit c8a69dc，PR #29 开着未合）
-- seam v1：`turn-runtime.ts` 在 nudge 前读 `runner.getLastUndeliveredText()`；
-  `sand-agent-runner.ts` 加访问器读 `#activeRun`。
-- **为什么无效**：生产形态下 `run()` 委托给 `#productionTurnRunShell`（§2 第 4 步），
-  `#activeRun` 永远是 null → 访问器恒 undefined。已确认死代码。
+### 5.1 宿主出口的条目形状投影
 
-### 工作区（未提交，tsc 干净、54/54 测试绿）
-- **seam v2**：`source/host/extensions/transcript/turn-runtime.ts`
-  `runWithReplyNudges()` 里新增 `deliverUndeliveredText(result)`：
-  读 `TurnSettleResult.text`（duck-typed `(result as {text?: unknown}).text`），
-  非空且 `isLocalAdminEnabled()` 且 epoch 一致且未 abort/awaiting →
-  `this.handleAgentUpdate({type:"send-message", message:{type:"text",text},timestampMs}, session)`。
-  在 nudge 循环**之前**与**之后**各检查一次。
-  - 同时回退了 `sand-agent-runner.ts` 的死代码访问器（工作区 diff = 纯净 revert）。
-- **状态**：已打包（`npm run package` 输出 PKG=0 后命令被人为取消，容器是否已用新包重建**未确认**；
-  最后一次确认的容器是 schema 18 + seam v1 bundle）。**端到端验证未做**。
-- 验证方法见 §7。若 v2 仍不触发，优先核对：`TurnSettleResult.text` 在 shell 链路里是否真的被填充
-  （`turn-settle.ts:141` collectText 的上游：`production-turn-run-shell-adapter.ts` 的
-  `callbacks.collectText(update.text)` 只在 `activePrepared === updateRelay.prepared` 时挂上——
-  检查 relay 生命周期是否覆盖 CLI 的 text-delta）。
+renderer 是固定不变的 0.18 产物，它读普通消息文字的位置是 `entry.text`，而宿主把同一份文字存成
+`content`（`send-message-shaping.ts` 写入 `content`，`quotableEntryText` 也读 `content`）。
+`source/host/extensions/transcript/renderer-entry-shape.ts` 在条目离开宿主时补上 renderer 需要的
+拼写，同时保留 `content`，因此宿主内部的读取者和磁盘上已有的条目都不受影响。
 
-### 另一个已验证可用的形态（对照基准）
+接入的两个出口：
+
+- 读取面：`source/host/host-gateway-api.ts` 的 `getAgentTranscript`、`getAgentTranscriptPage`、
+  `getAgentTranscriptWindow`、`getAgentTranscriptTail`、`getAgentThread`，以及 `openAgent` 返回的
+  `switchAgent` 结果。
+- 实时面：`source/host/extensions/transcript/roster-projection.ts` 的 `emit()`，所有
+  `{type:"appended", entry}` 与 `{type:"snapshot", entries}` 事件都经过它。
+
+投递缝本身也要给出 renderer 认得的拼写：
+
+- `source/host/extensions/transcript/turn-runtime.ts` 的 `deliverUndeliveredText(result)` 读
+  `TurnSettleResult.text`，在 nudge 循环之前与之后各检查一次，合成
+  `{type:"send-message", message:{type:"text", content}}` 交给 `handleAgentUpdate`。
+
+### 5.2 打包阶段对 renderer 提取器的补丁
+
+固定不变的 renderer 产物的文字提取器读 `content`，同一个产物自己的转录投影
+（`frontend/src/production/model.ts` 的 `projectTranscriptEntry`）却写出 `text`。一份普通消息
+因此让提取器把 `undefined` 交给 `String.prototype.matchAll`，错误边界替换整个聊天界面。
+
+`scripts/lib/router-renderer-patch.mjs` 新增 `patchOriginalEntryTextExtractor`，沿用该文件已有的
+`replaceExactlyOnce` 方式，在打包阶段改写 fidelity 展开目录里的提取器：
+
+- `A_n`：普通消息读 `content??text??""`，`send-message` 读 `message.content??message.text??""`，
+  `notice` 读 `text??""`。
+- `Fpt`：扫描之前先确认接收到的值是字符串。
+
+补丁点位于 `buildFidelityReconstructedAsar`（`scripts/clean-build.mjs`），与
+`applyOriginalRendererRouterPatch` 同一阶段，因此修改 `frontend/src` 或
+`src/app/dist/renderer` 都不会改变发货内容。
+
+### 5.3 端到端判据
+
+盒内会话库出现 `kind:"send-message"` 且 `message.content` 非空的条目，UI 同时渲染出该回复；
+网关 `getAgentTranscriptTail` 返回的普通消息条目同时带 `text` 与 `content`。回退判据是 UI 出现
+"Something went wrong"。验证步骤见 §7。
+
+### 5.4 另一个已验证可用的形态（对照基准）
+
 Mac 平面（`GROKBOT_TURN=mac`）：router 在 Mac 侧跑 claudeExecutor 并**自行 append 转录**
 （`source/node-agent-coordinator/inference-router.ts` 的 append/emitTranscript），
-UI 一切正常。盒内 seam 的目标就是复刻这个语义。
+UI 一切正常。盒内投递缝的目标就是复刻这个语义。
 
 ---
 
@@ -186,44 +214,64 @@ UI 一切正常。盒内 seam 的目标就是复刻这个语义。
   （accepted 但无回复、无 settle）——不要用它做验证；另注意 active agent 若已被
   `.journal-mode` marker 毒化（agent-transcripts/<id>/ 下），行为会混入 journal 崩溃。
 - **G7 drift**：纯 env 变更不触发容器重建，必须 bump `LOCAL_DOCKER_SCHEMA_VERSION` 或加 label。
+  宿主 bundle 内容变化会改变 `hostSha256` label，连接器随即重建容器；只改 renderer 不改容器。
 - **G8 管道吞错**：shell 里 `cmd | tail` 会吃退出码；打包失败曾被管道掩盖。用独立变量存 `$?`。
+- **G9 renderer 产物分层**：发货的 renderer 是 `buildFidelityReconstructedAsar` 在 fidelity 展开目录里
+  构造并打补丁的结果（`scripts/clean-build.mjs`）。修改 `frontend/src`（从产物反推的可读副本）或
+  `src/app/dist/renderer`（固定不变的基线产物）都不会改变发货内容，renderer 行为只能靠打包阶段补丁修改，
+  补丁写在 `scripts/lib/router-renderer-patch.mjs`。
+- **G10 条目文字拼写两套并存**：宿主持有 `content`，renderer 的转录投影持有 `text`。任何新增的
+  renderer 读取路径都要两种拼写都接受，任何新增的宿主出口都要经过 `renderer-entry-shape.ts` 的投影。
+- **G11 `ELECTRON_RUN_AS_NODE=1`**：该变量泄漏进启动 shell 时，`start-local.sh` 会让 Electron 以纯
+  Node 模式启动，二进制拒绝 `--user-data-dir` 并立即退出（日志为
+  `bad option: --user-data-dir=...`）。同一个变量还会让 `node` 指向 Electron，使
+  `npm test` 里的 asar 相关用例假失败（`ENOTEMPTY`）。启动与测试都要在剔除该变量的环境里执行。
+- **G12 Colima profile 名称**：本机 profile 是 `finonelib`，`colima status` 不带参数时报告
+  "not running"。socket 为 `unix://$HOME/.colima/finonelib/docker.sock`，`start-local.sh` 的 1340
+  守卫需要该 socket 可达才会把端口持有者认成电脑的端口转发；否则拒绝启动。
 
 ---
 
 ## 7. 验证剧本（下一个执行者照此跑）
 
-前置：`./start-local.sh restart`（或 stop + `GROKBOT_TURN=host ./start-local.sh start`）；
-`export DOCKER_HOST="unix:///Users/xinheyun/.colima/finonelib/docker.sock"`（默认 socket 不存在）。
+前置：在剔除 `ELECTRON_RUN_AS_NODE` 的环境里执行 `./start-local.sh restart`
+（`env -u ELECTRON_RUN_AS_NODE ./start-local.sh restart`）；
+`export DOCKER_HOST="unix:///Users/xinheyun/.colima/finonelib/docker.sock"`（默认 socket 不存在，见 G12）。
 
-1. **staged bundle 是否含新代码**：
+1. **发货产物里的补丁**：确认打包后的 renderer 携带提取器补丁——
+   `n.status` 无关，直接查 asar：
+   `node -e 'const a=require("@electron/asar");const s=a.extractFile("dist/Grok Bot 0.18 Reconstructed.app/Contents/Resources/app.asar","dist/renderer/assets/index-UbX-y3il.js").toString();console.log(s.includes(`content??n.text??""`))'`
+   输出 `true` 才继续。
+2. **staged 宿主 bundle 是否含投递缝**：
    `HM=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/home/box/sand-host"}}{{.Source}}{{end}}{{end}}' grok-bot-local-vm)`
-   然后 `grep -c deliverUndeliveredText "$HM/host-main.cjs"`（>0 才继续；否则重打包+ditto+重建容器）。
-2. **发一条真实探针**（需要人在 UI 里发；合成 RPC 不可用，见 G6）：
+   然后 `grep -c deliverUndeliveredText "$HM/host-main.cjs"` 与
+   `grep -c projectTranscriptPayloadForRenderer "$HM/host-main.cjs"`（各自 >0；否则重打包+ditto+重建容器）。
+3. **发一条真实探针**（需要人在 UI 里发；合成 RPC 不可用，见 G6）：
    "运行 uname -a 并贴出真实输出 探针X"。
-3. **三处对账**：
-   - UI：是否出现完整回复（最终判据）；
+4. **四处对账**：
+   - UI：是否出现完整回复（最终判据），并且不出现 "Something went wrong"；
    - 会话库：`docker exec grok-bot-local-vm sh -c 'A=$(ls -t /home/box/sand-data/agents|grep -v active-agent|head -1); sqlite3 /home/box/sand-data/agents/$A/store.db "SELECT COUNT(*),substr(entry,1,80) FROM transcript_entries"'`
      ——期望 ≥2 行且出现 `"kind":"send-message"`；
+   - 网关返回的普通消息条目同时带 `text` 与 `content`：
+     `curl -s -X POST http://127.0.0.1:1340/api/getAgentTranscriptTail -H "authorization: Bearer <token>" -H "content-type: application/json" -d '{"id":"<agentId>","limit":20}'`；
    - 盒日志：`docker logs --since 300s grok-bot-local-vm 2>&1 | grep -v privacy | grep -iE "error|failed"` 为空。
-4. **SSE 侧证**（可选）：发探针前起 `curl -sN --max-time 120 http://127.0.0.1:1340/events -H "authorization: Bearer <token>"`，
+5. **SSE 侧证**（可选）：发探针前起 `curl -sN --max-time 120 http://127.0.0.1:1340/events -H "authorization: Bearer <token>"`，
    期望出现 `"channel":"transcript"` 且 entry 含 assistant 内容。
-5. 通过 → 合 PR #29（或以工作区版本重开 PR）；不过 → 按 §5 末尾的核对点继续追
-   （collectText relay 生命周期是头号嫌疑）。
+
+自动化回归：`tests/renderer-entry-text-patch.test.mjs` 验证 renderer 补丁，
+`tests/renderer-entry-shape.test.mjs` 验证宿主投影，两者都用真实条目形状断言。
 
 ---
 
-## 8. 备选修复路线（若 seam v2 路线放弃）
+## 8. 未采用的修复路线
 
-- **A. 原生协议集成（大改，最正）**：让 claudeExecutor 说 turn 机器的流式工具调用协议——
-  executor 的 fullStream 产出 tool-call parts，runner 经 shell 工具注册表执行（含 SendMessage），
-  结果回灌继续。改动面：`provider-session.ts`（接收 `_definitions` 并以 SDK 的 MCP 机制
-  （`mcpServers` + `mcp__server__tool` 模式，参考 `source/node-agent-coordinator/routed-mcp-bridge.ts`
-  的桥实现）暴露给 CLI）、工具名映射（nudge 逻辑按裸名 "SendMessage" 计数，
-  MCP 化名字 `mcp__x__SendMessage` 不被 `hasSendMessageCall` 识别——需对齐或改判定）。
-- **B. 投递 shim（当前 seam 思路）**：turn 结束欠投递时把 `TurnSettleResult.text` 合成
-  send-message 走 stock 管线（§5 工作区版本）。最小、与 Mac 平面语义一致。
-- **C. 后处理守卫**：`runWithReplyNudges` 判定"nudge 不可能成功"（runner 无 SendMessage 能力）
-  时跳过 nudge 直接走 B 的合成——可与 B 合并。
+若日后要让盒内模型真正持有并调用 SendMessage 工具，需要让 claudeExecutor 说 turn 机器的流式工具调用协议——
+executor 的 fullStream 产出 tool-call parts，runner 经 shell 工具注册表执行（含 SendMessage），
+结果回灌继续。改动面：`provider-session.ts`（接收 `_definitions` 并以 SDK 的 MCP 机制
+（`mcpServers` + `mcp__server__tool` 模式，参考 `source/node-agent-coordinator/routed-mcp-bridge.ts`
+的桥实现）把工具暴露给 CLI）、工具名映射（nudge 逻辑按裸名 "SendMessage" 计数，
+MCP 化名字 `mcp__x__SendMessage` 不被 `hasSendMessageCall` 识别，需要一并调整判定）。
+这条路线成功后，§5.1 的投递缝可以只作为兜底保留。
 
 ---
 
@@ -242,11 +290,16 @@ UI 一切正常。盒内 seam 的目标就是复刻这个语义。
 - 转录镜像（journal/legacy）：`source/host/transcript-mirror/*.ts`
 - 实验开关：`source/shared/node/experiments/{cursor-experiments,experiment-config.gen,feature-flag-overrides}.ts`
 - 权限/身份：`source/shared/node/local-admin.ts`、`provider-session.ts` 的 claudeToolPermission/身份提示词
-- 测试：`tests/local-admin.test.mjs`、`tests/publication-packaging.test.mjs`（改行为请同步锚定）
+- 条目形状投影：`source/host/extensions/transcript/renderer-entry-shape.ts`
+- renderer 打包补丁：`scripts/lib/router-renderer-patch.mjs`、`scripts/clean-build.mjs` 的 `buildFidelityReconstructedAsar`
+- 前端转录投影（发货产物的对应源码）：`frontend/src/production/model.ts` 的 `projectTranscriptEntry`
+- 测试：`tests/local-admin.test.mjs`、`tests/publication-packaging.test.mjs`（改行为请同步锚定）、
+  `tests/renderer-entry-text-patch.test.mjs`、`tests/renderer-entry-shape.test.mjs`
 
 ## 10. 未决清单（非本问题，排队中）
 
-- 桌面 resync 的 account-scope null 推送清空盒内 localToolPermission/MCP 禁用表（守卫待做）
-- 1339 路由器/session-sync 无生产探测（多窗口落地时修）
+- 桌面 resync 的账号作用域推送不再触发宿主的 `clearAccountScope()`（该函数会删除 `localToolPermission`、
+  `computerUseModel` 等设置并清空三张 MCP 表）；真正的账号离开仍走显式清空路径
+- `1339` 路由器与 session-sync 已有桌面 profile 门禁的 D5 存活性探针；两者没有监督者，死亡后需重建容器
 - `docs/LEARNING-PYRAMID.*`、`docs/DEPLOY-HANDBOOK.md` 未跟踪文件归档决定
 - S-9 毕业验收（封锁 golden path，含"盒内全新会话全流程"门禁）、S-10 收尾

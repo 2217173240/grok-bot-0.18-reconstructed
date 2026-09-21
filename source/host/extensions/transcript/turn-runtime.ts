@@ -563,7 +563,7 @@ export class TurnRuntime {
       if (epoch !== this.tm.sendPipeline.currentTurnEpoch(session)) return false;
       this.handleAgentUpdate({
         type: "send-message",
-        message: { type: "text", text: undelivered },
+        message: { type: "text", content: undelivered },
         timestampMs: Date.now(),
       }, session);
       return true;

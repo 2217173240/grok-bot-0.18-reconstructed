@@ -14,6 +14,11 @@
 #                   with the host log tail instead of spinning.
 set -euo pipefail
 
+# Electron runs as plain Node when this leaks in from the calling shell, and the
+# binary then rejects --user-data-dir and exits at once. The launcher owns this
+# variable for its own child processes, so clear it for everything it starts.
+unset ELECTRON_RUN_AS_NODE
+
 BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
 BUNDLE_ID="com.anysphere.sand.reconstructed"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,8 +112,17 @@ do_start() {
   # 1340 held by a NON-app listener is fine when it is the Docker computer's
   # port forward (ssh/docker-proxy for grok-bot-local-vm) and that gateway is
   # healthy — the app connects to it. Anything else holding the port blocks.
+  # The socket discovery must run in THIS shell so its DOCKER_HOST export
+  # survives; inside a pipeline it would only affect the subshell and the
+  # docker call below would fail to reach the daemon.
   if lsof -nP -iTCP:1340 -sTCP:LISTEN >/dev/null 2>&1; then
-    if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ]        && resolve_docker_host 2>/dev/null        && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'        && health_ok; then
+    forward_holder=false
+    if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && resolve_docker_host 2>/dev/null; then
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$' && health_ok; then
+        forward_holder=true
+      fi
+    fi
+    if [ "$forward_holder" = true ]; then
       say "port 1340: held by the Docker computer's forward (healthy) — the app will connect to it"
     else
       die "port 1340 is held by something that is not our app or computer; refusing to start"

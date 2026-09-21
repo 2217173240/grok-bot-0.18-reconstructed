@@ -11,6 +11,7 @@ import { transcriptReplicaKey } from "../../../shared/ordering.js";
 import { SEND_MESSAGE_TOOL_CALL_OUTLINE_NAME } from "../../runner/conversation-outline.js";
 import { mergeAsyncTasks } from "./async-task-union.js";
 import { ProfileWatch } from "./profile-watch.js";
+import { projectTranscriptPayloadForRenderer } from "./renderer-entry-shape.js";
 import { RosterEmit } from "./roster-emit.js";
 import { RosterSearch } from "./roster-search.js";
 import type { TranscriptManagerLike } from "./transcript-hub.js";
@@ -460,7 +461,7 @@ export class RosterProjection {
 
   emit(event: any, owningAgentId?: string): void {
     const owned = this.withOwningAgentId(event, owningAgentId);
-    this.emitter.emit("event", this.withOrderedStamp(owned));
+    this.emitter.emit("event", this.withOrderedStamp(projectTranscriptPayloadForRenderer(owned)));
     if (event.type === "cleared" && typeof owned.agentId === "string") {
       const reset = this.tm.clientSideToolV2.reset(owned.agentId);
       if (reset != null) this.emitClientSideToolV2(reset);
