@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -160,7 +160,7 @@ export function localDockerRunPlan(options: {
   const common = [
     "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
     "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${options.hostSha256}`,
-    "--label", `com.grok-bot.local-vm.box-exec-daemon-sha256=${options.boxExecDaemonSha256}`,
+    "--label", `${LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL}=${options.boxExecDaemonSha256}`,
     "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
     "--label", `${LOCAL_DOCKER_DESKTOP_LABEL}=${options.desktop === true ? "1" : "0"}`,
@@ -262,6 +262,12 @@ export const LOCAL_DOCKER_DESKTOP_LABEL = "com.grok-bot.local-vm.desktop";
 // The host-turn mount plane (token bind) only applies at docker run; the
 // label lets drift replace a container whose mounts no longer match.
 export const LOCAL_DOCKER_HOST_TURN_LABEL = "com.grok-bot.local-vm.host-turn";
+// The executable that actually runs in-box commands is bound from a
+// content-addressed directory named after BOTH the host bundle and this daemon,
+// so a rebuild of the daemon alone makes the container's mount stale. The host
+// hash below covers only host-main.cjs, so the daemon hash needs its own label
+// and its own drift comparison.
+export const LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL = "com.grok-bot.local-vm.box-exec-daemon-sha256";
 export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
 
 // The desktop plane is the DEFAULT for the self-built computer (the goal is
@@ -374,9 +380,9 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
     return {
@@ -385,6 +391,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       owned: value.Config?.Labels?.["com.grok-bot.local-vm"] === "1",
       image: typeof value.Config?.Image === "string" ? value.Config.Image : "",
       hostSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.host-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.host-sha256"] as string : "",
+      boxExecDaemonSha256: typeof value.Config?.Labels?.[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] === "string" ? value.Config.Labels[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
@@ -415,23 +422,42 @@ async function isDirectory(path: string): Promise<boolean> {
 
 // Staging is content addressed, so every distinct host bundle leaves its own
 // v<layout>-<hostSha>-<daemonSha> directory behind and nothing ever removed the
-// older ones. Keep the newest few — the connector always mounts the newest, so
-// the live container's runtime is never a candidate — and drop anything older,
-// including directories from earlier layout versions.
+// older ones. Keep the newest few and drop anything older, including
+// directories from earlier layout versions.
 export const LOCAL_HOST_RUNTIME_RETAINED_DIRECTORIES = 3;
 const LOCAL_HOST_RUNTIME_DIRECTORY_PATTERN = /^v(\d+)-[0-9a-f]{64}-[0-9a-f]{64}$/;
 
-export async function pruneLocalHostRuntimeStaging(runtimeRoot: string): Promise<string[]> {
+// Recency is not a safety argument: the running container's mount is normally
+// the newest directory, but that only holds while drift detection keeps the
+// container current. Reading the live mount directly makes the rule independent
+// of that assumption, so a container still pointed at an older directory keeps
+// it. Returns the directory the owned container currently mounts, if any.
+export async function readMountedLocalHostRuntime(): Promise<string | undefined> {
+  const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
+  if (!result.ok) return undefined;
+  try {
+    const value = JSON.parse(result.output) as { Config?: { Labels?: Record<string, unknown> }; Mounts?: Array<{ Source?: unknown; Destination?: unknown }> };
+    if (value.Config?.Labels?.["com.grok-bot.local-vm"] !== "1") return undefined;
+    const mount = (value.Mounts ?? []).find((candidate) => candidate.Destination === "/home/box/sand-host");
+    return typeof mount?.Source === "string" && mount.Source.length > 0 ? dirname(mount.Source) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function pruneLocalHostRuntimeStaging(runtimeRoot: string, protectedPaths: readonly string[] = []): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(runtimeRoot);
   } catch {
     return [];
   }
+  const protectedSet = new Set(protectedPaths);
   const staged: { path: string; modifiedAt: number }[] = [];
   for (const name of entries) {
     if (!LOCAL_HOST_RUNTIME_DIRECTORY_PATTERN.test(name)) continue;
     const path = join(runtimeRoot, name);
+    if (protectedSet.has(path)) continue;
     try {
       const info = await stat(path);
       if (!info.isDirectory()) continue;
@@ -449,21 +475,38 @@ export async function pruneLocalHostRuntimeStaging(runtimeRoot: string): Promise
   return removed;
 }
 
-async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
+// Exported so the staging contract can be driven directly: the tree walk and its
+// completeness check are the only guards between a short runtime tree and an
+// in-box turn that dies later on a missing worker.
+export async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  // Directories the host resolves relative to argv[1] at RUNTIME. A short tree
+  // is indistinguishable from a good one once staged (the directory name is
+  // derived from the entry file and the daemon alone), and the failure would
+  // only appear later as MODULE_NOT_FOUND inside an in-box turn.
+  const REQUIRED_HOST_TREE_DIRECTORIES = ["agent-isolation", "extensions"] as const;
   const readRuntimeTree = async (relative: string): Promise<readonly { name: string; bytes: Buffer }[]> => {
     const readDir = async (prefix: string): Promise<{ name: string; bytes: Buffer }[]> => {
-      const root = [resolve(moduleDirectory, `../${join(relative, prefix)}`), resolve(moduleDirectory, `../../${join(relative, prefix)}`)];
+      const candidates = [resolve(moduleDirectory, `../${join(relative, prefix)}`), resolve(moduleDirectory, `../../${join(relative, prefix)}`)];
       const entries: { name: string; bytes: Buffer }[] = [];
-      for (const candidate of root) {
+      for (const candidate of candidates) {
+        // A candidate that simply is not there is not a failure, since the
+        // runtime lives at different depths in a packaged app and in tests. A
+        // candidate that IS there but cannot be walked is a failure: returning
+        // the part collected so far would silently stage an incomplete tree.
+        let items: Dirent[];
         try {
-          for (const item of await readdir(candidate, { withFileTypes: true })) {
-            const name = join(prefix, item.name);
-            if (item.isDirectory()) entries.push(...await readDir(name));
-            else if (item.isFile()) entries.push({ name, bytes: await readFile(join(candidate, item.name)) });
-          }
-          return entries;
-        } catch {}
+          items = await readdir(candidate, { withFileTypes: true });
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "ENOENT") continue;
+          throw new Error(`Staging the reconstructed runtime failed while reading ${candidate}: ${String((error as Error).message ?? error)}`);
+        }
+        for (const item of items) {
+          const name = join(prefix, item.name);
+          if (item.isDirectory()) entries.push(...await readDir(name));
+          else if (item.isFile()) entries.push({ name, bytes: await readFile(join(candidate, item.name)) });
+        }
+        return entries;
       }
       return entries;
     };
@@ -486,6 +529,19 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   // turn died on agent-store-worker.cjs). Staging must carry the whole tree,
   // not the single entry file.
   const hostTree = await readRuntimeTree("host");
+  // Fail at staging time, not inside an in-box turn: the host resolves these
+  // directories relative to argv[1], and the staged directory's name says
+  // nothing about whether they made it in.
+  const stagedNames = new Set(hostTree.map((entry) => entry.name));
+  if (!stagedNames.has("host-main.cjs")) {
+    throw new Error("Staging the reconstructed runtime failed: host-main.cjs is missing from the host tree.");
+  }
+  const missingDirectories = REQUIRED_HOST_TREE_DIRECTORIES.filter(
+    (directory) => ![...stagedNames].some((name) => name.startsWith(`${directory}/`)),
+  );
+  if (missingDirectories.length > 0) {
+    throw new Error(`Staging the reconstructed runtime failed: the host tree is missing ${missingDirectories.join(", ")}; the in-box turn would die on a missing worker.`);
+  }
   const persistRuntime = async (name: string, bytes: Buffer): Promise<string> => {
     const target = join(directory, name);
     await mkdir(dirname(target), { recursive: true });
@@ -508,8 +564,11 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   }
   // Independent of whether this app instance already had its runtime staged:
   // the pruning compares directory timestamps every time, so repeated starts
-  // converge on the same set.
-  await pruneLocalHostRuntimeStaging(dirname(directory));
+  // converge on the same set. The container's current mount is read rather than
+  // assumed, so pruning cannot delete a directory a running container still
+  // reads even if that directory has aged out of the retained window.
+  const mountedRuntime = await readMountedLocalHostRuntime();
+  await pruneLocalHostRuntimeStaging(dirname(directory), mountedRuntime == null ? [] : [mountedRuntime]);
   return {
     // The mount unit is the sand-host DIRECTORY: the host resolves worker
     // artifacts relative to argv[1] at runtime, so single-file mounts leave
@@ -572,7 +631,13 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // dependencies: replace it, the same as a schema or host-bundle change. A
   // desktop-mode mismatch replaces too — the entrypoint only applies at run.
   const pinDrifted = expectedDepsPin != null && inspected.depsPin !== expectedDepsPin;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  // The mount is the content-addressed directory v<layout>-<hostSha>-<daemonSha>,
+  // so a rebuilt daemon with an unchanged host bundle is drift just as much as a
+  // rebuilt host: without this the container keeps the old daemon mounted while
+  // reporting itself current, and staged-runtime pruning may then delete the
+  // directory it is still reading.
+  const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);

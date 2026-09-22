@@ -89,6 +89,36 @@ test("staged runtime pruning keeps the newest directories and converges", async 
 
     // A missing runtime root is not an error.
     assert.deepEqual(await pruneLocalHostRuntimeStaging(path.join(root, "absent")), []);
+
+    // A directory the running container still mounts is never a candidate, even
+    // when it has aged out of the retained window. Recency is not the safety
+    // argument: a container whose drift check missed a daemon-only rebuild can
+    // still be reading an old directory.
+    const second = await mkdtemp(path.join(tmpdir(), "grok-runtime-prune-protected-"));
+    try {
+      const protectedName = `v3-${"1".repeat(64)}-${DAEMON_SHA}`;
+      const protectedPath = await makeStagedRuntime(second, protectedName, base);
+      for (const [index, name] of names.entries()) {
+        await makeStagedRuntime(second, name, base + 7_200_000 + index * 3_600_000);
+      }
+      const removedWithProtection = await pruneLocalHostRuntimeStaging(second, [protectedPath]);
+      const survivorsWithProtection = (await readdir(second, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+      assert.ok(
+        survivorsWithProtection.includes(protectedName),
+        "the mounted directory must survive even when it is the oldest",
+      );
+      assert.ok(!removedWithProtection.includes(protectedPath), "the mounted directory must not be reported as removed");
+      // Protection does not stop the retention rule from working on the rest.
+      assert.equal(
+        survivorsWithProtection.length,
+        LOCAL_HOST_RUNTIME_RETAINED_DIRECTORIES + 1,
+        "the retained window still applies to unprotected directories",
+      );
+    } finally {
+      await rm(second, { recursive: true, force: true });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(buildRoot, { recursive: true, force: true });

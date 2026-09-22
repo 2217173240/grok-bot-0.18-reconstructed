@@ -83,6 +83,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   // extension workers) — an in-box turn died on a missing worker when the
   // mount was the single entry file.
   assert.match(localDocker, /LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "3"/);
+  // The staged directory is named after the host bundle AND the exec daemon, so
+  // a daemon-only rebuild is drift too: without this the container keeps the old
+  // daemon mounted while reporting itself current, and pruning can then delete
+  // the directory it still reads.
+  assert.match(localDocker, /const daemonDrifted = inspected\.boxExecDaemonSha256 !== hostBundle\.boxExecDaemonSha256/);
+  assert.match(localDocker, /readMountedLocalHostRuntime/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(inference, /recordInferenceUsage\(provider/);
   assert.match(inference, /routerSettings\.getInferenceProvider\(\)/);
@@ -133,7 +139,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   // Local-admin turns carry the local identity: the assistant must know it IS
   // the sandbox and never present cursor/xai remotes as its backend.
   assert.match(providers, /there is no cloud sandbox behind you/i);
-  assert.match(providers, /isLocalAdminEnabled\(\) \? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES/);
+  // The identity block is gated on local admin, and the desktop primitives are
+  // composed per execution plane: the box has no docker CLI, so in-box prompts
+  // must name the wrappers directly. tests/local-admin-desktop-primitives.test.mjs
+  // asserts the composed prompt for both planes.
+  assert.match(providers, /localAdminDesktopPrimitiveLines/);
+  assert.match(providers, /SAND_HOST_IN_BOX/);
   // The human-handoff contract (C1): the identity teaches the ask protocol
   // with the staleness note; the box gate wraps shell/stream/computer use.
   assert.match(providers, /ask-human\.json/);
