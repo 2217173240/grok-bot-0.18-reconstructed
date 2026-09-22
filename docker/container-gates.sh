@@ -25,6 +25,9 @@
 #   D6  desktop death leaves the container and gateway alive (the B1
 #       unsupervised-desktop decision, asserted)
 #
+# Probes are three-valued (see scripts/lib/box-probe.sh): a gate fails when it
+# could not measure, so a broken `docker exec` can never read as a clean result.
+#
 # CI note: GitHub runners are amd64; the self-built arm64 image runs under
 # QEMU there, which keeps these gates functional but makes timing benchmarks
 # meaningless — the cold-start sentinel is enforced on native arm64 only.
@@ -34,6 +37,8 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 NAME=grok-bot-exec-eval
+BOX_CONTAINER="$NAME"
+. "$REPO/scripts/lib/box-probe.sh"
 PROFILE="exec"
 if [ "${1:-}" = "--profile" ]; then
   PROFILE="${2:?--profile needs exec|desktop}"
@@ -116,15 +121,17 @@ else
 fi
 rm -f "$SMOKE_ERR_FILE"
 
-# G4 — cold exec container must not carry desktop processes.
-CHROME=$(docker exec "$NAME" /bin/bash -c 'pgrep -c chromium' 2>/dev/null)
-# pgrep -c prints 0 and exits 1 when nothing matches; treat any non-numeric
-# capture (exec failure) as 0 rather than concatenating fallback output.
-[[ "$CHROME" =~ ^[0-9]+$ ]] || CHROME=0
-if [ "${CHROME:-0}" = "0" ]; then
+# G4 — cold exec container must not carry desktop processes. The count is the
+# gate; a count that could not be read is a failure, because "docker exec never
+# reached the box" and "the box is clean" are different facts that both used to
+# produce an empty capture.
+probe_box_process_count chromium
+if [ "$PROBE_STATUS" != "$PROBE_OK" ]; then
+  fail "G4 inconclusive — the container reported no process count: ${PROBE_OUTPUT:-empty output}"
+elif [ "$PROBE_OUTPUT" = "0" ]; then
   pass "G4 no Chromium processes on the cold container (browsers on demand)"
 else
-  fail "G4 Chromium processes present: $CHROME"
+  fail "G4 Chromium processes present: $PROBE_OUTPUT"
 fi
 
 
@@ -181,10 +188,16 @@ run_desktop_gates() {
   # D5 — the two desktop-plane daemons stay alive: the window router behind
   # 1339 (whose port D2 only proves is bound) and the login-state sync guard.
   # The sync daemon is a single-screen no-op until a second window exists, so
-  # process liveness is the honest probe; its death is otherwise silent.
-  ROUTER_PID=$(in_box 'pgrep -f "sand-window-router.mjs" | head -1')
-  SYNC_PID=$(in_box 'pgrep -f "session-sync.mjs" | head -1')
-  if [ -n "$ROUTER_PID" ] && [ -n "$SYNC_PID" ]; then
+  # process liveness is the honest probe; its death is otherwise silent. An
+  # unreadable probe fails the gate, so a container that refused the exec is
+  # never reported as having lost its daemons.
+  probe_box_pid sand-window-router.mjs
+  ROUTER_STATUS="$PROBE_STATUS"; ROUTER_PID="$PROBE_OUTPUT"
+  probe_box_pid session-sync.mjs
+  SYNC_STATUS="$PROBE_STATUS"; SYNC_PID="$PROBE_OUTPUT"
+  if [ "$ROUTER_STATUS" != "$PROBE_OK" ] || [ "$SYNC_STATUS" != "$PROBE_OK" ]; then
+    fail "D5 inconclusive — the container did not report its desktop daemons: ${PROBE_OUTPUT:-empty output}"
+  elif [ -n "$ROUTER_PID" ] && [ -n "$SYNC_PID" ]; then
     pass "D5 desktop daemons alive: window router (pid $ROUTER_PID), session-sync (pid $SYNC_PID)"
   else
     fail "D5 desktop daemon missing (router='${ROUTER_PID:-none}' session-sync='${SYNC_PID:-none}')"

@@ -182,10 +182,14 @@ export async function createTurnAgentRunContext<ContextValue>(
     skipLabeling: input.isSubagentRunner || input.hidden === true,
     ...(input.lineage === undefined ? {} : { lineage: input.lineage }),
   };
-  const inferenceProvider = new SandSettingsStore(join(getSandRootDir(), "settings.json")).getInferenceProvider();
+  const localSettings = new SandSettingsStore(join(getSandRootDir(), "settings.json"));
+  const inferenceProvider = localSettings.getInferenceProvider();
   const agent = inferenceProvider === "cursor"
     ? input.inference.createSession(input.onRequestId, sessionOptions)
-    : createProviderPromptSession(inferenceProvider) as unknown as TurnAgentPromptSession;
+    // The box workspace is bind-mounted from the user's machine, so the local
+    // tool permission applies to the in-box CLI child too; without it the "Never"
+    // setting only governed the Mac-side tools and the agent kept acting here.
+    : createProviderPromptSession(inferenceProvider, { localToolPermission: localSettings.getLocalToolPermission() }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {

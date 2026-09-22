@@ -49,6 +49,18 @@
 
 判定：**边缘扩展**。三个屏以上需要在镜像内增加 fork 与端口，并复核 4g 上限；宿主侧没有核心改动。
 
+## 插件 MCP 工具：唯一一处必须改动核心逻辑的缺口
+
+其余三处扩展都位于已有的注册点或数据源上，MCP 不在其中。它在两个平面各有半条通路，都不完整：
+
+| 缺口 | 位置 | 现象 |
+| --- | --- | --- |
+| 盒内轮次从不传入 MCP 桥地址 | `provider-session.ts` 的 `Stream` 调用 `claudeExecutor` 时第四个参数恒为 `undefined` | 盒内 CLI 子进程只看到 `CLAUDE_LOCAL_TOOLS`，没有 `mcp__grok_bot_plugins__*`，也没有 `mcpServers` 块 |
+| 盒内 daemon 的 MCP 加载是空实现 | `box-exec-daemon/server.ts` 的 `loadMcpServers` 处理器忽略 `request.mcpConfigJson` 并返回空成功 | 调用方丢弃返回值，因此 stdio 服务器在任何形态下都不会真正加载，失败也不报错 |
+| 插件清单从未进入盒内 | `source/shared/node/mcp/local-mcp-servers.ts` 只读 Mac 数据根的 `mcp-servers.json` | 盒内 `getStdioServerConfigs()` 为空，工具发现阶段直接返回 |
+
+三处必须一起补齐才有效果，属于独立工作项，已登记在 `docs/ROADMAP.md`。
+
 ## 结论
 
-三处扩展都位于已有的注册点或数据源上，没有出现必须改动核心逻辑的情况。两条需要留意的缺口已经登记：盒内轮次的工具清单与 turn 机器的工具面没有共享数据源；多屏的显示凭证按显示号取键，强度不足。
+三处扩展位于已有的注册点或数据源上，没有出现必须改动核心逻辑的情况。需要留意的缺口已经登记：插件 MCP 工具在盒内不可用（三处缺口见上一节）；盒内轮次的工具清单与 turn 机器的工具面没有共享数据源；多屏的显示凭证按显示号取键，强度不足。

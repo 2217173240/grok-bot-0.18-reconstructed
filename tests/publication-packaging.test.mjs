@@ -110,8 +110,11 @@ test("Router settings use the trusted backend and display recorded inference usa
   // stock empty tool list that made the model fabricate command output.
   assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
   assert.match(providers, /canUseTool: async \(toolName, input\)/);
-  assert.match(providers, /claudeToolPermission\(toolName, input\)/);
+  assert.match(providers, /claudeToolPermission\(toolName, input, localToolPermission\)/);
   assert.match(providers, /mac-permission-denied/);
+  // Local tool access set to "Never" must reach the in-box CLI child: the box
+  // workspace is bind-mounted from the user's machine, so those tools act there.
+  assert.match(providers, /localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS\.has\(toolName\)/);
   assert.match(providers, /maxTurns: 24/);
   assert.match(providers, /xtest-input-local\.py/);
   assert.match(providers, /do not fall back to curl/);

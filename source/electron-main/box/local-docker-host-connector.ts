@@ -709,12 +709,47 @@ export async function startLocalDockerBox(settingsPath: string): Promise<Gateway
   return await ensureLocalDockerBox(settingsPath);
 }
 
+export interface LocalBoxStopFacts { exists: boolean; running: boolean; owned: boolean }
+export interface LocalBoxStopVerdict { stopped: boolean; reason?: string }
+
+// `docker stop` returning success proves the request was accepted, not that the
+// container is down: a restart policy, a concurrent start, or a shutdown that
+// has not finished all leave it holding its ports. The caller starts the Mac
+// host on the same gateway port immediately afterwards, and the host branch's
+// already-ready probe cannot tell the two apart, so an unverified stop returns
+// the container as if it were the Mac host. Only an observed state counts as
+// proof; anything unproven stops the caller.
+//
+// `after` carries the post-stop observation and is present only when the
+// container was seen at all. Absence is not evidence of being down, because an
+// unreachable docker daemon reports the same thing as a removed container.
+export function judgeLocalBoxStop(
+  containerName: string,
+  facts: { before: LocalBoxStopFacts; stop?: { succeeded: boolean }; after?: LocalBoxStopFacts },
+): LocalBoxStopVerdict {
+  const { before, stop, after } = facts;
+  if (!before.exists || !before.running) return { stopped: true };
+  if (!before.owned) return { stopped: false, reason: `refusing to stop unowned container ${containerName}` };
+  if (after != null) return after.running ? { stopped: false, reason: `${containerName} is still running after docker stop` } : { stopped: true };
+  if (stop?.succeeded === true) return { stopped: true };
+  return { stopped: false, reason: `docker stop failed and ${containerName} could not be observed afterwards` };
+}
+
 export async function stopLocalDockerBox(): Promise<void> {
-  const inspected = await inspectContainer();
-  if (!inspected.exists || !inspected.running) return;
-  if (!inspected.owned) throw new Error(`Refusing to stop unowned container ${LOCAL_DOCKER_BOX_CONTAINER}.`);
-  const stopped = await runDocker(["stop", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!stopped.ok) throw new Error(`Could not stop the local Docker VM: ${stopped.output}`);
+  const before = await inspectContainer();
+  let stop: { succeeded: boolean } | undefined;
+  let after: LocalBoxStopFacts | undefined;
+  if (before.exists && before.running && before.owned) {
+    stop = { succeeded: (await runDocker(["stop", LOCAL_DOCKER_BOX_CONTAINER])).ok };
+    const observed = await inspectContainer();
+    after = observed.exists ? { exists: true, running: observed.running, owned: observed.owned } : undefined;
+  }
+  const verdict = judgeLocalBoxStop(LOCAL_DOCKER_BOX_CONTAINER, {
+    before,
+    ...(stop === undefined ? {} : { stop }),
+    ...(after === undefined ? {} : { after }),
+  });
+  if (!verdict.stopped) throw new Error(`Could not stop the local Docker VM: ${verdict.reason}`);
 }
 
 export function createSettingsRoutedHostConnector(
@@ -763,8 +798,12 @@ export function createSettingsRoutedHostConnector(
             // The Mac host and the container share port 1340 and the token
             // file; without stopping the container first, the host branch's
             // already-ready probe answers from the CONTAINER and silently
-            // returns the wrong computer as if it were the Mac host.
-            : await (await stopLocalDockerBox().catch(() => undefined), ensureMacHostComputer());
+            // returns the wrong computer as if it were the Mac host. A stop
+            // that cannot be shown to have taken effect therefore aborts this
+            // branch: continuing would answer as the computer we failed to
+            // stop. An unreachable docker daemon is not a failure here, since
+            // there is then nothing running to stop.
+            : await (await stopLocalDockerBox(), ensureMacHostComputer());
           resetLocalHostBreaker();
           return connection;
         } catch (error) {

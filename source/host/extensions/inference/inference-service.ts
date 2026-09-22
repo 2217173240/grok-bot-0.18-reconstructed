@@ -58,7 +58,7 @@ export function createHostInference(options: HostInferenceOptions) {
     createSession(onRequestId: (requestId: string) => void, sessionOptions?: Parameters<typeof cursor.createSession>[1]) {
       const provider = routerSettings.getInferenceProvider();
       if (provider === "cursor") return routedSession(cursor.createSession(onRequestId, sessionOptions), provider);
-      return createProviderPromptSession(provider) as ReturnType<typeof cursor.createSession>;
+      return createProviderPromptSession(provider, { localToolPermission: routerSettings.getLocalToolPermission() }) as ReturnType<typeof cursor.createSession>;
     },
     createSummarizationSession(onRequestId: (requestId: string) => void, sessionOptions?: Parameters<NonNullable<typeof cursor.createSummarizationSession>>[1]) {
       const provider = routerSettings.getInferenceProvider();
