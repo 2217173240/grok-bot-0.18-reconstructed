@@ -320,25 +320,35 @@ export class SandBrowserDriver<Context = unknown> {
     };
   }
 
+  // The driver reported a capture, so failing to read the payload back is a
+  // failure of the action. Returning nothing here would report the summary text
+  // as a completed screenshot and let the model keep acting on a screen it never
+  // saw. The sibling browser failures report their reason the same way.
   async fetchScreenshot(
     context: Context,
     boxPath: string,
-  ): Promise<string | undefined> {
+  ): Promise<string> {
+    let bytes: Uint8Array;
     try {
-      const bytes = await this.dependencies.downloadFile(
+      bytes = await this.dependencies.downloadFile(
         context,
         this.dependencies.getBoxId(),
         boxPath,
       );
-      if (bytes.length === 0) return undefined;
-      const persistImage = this.dependencies.getPersistImage?.();
-      if (persistImage != null) {
-        await persistImage(bytes, "image/png").catch(() => null);
-      }
-      return Buffer.from(bytes).toString("base64");
-    } catch {
-      return undefined;
+    } catch (error) {
+      throw new SandBrowserDriverError(
+        `The browser action completed but its screenshot could not be read back from ${boxPath}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
+    if (bytes.length === 0) {
+      throw new SandBrowserDriverError(`The browser action completed but its screenshot at ${boxPath} came back empty.`);
+    }
+    const persistImage = this.dependencies.getPersistImage?.();
+    if (persistImage != null) {
+      await persistImage(bytes, "image/png").catch(() => null);
+    }
+    return Buffer.from(bytes).toString("base64");
   }
 }
 

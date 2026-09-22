@@ -1,4 +1,6 @@
-export const SAND_BROWSER_DRIVER_VERSION = 2;
+// The version is part of the box path, so a host process that starts against a
+// container holding an older driver never runs the older file.
+export const SAND_BROWSER_DRIVER_VERSION = 3;
 export const SAND_BROWSER_DRIVER_BOX_DIR = "/tmp/.sand-browser";
 export const SAND_BROWSER_DRIVER_BOX_PATH = SAND_BROWSER_DRIVER_BOX_DIR + "/driver-v" + String(SAND_BROWSER_DRIVER_VERSION) + ".mjs";
 export const SAND_BROWSER_RESULT_MARKER = "__SAND_BROWSER_RESULT__";
@@ -874,7 +876,14 @@ async function run(request) {
           .then(() => {
             out.screenshot = true;
           })
-          .catch(() => {});
+          .catch((error) => {
+            // A capture that did not happen must not leave ok true: the host
+            // reads that flag to decide whether to fetch the image, and the
+            // model would otherwise be told the action completed while it never
+            // saw the screen.
+            out.ok = false;
+            out.error = "screenshot capture failed: " + (error && error.message ? error.message : String(error));
+          });
       }
     }
     return out;

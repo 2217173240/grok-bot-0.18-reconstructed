@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { runRoutedProviderText } from "../host/extensions/inference/provider-session.js";
+import { nextEntryId } from "../host/extensions/transcript/transcript-entry-ids.js";
+import type { TranscriptEntry } from "../host/extensions/transcript/transcript-hub.js";
 import type { SandInferenceProvider } from "../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
 import { SandSettingsStore } from "../shared/node/settings/sand-settings-store.js";
@@ -56,6 +58,36 @@ export function projectInferenceRouterTranscriptEntry(entry: StoredEntry): Recor
   return entry.role === "user"
     ? { kind: "message", id: entry.id, role: "user", content: entry.content, ...(entry.richText === undefined ? {} : { richText: entry.richText }), isStreaming: false, timestampMs: entry.timestampMs, ...(entry.clientNonce === undefined ? {} : { clientNonce: entry.clientNonce }), ...(entry.reactions === undefined ? {} : { reactions: entry.reactions }) }
     : { kind: "send-message", id: entry.id, message: { type: "text", content: entry.content }, timestampMs: entry.timestampMs, ...(entry.reactions === undefined ? {} : { reactions: entry.reactions }) };
+}
+
+// The routed turn runs the provider on this Mac process and stores text only:
+// StoredEntry has no attachment, reply target, or fork marker, and the two
+// projections above omit them. Claiming such a send accepts the prompt and
+// silently loses the rest, and an attachment-only send fails outright on the
+// prompt requirement. Declining hands the turn to the in-box plane, which
+// implements attachments, replies, forks, and mention expansion.
+export function routedSendIsRepresentable(args: Record<string, unknown>): boolean {
+  const attachments = args.attachmentPaths;
+  if (Array.isArray(attachments) && attachments.length > 0) return false;
+  const replyToId = args.replyToId;
+  if (typeof replyToId === "string" && replyToId.length > 0) return false;
+  return args.isFork !== true;
+}
+
+function isIdentifiedEntry(entry: unknown): entry is TranscriptEntry {
+  const row = asRecord(entry);
+  return row != null && typeof row.id === "string" && typeof row.kind === "string";
+}
+
+// Both planes mint ids through transcript-entry-ids, and firstUnusedId can only
+// avoid a collision it can see, so the pool carries the remote tail as well as
+// the local store.
+function transcriptIdPool(remote: unknown, stored: readonly StoredEntry[]): TranscriptEntry[] {
+  const remoteEntries = asRecord(remote)?.entries;
+  return [
+    ...(Array.isArray(remoteEntries) ? remoteEntries : []),
+    ...stored.map(projectInferenceRouterTranscriptEntry),
+  ].filter(isIdentifiedEntry);
 }
 
 export function createCoordinatorInferenceRouter(options: {
@@ -139,25 +171,18 @@ export function createCoordinatorInferenceRouter(options: {
     if (agentId.length === 0 || prompt.length === 0) throw new Error("Local inference routing requires an agentId and prompt");
     const timestampMs = now();
     const [remote, beforeUser] = await Promise.all([options.dispatchRemote("getAgentTranscriptTail", { id: agentId }), load()]);
-    const remoteEntries = Array.isArray(asRecord(remote)?.entries) ? asRecord(remote)!.entries as unknown[] : [];
-    const remoteTurn = remoteEntries.reduce<number>((highest, raw) => {
-      const id = asRecord(raw)?.id;
-      const match = typeof id === "string" ? /^t(\d+)(?:u|s\d+)$/.exec(id) : null;
-      return match == null ? highest : Math.max(highest, Number(match[1]));
-    }, -1);
-    const localTurn = (beforeUser.agents[agentId] ?? []).reduce((highest, entry) => {
-      const match = /^t(\d+)(?:u|s\d+)$/.exec(entry.id);
-      return match == null ? highest : Math.max(highest, Number(match[1]));
-    }, -1);
-    const turn = Math.max(remoteTurn, localTurn) + 1;
-    const userEntry = { kind: "message", id: `t${turn}u`, role: "user", content: prompt, ...(richText === undefined ? {} : { richText }), isStreaming: false, timestampMs, clientNonce };
+    // A tail that cannot be read is not an empty transcript. Minting from an
+    // empty pool re-issues ids the box already holds, and the box store inserts
+    // with INSERT OR IGNORE, so the collision would be discarded in silence.
+    if (!Array.isArray(asRecord(remote)?.entries)) throw new Error("the box transcript tail is unreadable, so a colliding entry id cannot be ruled out");
+    const userEntry = { kind: "message", id: nextEntryId(transcriptIdPool(remote, beforeUser.agents[agentId] ?? []), "user-message"), role: "user", content: prompt, ...(richText === undefined ? {} : { richText }), isStreaming: false, timestampMs, clientNonce };
     const withUser = await append(agentId, [{ provider, role: "user", content: prompt, ...(richText === undefined ? {} : { richText }), id: userEntry.id, clientNonce, timestampMs }]);
     emitTranscript(agentId, "appended", userEntry);
     const endActivity = await beginActivity(agentId);
     const messages = (withUser.agents[agentId] ?? []).map(entry => ({ role: entry.role, content: entry.content }));
     let content: string;
     const assistantTimestampMs = now();
-    const assistantId = `t${turn}s0`;
+    const assistantId = nextEntryId(transcriptIdPool(remote, withUser.agents[agentId] ?? []), "send-message");
     let assistantStreamStarted = false;
     const emitAssistant = (nextContent: string, streaming: boolean) => {
       const entry = { kind: "send-message", id: assistantId, message: { type: "text", content: nextContent }, streaming, timestampMs: assistantTimestampMs };
@@ -210,7 +235,12 @@ export function createCoordinatorInferenceRouter(options: {
         const [remote, local] = await Promise.all([options.dispatchRemote(method, args), load()]);
         const result = asRecord(remote);
         if (result == null || !Array.isArray(result.entries) || agentId.length === 0) return { handled: true, value: remote };
-        const entries = [...result.entries, ...(local.agents[agentId] ?? []).map(projectInferenceRouterTranscriptEntry)];
+        // The in-box transcript is the transcript of record for a given id, so a
+        // local entry whose id the remote tail already holds is not appended a
+        // second time: thread resolution keys a map by id, and the first
+        // occurrence shadows the second.
+        const remoteIds = new Set(result.entries.filter(isIdentifiedEntry).map(entry => entry.id));
+        const entries = [...result.entries, ...(local.agents[agentId] ?? []).map(projectInferenceRouterTranscriptEntry).filter(entry => !remoteIds.has(String(entry.id)))];
         const limit = typeof record.limit === "number" && Number.isInteger(record.limit) && record.limit > 0 ? record.limit : 500;
         return { handled: true, value: { ...result, entries: entries.slice(-limit) } };
       }
@@ -219,13 +249,14 @@ export function createCoordinatorInferenceRouter(options: {
       // unless the local host itself is the execution plane.
       if (method !== "sendPrompt" || provider === "cursor" || hostTurnModeEnabled()) return { handled: false };
       const record = asRecord(args) ?? {};
+      if (!routedSendIsRepresentable(record)) return { handled: false };
       const agentId = typeof record.agentId === "string" ? record.agentId : "";
       const previous = queues.get(agentId) ?? Promise.resolve();
       const next = previous.catch(() => undefined).then(() => execute(provider, record)).catch(async (error) => {
         const timestampMs = now();
         const content = `Router error: ${error instanceof Error ? error.message : String(error)}`;
         if (agentId.length > 0) {
-          const id = `t${Date.now()}s0`;
+          const id = nextEntryId(transcriptIdPool(undefined, (await load()).agents[agentId] ?? []), "send-message");
           await append(agentId, [{ provider, role: "assistant", content, id, timestampMs }]);
           emitTranscript(agentId, "appended", { kind: "send-message", id, message: { type: "text", content }, timestampMs });
         }
