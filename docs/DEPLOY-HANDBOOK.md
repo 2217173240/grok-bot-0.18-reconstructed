@@ -117,7 +117,11 @@ chmod 600 ~/.grokbot-local/anthropic-token
 
 **可选迁移（从源机拷）**：`mcp-servers.json` + `demo-mcp-server.cjs`（本地 MCP 插件源，二者的 Mac 路径已适配共享工作区）、`box-secrets.json`（Saved keys 镜像）。不拷则插件面为空，不影响主线。
 
-**可选挂载**：若要用 Codex/Claude 原生登录态，`~/.codex`、`~/.claude` 存在即被只读挂进容器（`/root/.codex`、`/root/.claude`）；默认推理路线不需要。
+**可选挂载**：`~/.codex`、`~/.claude` 存在即被只读挂进容器（`/root/.codex`、`/root/.claude`）。自建镜像以 `box`
+用户运行，家目录是 `/home/box`，这两个目录对本部署的盒内进程不可读，`CODEX_HOME` 也没有指向它们。盒内轮次选择
+Codex 时会读取 `auth.json` 并得到一条指明路径与平面的错误（`provider-session.ts` 的 `codexCredentials`）。
+要用盒内 Codex，需要在盒内可读的位置放置该平面的登录凭据（例如把 `CODEX_HOME` 指向盒内数据卷中的目录），
+或者改用 Mac 平面执行轮次（`GROKBOT_TURN=mac`）。默认推理路线是 claude-code，不需要这些凭据。
 
 ## 6. 启动链
 

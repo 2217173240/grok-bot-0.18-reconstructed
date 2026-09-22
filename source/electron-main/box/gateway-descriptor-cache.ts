@@ -5,7 +5,10 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { GATEWAY_NO_STORAGE_MESSAGE_MARKER } from "../../shared/gateway-reachability.js";
 
 export const GATEWAY_DESCRIPTOR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
-export const PERSISTED_GATEWAY_DESCRIPTOR_VERSION = 1;
+// Version 2 stores the same fields but no longer serves the takeover URL from a
+// persisted descriptor: the pod mints that URL per EnsureSandBox, so a stored
+// copy was minted by a process that no longer exists.
+export const PERSISTED_GATEWAY_DESCRIPTOR_VERSION = 2;
 
 export interface GatewayConnection {
   readonly baseUrl: string;
@@ -107,7 +110,17 @@ export function createPersistedGatewayDescriptorStore(options: {
         if (parsed.accountScope !== accountScope) return null;
         if (typeof parsed.savedAtMs !== "number" || now() - parsed.savedAtMs > maxAgeMs) return null;
         if (typeof parsed.encrypted !== "string") return null;
-        return parsePersistedGatewayConnection(JSON.parse(options.codec.decrypt(parsed.encrypted)));
+        const connection = parsePersistedGatewayConnection(JSON.parse(options.codec.decrypt(parsed.encrypted)));
+        if (connection == null) return null;
+        // The base URL and token keep working across a restart, and they are why
+        // this store exists: reconnecting without another EnsureSandBox. The
+        // takeover URL does not. The pod mints it together with its network token
+        // per box, so a copy kept for up to the descriptor's own lifetime is a
+        // link to a surface that has since been re-minted. Serving it would hand
+        // the operator a dead link with nothing to tell them so; the pending
+        // refresh delivers a live one moments later.
+        const { vncProxy: _storedVncProxy, ...withoutTakeoverUrl } = connection;
+        return withoutTakeoverUrl;
       } catch (error) {
         reportFailure("decrypt", error);
         return null;
