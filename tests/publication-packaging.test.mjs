@@ -83,6 +83,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   // extension workers) — an in-box turn died on a missing worker when the
   // mount was the single entry file.
   assert.match(localDocker, /LOCAL_HOST_RUNTIME_LAYOUT_VERSION = "3"/);
+  // The staged directory is named after the host bundle AND the exec daemon, so
+  // a daemon-only rebuild is drift too: without this the container keeps the old
+  // daemon mounted while reporting itself current, and pruning can then delete
+  // the directory it still reads.
+  assert.match(localDocker, /const daemonDrifted = inspected\.boxExecDaemonSha256 !== hostBundle\.boxExecDaemonSha256/);
+  assert.match(localDocker, /readMountedLocalHostRuntime/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(inference, /recordInferenceUsage\(provider/);
   assert.match(inference, /routerSettings\.getInferenceProvider\(\)/);
