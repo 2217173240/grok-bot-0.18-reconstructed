@@ -10,6 +10,7 @@ import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-in
 import { routedProviderToolSteps, type SandInferenceProvider } from "../../../shared/inference-router.js";
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
+import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
 import { getSandRootDir } from "../../host-paths.js";
@@ -258,6 +259,9 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
 
 const CLAUDE_LOCAL_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"] as const;
 const CLAUDE_READ_ONLY_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch"]);
+// Tools that cannot change anything the user owns. They stay available while the
+// box waits for a human, and while local tool access is set to "Never".
+const CLAUDE_BOX_READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"]);
 
 export function resolveAgentWorkspace(): string {
   const override = process.env.SAND_AGENT_WORKSPACE?.trim();
@@ -287,7 +291,7 @@ export function awaitingHumanAskFilePath(env: NodeJS.ProcessEnv = process.env): 
   return join(root, ".grokbot", "ask-human.json");
 }
 
-export function claudeToolPermission(toolName: string, input?: unknown): PermissionResult {
+export function claudeToolPermission(toolName: string, input?: unknown, localToolPermission?: SandLocalToolPermission): PermissionResult {
   if (isLocalAdminEnabled()) {
     const askPath = awaitingHumanAskFilePath();
     if (askPath != null && existsSync(askPath)) {
@@ -297,13 +301,25 @@ export function claudeToolPermission(toolName: string, input?: unknown): Permiss
         appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-handback-allowed", tool: toolName });
         return { behavior: "allow", updatedInput: {} };
       }
-      if (toolName === "Read" || toolName === "Glob" || toolName === "Grep" || toolName === "LS" || toolName === "TodoWrite") {
+      if (CLAUDE_BOX_READ_TOOLS.has(toolName)) {
         return { behavior: "allow", updatedInput: {} };
       }
       appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-denied", tool: toolName });
       return {
         behavior: "deny",
         message: "The box is awaiting a human handoff (ask-human.json present): box-driving tools are paused so the human has the screen. Pass the takeover URL from .grokbot/novnc-url to the user, then wait. Resume by removing the ask file (rm .grokbot/ask-human.json) once the human confirms, or let the deadline reclaim the box.",
+      };
+    }
+    // The box workspace is bind-mounted from the user's machine, so a command or
+    // a write inside the box acts on the user's computer. "Never" therefore
+    // applies here, exactly as it does to the Mac-side tools. Reading stays open
+    // because it cannot change anything the user owns.
+    if (localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS.has(toolName)) {
+      appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
+      return {
+        behavior: "deny",
+        message: "Local tool access is set to \"Never\", and this computer's workspace is shared with the user's machine, so "
+          + `${toolName} cannot run here. Change the setting in Settings → Agent → Execution on Local Computer, or answer without changing anything.`,
       };
     }
     return { behavior: "allow", updatedInput: {} };
@@ -390,7 +406,7 @@ export function claudeLocalToolsPrompt(env: NodeJS.ProcessEnv = process.env): st
   return [...CLAUDE_LOCAL_TOOLS_PROMPT_LINES, ...CLAUDE_LOCAL_ADMIN_IDENTITY_LINES, ...localAdminDesktopPrimitiveLines(env)].join("\n");
 }
 
-function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {
+function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, localToolPermission?: SandLocalToolPermission) {
   const executable = resolveClaudeCodeCliPath();
   if (executable == null) throw new Error("Claude Code is not installed. Install and sign in to Claude Code, then reopen Grok Bot.");
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
@@ -408,7 +424,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }),
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
-          const decision = claudeToolPermission(toolName, input);
+          const decision = claudeToolPermission(toolName, input, localToolPermission);
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },
@@ -473,19 +489,19 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission) { super(new BasePromptBuilder(initialMessages)); }
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), _definitions?: readonly Loose[]) {
     // Host-owned sessions are text-only. Claude CLI, Codex auth, and MCP tools
     // live on the Mac coordinator; advertising tools here with no executor is a lie.
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
-    if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage);
+    if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage, undefined, this.localToolPermission);
     return openRouterExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage)) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission) };
 }
 
 export async function runRoutedProviderText(provider: RoutedProvider, messages: readonly ProviderMessage[], options?: {

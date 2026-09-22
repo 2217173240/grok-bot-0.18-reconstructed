@@ -8,7 +8,7 @@
 // probe loop (observed live in the box ledger).
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -30,7 +30,7 @@ async function loadPrimitiveLines() {
     logLevel: "silent",
   });
   const module = await import(pathToFileURL(outfile).href);
-  return { claudeLocalToolsPrompt: module.claudeLocalToolsPrompt, buildRoot };
+  return { claudeLocalToolsPrompt: module.claudeLocalToolsPrompt, claudeToolPermission: module.claudeToolPermission, buildRoot };
 }
 
 test("the desktop instructions name only primitives the invoking plane can execute", async () => {
@@ -68,6 +68,52 @@ test("the desktop instructions name only primitives the invoking plane can execu
     const plain = claudeLocalToolsPrompt({});
     assert.ok(!plain.includes("you are the sandbox"), "the local block must not leak outside local admin");
   } finally {
+    await rm(buildRoot, { recursive: true, force: true });
+  }
+});
+
+// The box workspace is bind-mounted from the user's machine, so a command or a
+// write inside the box acts on the user's computer. The "Never" setting used to
+// govern only the Mac-side tools, leaving the in-box CLI child free to run
+// anything while the interface said local tool access was off.
+test("local tool access set to Never stops the in-box CLI child, not only the Mac tools", async () => {
+  const { claudeToolPermission, buildRoot } = await loadPrimitiveLines();
+  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
+  const previousWorkspace = process.env.SAND_WORKSPACE_ROOT;
+  const workspace = await mkdtemp(path.join(tmpdir(), "grok-permission-workspace-"));
+  try {
+    process.env.SAND_LOCAL_ADMIN = "1";
+    process.env.SAND_WORKSPACE_ROOT = workspace;
+
+    for (const tool of ["Bash", "Write", "Edit", "MultiEdit"]) {
+      const decision = claudeToolPermission(tool, { command: "touch x" }, "never");
+      assert.equal(decision.behavior, "deny", `${tool} must be denied while the setting is Never`);
+      assert.match(decision.message, /Never/);
+    }
+    // Reading changes nothing the user owns, so it stays available.
+    for (const tool of ["Read", "Glob", "Grep", "LS", "TodoWrite"]) {
+      assert.equal(claudeToolPermission(tool, {}, "never").behavior, "allow", `${tool} must stay available`);
+    }
+
+    // The box boundary governs the other two values: a per-command prompt for a
+    // disposable sandbox would add noise without adding a decision.
+    for (const permission of ["ask", "always", undefined]) {
+      assert.equal(claudeToolPermission("Bash", {}, permission).behavior, "allow", `permission ${permission} keeps the box boundary`);
+    }
+
+    // A human handoff still wins: the box is paused for the human at the screen.
+    const askDirectory = path.join(workspace, ".grokbot");
+    await mkdir(askDirectory, { recursive: true });
+    await writeFile(path.join(askDirectory, "ask-human.json"), "{}\n");
+    const duringHandoff = claudeToolPermission("Bash", {}, "never");
+    assert.equal(duringHandoff.behavior, "deny");
+    assert.match(duringHandoff.message, /awaiting a human handoff/);
+  } finally {
+    if (previousAdmin === undefined) delete process.env.SAND_LOCAL_ADMIN;
+    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
+    if (previousWorkspace === undefined) delete process.env.SAND_WORKSPACE_ROOT;
+    else process.env.SAND_WORKSPACE_ROOT = previousWorkspace;
+    await rm(workspace, { recursive: true, force: true });
     await rm(buildRoot, { recursive: true, force: true });
   }
 });
