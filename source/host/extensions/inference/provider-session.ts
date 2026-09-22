@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -90,7 +90,20 @@ type CodexCredentials = { accessToken: string; refreshToken: string; idToken: st
 
 function codexCredentials(): CodexCredentials {
   const path = join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "auth.json");
-  const stat = lstatSync(path);
+  // The in-box turn reads the box filesystem only, and a bare ENOENT from
+  // lstatSync says which file is missing but not where the search happened or
+  // which plane needed it. Name both so the message is actionable.
+  let stat: Stats;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw new Error(
+      `Codex is not signed in for this execution plane: no credentials at ${path}`
+      + `${process.env.SAND_HOST_IN_BOX === "1" ? " (the turn runs inside the local computer, which reads only the box filesystem)" : ""}. `
+      + "Run `codex login` for that plane, or set CODEX_HOME to a directory that holds auth.json.",
+      { cause: error },
+    );
+  }
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error("Codex login credentials must be a private direct regular file.");
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Loose;
   const accessToken = parsed?.tokens?.access_token;

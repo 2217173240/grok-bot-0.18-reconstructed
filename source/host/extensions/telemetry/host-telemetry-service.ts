@@ -17,6 +17,7 @@ import {
 } from "../../../shared/node/analytics/product-analytics.js";
 import { setTurnTraceHostBundleVersion } from "../../send-trace-host.js";
 import { sandMessageLengthBucket } from "../../ports/sand-analytics-types.js";
+import { appendLocalIntercept } from "../../../shared/node/local-admin-intercept.js";
 import {
   withAutomationRunAnalytics,
   type AnalyticsClient,
@@ -154,6 +155,7 @@ export class HostTelemetryService {
   private hostCrashMarkerForwarding: { dispose(): void } | undefined;
   private lastHandledHostCrashMarker: string | undefined;
   private lastForwardedDesktopHealthRevision: number | null = null;
+  private reportedAbsentDesktopHealth = false;
   private lastForwardedDesktopHealthAtMs: number | null = null;
   constructor(private readonly options: HostTelemetryOptions) {
     this.tracing =
@@ -377,7 +379,7 @@ export class HostTelemetryService {
   }
   async forwardDesktopHealth(): Promise<void> {
     try {
-      await forwardDesktopHealthWith({
+      const outcome = await forwardDesktopHealthWith({
         heartbeatMs: DESKTOP_HEALTH_HEARTBEAT_MS,
         readRaw: async () => {
           try {
@@ -399,7 +401,18 @@ export class HostTelemetryService {
           this.lastForwardedDesktopHealthAtMs = atMs;
         },
       });
-    } catch {}
+      // The file is written by the box supervisor, which this topology does not
+      // run: the host IS the container process and the desktop components are
+      // launched in the background. Discarding the outcome made the missing beat
+      // silent, so nothing distinguished a stopped poller from a plane whose
+      // component health is not observed at all. Record it once per process.
+      if (outcome === "absent" && !this.reportedAbsentDesktopHealth) {
+        this.reportedAbsentDesktopHealth = true;
+        appendLocalIntercept({ kind: "telemetry", event: "desktop-health-not-produced", path: SAND_SUPERVISOR_DESKTOP_HEALTH_PATH });
+      }
+    } catch (error) {
+      appendLocalIntercept({ kind: "telemetry", event: "desktop-health-forward-failed", error: error instanceof Error ? error.message : String(error) });
+    }
   }
   installConsoleForwarding(): () => void {
     const originalLog = console.log,
