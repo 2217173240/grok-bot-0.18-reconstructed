@@ -49,18 +49,24 @@
 
 判定：**边缘扩展**。三个屏以上需要在镜像内增加 fork 与端口，并复核 4g 上限；宿主侧没有核心改动。
 
-## 插件 MCP 工具：唯一一处必须改动核心逻辑的缺口
+## 插件 MCP 工具
 
-其余三处扩展都位于已有的注册点或数据源上，MCP 不在其中。它在两个平面各有半条通路，都不完整：
+stdio 插件服务器由本地计算机托管：`source/box-exec-daemon/mcp-host.ts` 用官方 SDK 启动配置里的每个服务器，盒内
+轮次通过 `source/shared/node/mcp/routed-mcp-bridge.ts` 的回环桥把工具交给 CLI 子进程，插件清单位于
+`/home/box/sand-data/mcp-servers.json`（Mac 数据根同名文件的只读绑定）。HTTP 服务器仍在后端执行，不进入盒子。
 
-| 缺口 | 位置 | 现象 |
-| --- | --- | --- |
-| 盒内轮次从不传入 MCP 桥地址 | `provider-session.ts` 的 `Stream` 调用 `claudeExecutor` 时第四个参数恒为 `undefined` | 盒内 CLI 子进程只看到 `CLAUDE_LOCAL_TOOLS`，没有 `mcp__grok_bot_plugins__*`，也没有 `mcpServers` 块 |
-| 盒内 daemon 没有 MCP 宿主 | `box-exec-daemon/server.ts` 的 `ExecService` 只处理 read、shell、writeShellStdin，`mcpArgs` 与 `mcpStateExecArgs` 走 `BOX_EXEC_UNSUPPORTED`；`loadMcpServers` 在配置指名服务器时返回 `Code.Unimplemented` | 没有任何进程按配置启动 stdio 服务器；仓库也没有 MCP 客户端库，补齐需要引入官方 SDK 并重建盒子镜像 |
-| 插件清单从未进入盒内 | `source/shared/node/mcp/local-mcp-servers.ts` 只读 Mac 数据根的 `mcp-servers.json` | 盒内 `getStdioServerConfigs()` 为空，工具发现阶段直接返回 |
+| 要做的事 | 位置 |
+| --- | --- |
+| 改动插件服务器的托管方式 | `source/box-exec-daemon/mcp-host.ts` 的 `BoxMcpHost` |
+| 改动工具面与 CLI 之间的桥 | `source/shared/node/mcp/routed-mcp-bridge.ts` |
+| 改动工具面的来源 | `source/host/host-runner-composition.ts` 注入的 `listTools` 与 `executeTool` |
+| 改动盒内轮次如何接入 | `source/host/runner/turn-run-shell.ts` 的 `mcpTools` 与 `provider-session.ts` 的 `claudeExecutor` |
 
-三处必须一起补齐才有效果，属于独立工作项，已登记在 `docs/ROADMAP.md`。
+`McpArgs` 的字段约定：到达 daemon 时 `name` 是服务器自己的工具名，`toolName` 是调用方使用的标签。新增一个平面时
+必须遵守它，否则工具会被判为不存在。
 
 ## 结论
 
-三处扩展位于已有的注册点或数据源上，没有出现必须改动核心逻辑的情况。需要留意的缺口已经登记：插件 MCP 工具在盒内不可用（三处缺口见上一节）；盒内轮次的工具清单与 turn 机器的工具面没有共享数据源；多屏的显示凭证按显示号取键，强度不足。
+三处扩展位于已有的注册点或数据源上，没有出现必须改动核心逻辑的情况。需要留意的缺口已经登记：盒内轮次的工具清单
+与 turn 机器的工具面没有共享数据源；多屏的显示凭证按显示号取键，强度不足；插件 MCP 工具的面较宽，改动它需要同时
+触碰 daemon、宿主与桥三处。

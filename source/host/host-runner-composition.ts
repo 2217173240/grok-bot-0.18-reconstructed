@@ -2545,6 +2545,28 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
               mcp: {
                 getTools: (runContext: Context) => mcp.mcp.getTools(runContext),
                 refreshAccountConfig: () => mcp.mcp.refreshAccountConfig(),
+                // Tool listing and execution for a CLI child that runs on this
+                // computer: the same entry points the gateway's routed-tool
+                // commands use, so both planes reach the same executors.
+                ...(typeof mcp.mcp.listTools !== "function"
+                  ? {}
+                  : { listTools: (runContext: Context) => mcp.mcp.listTools(runContext) }),
+                ...(typeof mcp.mcp.createExecutor !== "function"
+                  ? {}
+                  : {
+                      // A tool row carries the label the model saw in `name` and
+                      // the server's own tool in `toolName`; the executor port
+                      // reads the server's tool from `name`, exactly as the
+                      // gateway's routed-tool command maps it.
+                      executeTool: async (runContext: Context, args: { readonly agentId?: string } & Record<string, unknown>) =>
+                        await mcp.mcp.createExecutor(undefined, undefined, { agentId: args.agentId }).execute(runContext, {
+                          name: args.toolName,
+                          toolName: args.name,
+                          providerIdentifier: args.providerIdentifier,
+                          args: args.args,
+                          toolCallId: args.toolCallId,
+                        }),
+                    }),
               },
             }
           : {}),

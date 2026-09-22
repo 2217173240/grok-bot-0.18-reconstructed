@@ -47,7 +47,9 @@ test("Router settings use the trusted backend and display recorded inference usa
   const turnShell = await readFile(path.join(repoRoot, "source", "host", "runner", "turn-run-shell.ts"), "utf8");
   const coordinator = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "inference-router.ts"), "utf8");
   const coordinatorMain = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "main.ts"), "utf8");
-  const mcpBridge = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "routed-mcp-bridge.ts"), "utf8");
+  // Both planes reach plugin tools through the same loopback bridge, so it lives
+  // in shared code rather than beside one of them.
+  const mcpBridge = await readFile(path.join(repoRoot, "source", "shared", "node", "mcp", "routed-mcp-bridge.ts"), "utf8");
   const localDocker = await readFile(path.join(repoRoot, "source", "electron-main", "box", "local-docker-host-connector.ts"), "utf8");
   const secretsIpc = await readFile(path.join(repoRoot, "source", "electron-main", "secrets", "secrets-ipc.ts"), "utf8");
   const inferenceRouter = await readFile(path.join(repoRoot, "source", "shared", "inference-router.ts"), "utf8");
@@ -110,11 +112,16 @@ test("Router settings use the trusted backend and display recorded inference usa
   // stock empty tool list that made the model fabricate command output.
   assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
   assert.match(providers, /canUseTool: async \(toolName, input\)/);
-  assert.match(providers, /claudeToolPermission\(toolName, input, localToolPermission\)/);
+  assert.match(providers, /claudeToolPermission\(toolName, input, options\?\.localToolPermission\)/);
   assert.match(providers, /mac-permission-denied/);
   // Local tool access set to "Never" must reach the in-box CLI child: the box
   // workspace is bind-mounted from the user's machine, so those tools act there.
   assert.match(providers, /localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS\.has\(toolName\)/);
+  // The in-box CLI child reaches this computer's plugin tools through the same
+  // loopback bridge the Mac coordinator uses, so the tools must be advertised
+  // and the bridge closed with the stream.
+  assert.match(providers, /createRoutedMcpBridge\(\{ listTools: \(\) => mcp\.listTools\(\), callTool: tool => mcp\.callTool\(tool\) \}\)/);
+  assert.match(providers, /mcpServers: \{ grok_bot_plugins: \{ type: "http" as const, url: mcpServerUrl \} \}/);
   assert.match(providers, /maxTurns: 24/);
   assert.match(providers, /xtest-input-local\.py/);
   assert.match(providers, /do not fall back to curl/);

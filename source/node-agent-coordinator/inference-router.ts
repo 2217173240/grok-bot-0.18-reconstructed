@@ -8,7 +8,7 @@ import type { TranscriptEntry } from "../host/extensions/transcript/transcript-h
 import type { SandInferenceProvider } from "../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../shared/node/local-admin.js";
 import { SandSettingsStore } from "../shared/node/settings/sand-settings-store.js";
-import { createRoutedMcpBridge } from "./routed-mcp-bridge.js";
+import { createRoutedMcpBridge } from "../shared/node/mcp/routed-mcp-bridge.js";
 
 // SAND_LOCAL_ADMIN_TURN=host executes routed turns inside the local host
 // process — one execution plane, the host journal is the transcript of record.

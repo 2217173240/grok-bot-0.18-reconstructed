@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { createContext } from "../../packages/context/core.js";
 import type { Context } from "../../packages/context/core.js";
 import type { PrivacyMode } from "../../packages/redaction/privacy-mode.js";
 import { SAND_SUMMARIZATION_MODEL_ID } from "../../shared/agents/sand-agent-model.js";
@@ -21,6 +22,7 @@ import {
   type ShellWatchResourceAccessor,
 } from "./shell-terminal-watch.js";
 import type {
+  TurnAgentMcpTurnProvider,
   TurnAgentScope,
   TurnAgentSessions,
 } from "./turn-agent-composition.js";
@@ -28,7 +30,7 @@ import type {
   PromptSnapshotStore,
 } from "./system-prompt-assembly.js";
 import type { SummarizationPromptSession } from "../../packages/agent-summarization/summarization-handler.js";
-import { createProviderPromptSession } from "../extensions/inference/provider-session.js";
+import { createProviderPromptSession, type HostMcpTools } from "../extensions/inference/provider-session.js";
 import { getSandRootDir } from "../host-paths.js";
 import { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { AgentProfilePromptSnapshot } from "./sand-agent-profile-prompt.js";
@@ -92,6 +94,8 @@ export interface TurnAgentRunContextInput<ContextValue> {
   readonly conversationId: string;
   readonly requestId: string;
   readonly inference: TurnAgentInferenceOwner;
+  /** Plugin tools of this computer, for a CLI child that runs here. */
+  readonly mcp?: TurnAgentMcpTurnProvider;
   readonly onRequestId: (requestId: string) => void;
   readonly modelId?: string;
   readonly requestSource?: string;
@@ -184,12 +188,22 @@ export async function createTurnAgentRunContext<ContextValue>(
   };
   const localSettings = new SandSettingsStore(join(getSandRootDir(), "settings.json"));
   const inferenceProvider = localSettings.getInferenceProvider();
+  // The plugin tools live on this computer's MCP host. The CLI child fetches
+  // them from a loopback bridge, so the session is given the two calls the
+  // bridge needs; without them the model has no plugin tools at all.
+  const mcpTools: HostMcpTools | undefined = input.mcp?.listTools == null || input.mcp.executeTool == null ? undefined : {
+    listTools: () => input.mcp!.listTools!(createContext()),
+    callTool: tool => input.mcp!.executeTool!(createContext(), tool),
+  };
   const agent = inferenceProvider === "cursor"
     ? input.inference.createSession(input.onRequestId, sessionOptions)
     // The box workspace is bind-mounted from the user's machine, so the local
     // tool permission applies to the in-box CLI child too; without it the "Never"
     // setting only governed the Mac-side tools and the agent kept acting here.
-    : createProviderPromptSession(inferenceProvider, { localToolPermission: localSettings.getLocalToolPermission() }) as unknown as TurnAgentPromptSession;
+    : createProviderPromptSession(inferenceProvider, {
+      localToolPermission: localSettings.getLocalToolPermission(),
+      ...(mcpTools === undefined ? {} : { mcp: mcpTools }),
+    }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
     {

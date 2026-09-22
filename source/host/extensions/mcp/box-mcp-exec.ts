@@ -5,6 +5,7 @@ import {
   McpStateExecArgs,
   McpStateExecResult
 } from "../../../packages/proto/generated/agent/v1/mcp_exec_pb.js";
+import { Value, type JsonValue } from "@bufbuild/protobuf";
 import { mcpExecutorResource, mcpStateExecutorResource } from "../../../packages/agent-exec/mcp.js";
 import type { ResourceAccessor } from "../../../packages/agent-exec/resource-provider.js";
 import type { RemoteExecManager } from "../../../packages/agent-exec/remote.js";
@@ -58,6 +59,28 @@ function errorResult(message: string): McpResult {
 
 type McpAccessor = ResourceAccessor<RemoteExecManager>;
 
+// The transport carries tool arguments as protobuf Values, and the callers on
+// this side supply ordinary JSON: the routed bridge and the CLI child know
+// nothing about protobuf. Normalize at this one boundary, the same way the
+// backend exec port does, so the serializer never receives a raw value and
+// fails while looking for `toJson`.
+function toMcpArgs(args: unknown): McpArgs {
+  if (args instanceof McpArgs) return args;
+  const raw = (typeof args === "object" && args != null ? args : {}) as Record<string, unknown>;
+  const encoded: Record<string, Value> = {};
+  if (typeof raw.args === "object" && raw.args != null) {
+    for (const [key, value] of Object.entries(raw.args as Record<string, unknown>)) encoded[key] = Value.fromJson(value as JsonValue);
+  }
+  const text = (key: string): string => (typeof raw[key] === "string" ? raw[key] as string : "");
+  return new McpArgs({
+    name: text("name"),
+    providerIdentifier: text("providerIdentifier"),
+    toolName: text("toolName"),
+    toolCallId: text("toolCallId"),
+    args: encoded,
+  });
+}
+
 export function createBoxSandMcpExec(box: CapableBox): BoxMcpExecPort {
   const ctx = createContext().withName("sandBoxMcp");
   return {
@@ -101,7 +124,7 @@ export function createBoxSandMcpExec(box: CapableBox): BoxMcpExecPort {
     async executeTool(args) {
       try {
         const accessor = await boxMcpResourceAccessor(box, ctx) as McpAccessor;
-        return await accessor.get(mcpExecutorResource).execute(ctx, args);
+        return await accessor.get(mcpExecutorResource).execute(ctx, toMcpArgs(args));
       } catch (error) {
         recordMcpExecErrorClass(args.toolCallId, error);
         return errorResult(

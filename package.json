@@ -56,6 +56,7 @@
     "@jimp/js-png": "1.6.0",
     "@jimp/js-tiff": "1.6.0",
     "@jimp/plugin-resize": "1.6.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@opentelemetry/api": "1.9.0",
     "@opentelemetry/context-async-hooks": "2.6.1",
     "@opentelemetry/core": "2.2.0",

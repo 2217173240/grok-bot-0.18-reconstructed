@@ -57,6 +57,8 @@ export interface ProductionTurnAgentOwnerInput {
   readonly isSubagentRunner: boolean;
   readonly isSilenceAllowed: boolean;
   readonly canUseSelfSummary: () => boolean;
+  /** Plugin tools of this computer, for a CLI child that runs here. */
+  readonly mcp?: TurnAgentMcpTurnProvider;
   readonly cancelThisRun: TurnAgentScope["cancelThisRun"];
   readonly createResourceAccessor: (context: Context) => Promise<TurnAgentResourceAccessor>;
   readonly createRemoteBoxResourceAccessor: (context: Context) => Promise<TurnAgentResourceAccessor>;
@@ -160,6 +162,7 @@ export async function createProductionTurnAgentOwner(
     requestId: input.requestId,
     inference: input.inference,
     onRequestId: input.onRequestId,
+    ...(input.mcp === undefined ? {} : { mcp: input.mcp }),
     ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
     ...(input.requestSource === undefined
       ? {}

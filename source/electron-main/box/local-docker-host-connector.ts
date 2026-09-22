@@ -12,6 +12,8 @@ import type { SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
+import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
+import { SAND_BOX_DATA_ROOT } from "../../host/host-paths.js";
 import { ensureLocalAdminHost, stopLocalAdminHost } from "./local-admin-host.js";
 
 export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
@@ -142,6 +144,12 @@ export function localDockerRunPlan(options: {
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
   readonly inferenceFileDir?: string;
+  /**
+   * The user's plugin definitions. Bound rather than copied so the computer
+   * always sees the current file: the config push compares the parsed payload,
+   * and a stale copy would silently diverge from what the operator edited.
+   */
+  readonly mcpServersHostPath?: string;
 }): LocalDockerRunPlan {
   const image = options.image ?? LOCAL_DOCKER_BOX_IMAGE;
   const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
@@ -202,6 +210,7 @@ export function localDockerRunPlan(options: {
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
     "--volume", `${dataVolume}:/home/box/sand-data`,
+    ...(options.mcpServersHostPath == null ? [] : ["--mount", `type=bind,src=${options.mcpServersHostPath},dst=${SAND_BOX_DATA_ROOT}/${LOCAL_MCP_SERVERS_FILENAME},readonly`]),
     "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host,readonly`,
     "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
     ...(options.inferenceFileDir == null ? [] : ["--mount", `type=bind,src=${options.inferenceFileDir},dst=/run/grok-bot,readonly`]),
@@ -670,6 +679,11 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
     await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     const authMounts = await localAuthMountArguments();
+    // Plugin definitions are the one input the box cannot obtain for itself.
+    // Binding the user's file means the computer always reads the current
+    // version, and an installation that never wrote one simply has no mount.
+    const mcpServersCandidate = join(dirname(settingsPath), LOCAL_MCP_SERVERS_FILENAME);
+    const mcpServersHostPath = (await stat(mcpServersCandidate).catch(() => null))?.isFile() === true ? mcpServersCandidate : undefined;
     const plan = localDockerRunPlan({
       image,
       hostMainPath: hostBundle.path,
@@ -685,6 +699,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
       ...(inferenceFile == null ? {} : { inferenceFileDir: dirname(inferenceFile) }),
+      ...(mcpServersHostPath == null ? {} : { mcpServersHostPath }),
     });
     const created = await runDocker(plan.args);
     if (!created.ok) throw new Error(`Could not create the local Docker VM: ${created.output}`);

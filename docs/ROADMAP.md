@@ -156,19 +156,24 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 | 权限设置 `never` 覆盖盒内 CLI 工具 | 盒内工作区是用户机器的 bind mount，写入直接作用在用户机器上，而权限回调对盒内一律放行 |
 | 持久化网关描述不再提供接管地址 | 接管地址由 pod 按盒子签发，描述文件的保存窗口长达七天，旧进程签发的地址会直接呈现给操作者 |
 
-**仍未修**：盒内无插件 MCP 工具。核实到的事实如下，四件事必须一起做：
+**盒内插件 MCP 工具（2026-09-22，第三次清扫已修）**。这个功能在盒内完全不可用，根因有四处，缺一处就不通：
 
-1. 盒内轮次从不向 provider session 传入 MCP 桥地址：`provider-session.ts` 调用 `claudeExecutor` 时第四个参数恒为
-   `undefined`，因此盒内 CLI 子进程既没有 `mcp__grok_bot_plugins__*`，也没有 `mcpServers` 块。
-2. 盒内 daemon 没有 MCP 宿主：`ExecService` 只处理 read、shell、writeShellStdin 三类请求，`mcpArgs` 与
-   `mcpStateExecArgs` 都走 `BOX_EXEC_UNSUPPORTED` 分支。`LoadMcpServers` 的空实现已改为在配置指名服务器时返回
-   `Code.Unimplemented` 并列出服务器名（配置为空时仍然成功，那是真正的无事可做），这样调用方不会再把这个配置记成
-   「已推送」去找从未加载的工具。
-3. 仓库没有 MCP 客户端库：`@modelcontextprotocol/sdk` 不在依赖里，`StdioClientTransport` 在 `source/` 中零命中。
-   实现第 2 项意味着引入官方 SDK，并因此改动 `package-lock`、依赖 pin 与镜像薄层，需要重建盒子镜像。
-4. `mcp-servers.json` 只存在于 Mac 数据根，从未进入盒内数据卷；盒内 `getStdioServerConfigs()` 为空。
+| 修复 | 问题 |
+| --- | --- |
+| 权限回调不再清空工具参数 | `claudeToolPermission` 的 allow 一律返回 `updatedInput: {}`。Claude CLI 用 `updatedInput` **替换**工具参数，于是模型给出的每个参数都被抹掉。内置工具的参数由 CLI 自己重新读取，所以这个缺陷长期不可见；插件工具的参数的唯一载体就是这次调用，全部丢失。实测：CLI 的账本记录 `{"text":"plugin-ok"}`，而它发到桥上的请求体是 `arguments: {}` |
+| 盒内 daemon 成为 MCP 宿主 | 此前 `ExecService` 只处理 read、shell、writeShellStdin，`mcpArgs` 与 `mcpStateExecArgs` 走 `BOX_EXEC_UNSUPPORTED`，`LoadMcpServers` 返回空成功。现在 `source/box-exec-daemon/mcp-host.ts` 用官方 SDK 启动每个配置的 stdio 服务器、维护每服务器一个客户端，并应答列举与调用；启动失败的服务器按服务器报状态与原因，不影响其他服务器 |
+| 盒内轮次把工具交给 CLI 子进程 | `turn-run-shell` 从 mcp 扩展取到工具面，`provider-session` 为每个流开一个回环 MCP 桥，把桥地址放进 CLI 的 `mcpServers`，并随流关闭。桥移到 `source/shared/node/mcp/routed-mcp-bridge.ts`，两个平面共用同一实现 |
+| 插件清单进入盒内 | `mcp-servers.json` 以只读 bind mount 挂到 `/home/box/sand-data/mcp-servers.json`，即盒内定义源读取的位置。用绑定而不是拷贝，操作者改动后盒子立即读到当前文件 |
 
-第 1 与第 4 项本身很小，但只有第 2 项完成之后才有意义，否则桥的另一端没有工具可列。整件事属于独立工作项。
+引入的依赖：`@modelcontextprotocol/sdk`（含其传递依赖）。它进入 `package-lock.json`，因此依赖 pin 变化，必须用
+`docker/build-arm64-box.sh` 重建盒子镜像；自建镜像里也装上了 SDK，宿主包本身不需要它。
+
+`McpArgs` 的字段约定在这里记一次：到达 daemon 时 `name` 是服务器自己的工具名，`toolName` 是调用方使用的标签，
+`providerIdentifier` 是配置里的服务器名；网关的 `executeRoutedMcpTool` 会做这个交换，盒内路径按同样约定映射。
+参数以 protobuf `Value` 传递，宿主侧在 `box-mcp-exec` 一处归一化（与 backend 端口一致）。
+
+复现与验证剧本：`docker logs grok-bot-local-vm | grep "box-exec-daemon: mcp"` 显示每个插件的启动、工具列举与
+每次调用的工具名与参数键名；盒内账本的 `tool-use` 事件记录 CLI 看到的完整参数。
 
 **盒内推理出网曾间歇性卡住（2026-09-22，环境侧，未复现）**：Mac 用 Clash 的 TUN 接口（`utun4`，MTU 1380）
 接管 fake-IP 网段 198.18.0.0/15。卡住期间从盒内测同一个推理端点，两次结果差三个数量级：
