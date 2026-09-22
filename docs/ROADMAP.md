@@ -156,10 +156,19 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 | 权限设置 `never` 覆盖盒内 CLI 工具 | 盒内工作区是用户机器的 bind mount，写入直接作用在用户机器上，而权限回调对盒内一律放行 |
 | 持久化网关描述不再提供接管地址 | 接管地址由 pod 按盒子签发，描述文件的保存窗口长达七天，旧进程签发的地址会直接呈现给操作者 |
 
-**仍未修**：盒内无插件 MCP 工具。三处独立缺口都核实过：盒内轮次从不向 provider session 传入 MCP 桥地址
-（`provider-session.ts` 的 `claudeExecutor` 第四参数恒为 `undefined`）；`box-exec-daemon/server.ts` 的
-`LoadMcpServers` 处理器忽略请求并返回空成功，因此 stdio 服务器在任何形态下都不会真正加载；`mcp-servers.json`
-只存在于 Mac 数据根，从未进入盒内数据卷。补齐需要三件事一起做，属于独立工作项。
+**仍未修**：盒内无插件 MCP 工具。核实到的事实如下，四件事必须一起做：
+
+1. 盒内轮次从不向 provider session 传入 MCP 桥地址：`provider-session.ts` 调用 `claudeExecutor` 时第四个参数恒为
+   `undefined`，因此盒内 CLI 子进程既没有 `mcp__grok_bot_plugins__*`，也没有 `mcpServers` 块。
+2. 盒内 daemon 没有 MCP 宿主：`ExecService` 只处理 read、shell、writeShellStdin 三类请求，`mcpArgs` 与
+   `mcpStateExecArgs` 都走 `BOX_EXEC_UNSUPPORTED` 分支。`LoadMcpServers` 的空实现已改为在配置指名服务器时返回
+   `Code.Unimplemented` 并列出服务器名（配置为空时仍然成功，那是真正的无事可做），这样调用方不会再把这个配置记成
+   「已推送」去找从未加载的工具。
+3. 仓库没有 MCP 客户端库：`@modelcontextprotocol/sdk` 不在依赖里，`StdioClientTransport` 在 `source/` 中零命中。
+   实现第 2 项意味着引入官方 SDK，并因此改动 `package-lock`、依赖 pin 与镜像薄层，需要重建盒子镜像。
+4. `mcp-servers.json` 只存在于 Mac 数据根，从未进入盒内数据卷；盒内 `getStdioServerConfigs()` 为空。
+
+第 1 与第 4 项本身很小，但只有第 2 项完成之后才有意义，否则桥的另一端没有工具可列。整件事属于独立工作项。
 
 **盒内推理出网曾间歇性卡住（2026-09-22，环境侧，未复现）**：Mac 用 Clash 的 TUN 接口（`utun4`，MTU 1380）
 接管 fake-IP 网段 198.18.0.0/15。卡住期间从盒内测同一个推理端点，两次结果差三个数量级：

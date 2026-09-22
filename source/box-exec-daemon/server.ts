@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { connectNodeAdapter } from "@connectrpc/connect-node";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { MethodKind, type ServiceType } from "@bufbuild/protobuf";
 
 import { ControlService } from "../packages/proto/generated/agent/v1/control_service_connect.js";
@@ -447,6 +448,23 @@ function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => server.close(error => error == null ? resolve() : reject(error)));
 }
 
+// Reads the server names out of a pushed MCP config. The config is the standard
+// { mcpServers: { name: {...} } } shape; anything else is a caller bug and is
+// reported as such, so a malformed payload never reads as "nothing to load".
+function requestedMcpServerNames(configJson: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch (error) {
+    throw new ConnectError(`MCP server config is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, Code.InvalidArgument, undefined, undefined, error);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new ConnectError("MCP server config must be a JSON object", Code.InvalidArgument);
+  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
+  if (servers === undefined || servers === null) return [];
+  if (typeof servers !== "object" || Array.isArray(servers)) throw new ConnectError("MCP server config must carry an mcpServers object", Code.InvalidArgument);
+  return Object.keys(servers);
+}
+
 export async function startBoxExecDaemon(options: BoxExecDaemonOptions): Promise<BoxExecDaemonHandle> {
   const host = options.host ?? BOX_EXEC_DAEMON_HOST;
   const port = options.port ?? BOX_EXEC_DAEMON_PORT;
@@ -469,7 +487,21 @@ export async function startBoxExecDaemon(options: BoxExecDaemonOptions): Promise
         ping: async () => new PingResponse(),
         getCapabilities: async () => new GetCapabilitiesResponse({ computerUseSupported: false, installPluginArtifactSupported: false }),
         updateEnvironmentVariables: async request => new UpdateEnvironmentVariablesResponse(runtime.applyEnvironment(request)),
-        loadMcpServers: async () => new LoadMcpServersResponse(),
+        // This daemon hosts no MCP servers: nothing spawns the stdio servers a
+        // config names, and the exec surface has no mcpArgs or mcpStateExecArgs
+        // case, so it answers those with BOX_EXEC_UNSUPPORTED. An empty success
+        // here was worse than a refusal, because the caller recorded the config
+        // as pushed and then looked for tools that had never been loaded. A
+        // config naming no servers is a genuine no-op and still succeeds.
+        loadMcpServers: async request => {
+          const names = requestedMcpServerNames(request.mcpConfigJson);
+          if (names.length === 0) return new LoadMcpServersResponse();
+          throw new ConnectError(
+            `The local computer's box daemon cannot load MCP servers (requested: ${names.join(", ")}). `
+            + "Plugin tools need an MCP host inside the box, which this build does not provide; the tools are not available on this computer.",
+            Code.Unimplemented,
+          );
+        },
       });
       router.service(BoxExecService, { exec: (request, context) => runtime.execute(request, context.signal) });
     },
