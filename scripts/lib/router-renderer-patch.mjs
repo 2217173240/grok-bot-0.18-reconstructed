@@ -19,6 +19,16 @@ const ENTRY_TEXT_BEFORE = 'function A_n(n){switch(n.kind){case"message":return n
 const ENTRY_TEXT_AFTER = 'function A_n(n){switch(n.kind){case"message":return n.content??n.text??"";case"send-message":return n.message.type==="text"?n.message.content??n.message.text??"":"";case"notice":return n.text??"";default:return""}}';
 const PR_SCAN_BEFORE = 'function Fpt(n){const e=[];for(const t of n.matchAll(I_n)){';
 const PR_SCAN_AFTER = 'function Fpt(n){const e=[];const s0=typeof n==="string"?n:"";for(const t of s0.matchAll(I_n)){';
+// Exported so the regression guard can exercise the transform without the
+// pinned artifact: `src/app/dist` is a bootstrap output that a fresh checkout
+// (and therefore CI) does not carry.
+export const RENDERER_ENTRY_TEXT_ANCHORS = Object.freeze({
+  entryTextBefore: ENTRY_TEXT_BEFORE,
+  entryTextAfter: ENTRY_TEXT_AFTER,
+  prScanBefore: PR_SCAN_BEFORE,
+  prScanAfter: PR_SCAN_AFTER,
+});
+
 const COMPONENT_SOURCE = String.raw`
 const RRouterProviders=[
   {value:"cursor",label:"Cursor",description:"Use your signed-in Cursor account.",kind:"account"},
