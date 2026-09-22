@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, type Dirent } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -475,21 +475,38 @@ export async function pruneLocalHostRuntimeStaging(runtimeRoot: string, protecte
   return removed;
 }
 
-async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
+// Exported so the staging contract can be driven directly: the tree walk and its
+// completeness check are the only guards between a short runtime tree and an
+// in-box turn that dies later on a missing worker.
+export async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  // Directories the host resolves relative to argv[1] at RUNTIME. A short tree
+  // is indistinguishable from a good one once staged (the directory name is
+  // derived from the entry file and the daemon alone), and the failure would
+  // only appear later as MODULE_NOT_FOUND inside an in-box turn.
+  const REQUIRED_HOST_TREE_DIRECTORIES = ["agent-isolation", "extensions"] as const;
   const readRuntimeTree = async (relative: string): Promise<readonly { name: string; bytes: Buffer }[]> => {
     const readDir = async (prefix: string): Promise<{ name: string; bytes: Buffer }[]> => {
-      const root = [resolve(moduleDirectory, `../${join(relative, prefix)}`), resolve(moduleDirectory, `../../${join(relative, prefix)}`)];
+      const candidates = [resolve(moduleDirectory, `../${join(relative, prefix)}`), resolve(moduleDirectory, `../../${join(relative, prefix)}`)];
       const entries: { name: string; bytes: Buffer }[] = [];
-      for (const candidate of root) {
+      for (const candidate of candidates) {
+        // A candidate that simply is not there is not a failure, since the
+        // runtime lives at different depths in a packaged app and in tests. A
+        // candidate that IS there but cannot be walked is a failure: returning
+        // the part collected so far would silently stage an incomplete tree.
+        let items: Dirent[];
         try {
-          for (const item of await readdir(candidate, { withFileTypes: true })) {
-            const name = join(prefix, item.name);
-            if (item.isDirectory()) entries.push(...await readDir(name));
-            else if (item.isFile()) entries.push({ name, bytes: await readFile(join(candidate, item.name)) });
-          }
-          return entries;
-        } catch {}
+          items = await readdir(candidate, { withFileTypes: true });
+        } catch (error) {
+          if ((error as { code?: unknown }).code === "ENOENT") continue;
+          throw new Error(`Staging the reconstructed runtime failed while reading ${candidate}: ${String((error as Error).message ?? error)}`);
+        }
+        for (const item of items) {
+          const name = join(prefix, item.name);
+          if (item.isDirectory()) entries.push(...await readDir(name));
+          else if (item.isFile()) entries.push({ name, bytes: await readFile(join(candidate, item.name)) });
+        }
+        return entries;
       }
       return entries;
     };
@@ -512,6 +529,19 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
   // turn died on agent-store-worker.cjs). Staging must carry the whole tree,
   // not the single entry file.
   const hostTree = await readRuntimeTree("host");
+  // Fail at staging time, not inside an in-box turn: the host resolves these
+  // directories relative to argv[1], and the staged directory's name says
+  // nothing about whether they made it in.
+  const stagedNames = new Set(hostTree.map((entry) => entry.name));
+  if (!stagedNames.has("host-main.cjs")) {
+    throw new Error("Staging the reconstructed runtime failed: host-main.cjs is missing from the host tree.");
+  }
+  const missingDirectories = REQUIRED_HOST_TREE_DIRECTORIES.filter(
+    (directory) => ![...stagedNames].some((name) => name.startsWith(`${directory}/`)),
+  );
+  if (missingDirectories.length > 0) {
+    throw new Error(`Staging the reconstructed runtime failed: the host tree is missing ${missingDirectories.join(", ")}; the in-box turn would die on a missing worker.`);
+  }
   const persistRuntime = async (name: string, bytes: Buffer): Promise<string> => {
     const target = join(directory, name);
     await mkdir(dirname(target), { recursive: true });
