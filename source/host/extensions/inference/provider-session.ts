@@ -329,17 +329,52 @@ const CLAUDE_LOCAL_TOOLS_PROMPT_LINES = [
 // by probing remote endpoints as if they were its backend (observed live:
 // asked to "check the cloud sandbox", it verified connectivity to the very
 // endpoints this deployment is independent of).
+//
+// The desktop primitives differ per execution plane, so the block is split.
+// SAND_HOST_IN_BOX=1 means this process runs inside the box: the primitives at
+// /usr/local/bin are directly executable there, and the box has no docker CLI
+// at all (a prompt that said `docker exec` from inside it made the model loop
+// on `docker: command not found` for twenty minutes, observed live). The
+// Mac-side plane reaches the same primitives through `docker exec`.
 const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
   "This deployment is fully local: your computer IS the sandbox — an isolated Linux box running on this Mac, with its workspace at your current working directory. There is no cloud sandbox behind you.",
   "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
   "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
   "When you hit a login, captcha, or payment wall you cannot pass yourself: STOP driving the box, write .grokbot/ask-human.json in the workspace with {\"reason\":\"auth|captcha|payment|other\",\"instruction\":\"what the human should do\"}, give the user the takeover URL from .grokbot/novnc-url (it dies with a container restart — if it does not open, ask again for a fresh one), then wait. Box actions stay blocked until the file is removed (hand-back) or the deadline reclaims the box; your local file tools keep working so you can finish the hand-back.",
   "Never handle credentials yourself: a password, OTP, or card number is exactly the handoff case — the human types it in the noVNC takeover. Never ask the user to paste secrets into chat; if they do, tell them to use the takeover instead and never repeat the secret back. When you write ask-human.json, also fire a Mac notification so the user notices: osascript -e 'display notification \"需要人工接管盒子\" with title \"Grok Bot\"'.",
-  "For web UI tasks, drive the box's DESKTOP browser so your actions are visible on the screen the user can watch — do not fall back to curl. From this Mac the desktop primitives are: launch the browser with `docker exec -d grok-bot-local-vm env DISPLAY=:1 /usr/local/bin/box-chrome` (on demand; the box-chrome wrapper derives its profile and CDP port from DISPLAY, and `docker exec` starts with an empty environment, so pass it explicitly); input via `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799); screenshot with `docker exec grok-bot-local-vm bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it. There is no xdotool — do not look for it. Navigate the browser ONLY with `docker --context colima-finonelib exec grok-bot-local-vm /usr/local/bin/box-navigate <url>` — it refuses private/reserved destinations (with an audit ledger line) before the page ever loads; typing a URL into the address bar yourself bypasses the egress gate and is forbidden.",
+  "For web UI tasks, drive the box's DESKTOP browser so your actions are visible on the screen the user can watch — do not fall back to curl.",
 ];
 
-function claudeLocalToolsPrompt(): string {
-  return [...CLAUDE_LOCAL_TOOLS_PROMPT_LINES, ...(isLocalAdminEnabled() ? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES : [])].join("\n");
+// The box is the computer here, so the primitives are local commands. DISPLAY
+// is passed explicitly because tool children start without the host's exported
+// environment; the wrappers derive their profile and CDP port from it.
+const CLAUDE_LOCAL_ADMIN_DESKTOP_LINES_IN_BOX = [
+  "  launch the browser with `env DISPLAY=:1 /usr/local/bin/box-chrome` (on demand; the wrapper derives its profile and CDP port from DISPLAY, so pass it explicitly)",
+  "  input via `python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799)",
+  "  screenshot with `bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it",
+  "There is no xdotool — do not look for it. Navigate the browser ONLY with `/usr/local/bin/box-navigate <url>` — it refuses private/reserved destinations (with an audit ledger line) before the page ever loads; typing a URL into the address bar yourself bypasses the egress gate and is forbidden.",
+];
+
+// This plane runs on the Mac and reaches the box's primitives through docker.
+const CLAUDE_LOCAL_ADMIN_DESKTOP_LINES_FROM_MAC = [
+  "  launch the browser with `docker exec -d grok-bot-local-vm env DISPLAY=:1 /usr/local/bin/box-chrome` (on demand; the wrapper derives its profile and CDP port from DISPLAY, and `docker exec` starts with an empty environment, so pass it explicitly)",
+  "  input via `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799)",
+  "  screenshot with `docker exec grok-bot-local-vm bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it",
+  "There is no xdotool — do not look for it. Navigate the browser ONLY with `docker --context colima-finonelib exec grok-bot-local-vm /usr/local/bin/box-navigate <url>` — it refuses private/reserved destinations (with an audit ledger line) before the page ever loads; typing a URL into the address bar yourself bypasses the egress gate and is forbidden.",
+];
+
+export function localAdminDesktopPrimitiveLines(env: NodeJS.ProcessEnv = process.env): readonly string[] {
+  return env.SAND_HOST_IN_BOX?.trim() === "1"
+    ? CLAUDE_LOCAL_ADMIN_DESKTOP_LINES_IN_BOX
+    : CLAUDE_LOCAL_ADMIN_DESKTOP_LINES_FROM_MAC;
+}
+
+// Exported for the regression guard, which asserts on the composed prompt
+// rather than only on the plane split: the text the model receives must name
+// primitives the invoking plane can execute.
+export function claudeLocalToolsPrompt(env: NodeJS.ProcessEnv = process.env): string {
+  if (!isLocalAdminEnabled(env)) return CLAUDE_LOCAL_TOOLS_PROMPT_LINES.join("\n");
+  return [...CLAUDE_LOCAL_TOOLS_PROMPT_LINES, ...CLAUDE_LOCAL_ADMIN_IDENTITY_LINES, ...localAdminDesktopPrimitiveLines(env)].join("\n");
 }
 
 function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string) {

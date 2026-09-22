@@ -133,7 +133,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   // Local-admin turns carry the local identity: the assistant must know it IS
   // the sandbox and never present cursor/xai remotes as its backend.
   assert.match(providers, /there is no cloud sandbox behind you/i);
-  assert.match(providers, /isLocalAdminEnabled\(\) \? CLAUDE_LOCAL_ADMIN_IDENTITY_LINES/);
+  // The identity block is gated on local admin, and the desktop primitives are
+  // composed per execution plane: the box has no docker CLI, so in-box prompts
+  // must name the wrappers directly. tests/local-admin-desktop-primitives.test.mjs
+  // asserts the composed prompt for both planes.
+  assert.match(providers, /localAdminDesktopPrimitiveLines/);
+  assert.match(providers, /SAND_HOST_IN_BOX/);
   // The human-handoff contract (C1): the identity teaches the ask protocol
   // with the staleness note; the box gate wraps shell/stream/computer use.
   assert.match(providers, /ask-human\.json/);
