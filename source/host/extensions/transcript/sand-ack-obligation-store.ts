@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SAND_ACK_OBLIGATIONS_FILE_NAME } from "../../durable-file-policy.js";
+import { quarantineDurableFile, readDurableFileSignature, writeDurableDegradedMarker, writeDurableEntries } from "./durable-store-file.js";
 export interface AckObligation {
   agentId: string;
   createdAtMs: number;
@@ -29,25 +30,36 @@ export function coerceObligation(entry: unknown): AckObligation | null {
     redriveAttempts: Math.max(0, finiteNumber(e.redriveAttempts, 0)),
   };
 }
-export function parseAckObligationsFile(raw: string | null): AckObligation[] {
-  if (raw == null) return [];
+// Absent means "nothing owed"; unreadable or unparseable means damage. Every
+// write here is read-modify-write, so a damaged read treated as an empty list
+// would overwrite the un-acked obligations the file still holds.
+export function parseAckObligationsFile(
+  raw: string | null,
+): { entries: AckObligation[]; damaged: boolean } {
+  if (raw == null) return { entries: [], damaged: false };
+  let value: unknown;
   try {
-    const value = JSON.parse(raw) as { pending?: unknown };
-    return typeof value === "object" &&
-      value != null &&
-      Array.isArray(value.pending)
-      ? value.pending.flatMap((entry) => {
-          const obligation = coerceObligation(entry);
-          return obligation == null ? [] : [obligation];
-        })
-      : [];
+    value = JSON.parse(raw);
   } catch {
-    return [];
+    return { entries: [], damaged: true };
   }
+  if (typeof value !== "object" || value == null || !Array.isArray((value as { pending?: unknown }).pending)) {
+    // Well-formed JSON with the wrong shape is damage too: the file exists and
+    // claims to be this queue, so it must not read as "nothing owed".
+    return { entries: [], damaged: true };
+  }
+  let damaged = false;
+  const entries = ((value as { pending: unknown[] }).pending).flatMap((entry) => {
+    const obligation = coerceObligation(entry);
+    if (obligation == null) damaged = true;
+    return obligation == null ? [] : [obligation];
+  });
+  return { entries, damaged };
 }
 export class SandAckObligationStore {
   readonly filePath: string;
-  private cache: AckObligation[] | null = null;
+  private cache: { entries: AckObligation[]; damaged: boolean } | null = null;
+  private cacheSignature: string | null = null;
   constructor(rootDir: string) {
     this.filePath = join(rootDir, SAND_ACK_OBLIGATIONS_FILE_NAME);
   }
@@ -98,9 +110,15 @@ export class SandAckObligationStore {
     } catch {}
   }
   upsert(obligation: AckObligation): void {
+    const state = this.readState();
+    // Quarantine rather than overwrite: the un-acked obligations the file still
+    // holds are the only record of messages the user never saw acknowledged.
+    // The cache is dropped first so the next read observes the archived file
+    // instead of replaying the damage forever.
+    if (state.damaged) { this.cache = null; quarantineDurableFile(this.filePath, "ack-obligation: unreadable pending file"); return; }
     try {
       this.write([
-        ...this.readPending().filter(
+        ...state.entries.filter(
           (entry) => entry.agentId !== obligation.agentId,
         ),
         obligation,
@@ -108,21 +126,38 @@ export class SandAckObligationStore {
     } catch {}
   }
   readPending(): AckObligation[] {
-    if (this.cache != null) return this.cache;
-    try {
-      this.cache = parseAckObligationsFile(readFileSync(this.filePath, "utf8"));
-    } catch {
-      this.cache = [];
+    return this.readState().entries;
+  }
+  readState(): { entries: AckObligation[]; damaged: boolean } {
+    // The cache is only trustworthy while the file it came from is unchanged: a
+    // cached "not damaged" must not survive the file being replaced underneath,
+    // or a later read-modify-write would rebuild it from a stale empty base.
+    const signature = readDurableFileSignature(this.filePath);
+    if (this.cache != null && this.cacheSignature === signature) return this.cache;
+    if (signature == null) {
+      this.cache = { entries: [], damaged: false };
+      this.cacheSignature = signature;
+      return this.cache;
     }
+    let raw: string;
+    try {
+      raw = readFileSync(this.filePath, "utf8");
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      writeDurableDegradedMarker(this.filePath, `ack-obligation: read failed (${String(code ?? error)})`);
+      this.cache = { entries: [], damaged: true };
+      this.cacheSignature = signature;
+      return this.cache;
+    }
+    const parsed = parseAckObligationsFile(raw);
+    if (parsed.damaged) writeDurableDegradedMarker(this.filePath, "ack-obligation: unparseable pending file");
+    this.cache = parsed;
+    this.cacheSignature = signature;
     return this.cache;
   }
   write(pending: readonly AckObligation[]): void {
-    const part = `${this.filePath}.part`;
-    try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-    } catch {}
-    writeFileSync(part, JSON.stringify({ version: 1, pending }));
-    renameSync(part, this.filePath);
-    this.cache = [...pending];
+    writeDurableEntries(this.filePath, { version: 1, pending });
+    this.cache = { entries: [...pending], damaged: false };
+    this.cacheSignature = readDurableFileSignature(this.filePath);
   }
 }

@@ -1,12 +1,7 @@
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { SAND_PENDING_WAKE_FILE_NAME } from "../../durable-file-policy.js";
+import { quarantineDurableFile, writeDurableDegradedMarker, writeDurableEntries } from "./durable-store-file.js";
 import type { PendingWakeKind, PendingWakeMarker } from "./async-task-union.js";
 export const PENDING_WAKE_KINDS = ["cloud-agent", "subagent", "shell"] as const;
 export interface QuietWakeOrigin {
@@ -71,18 +66,26 @@ export function coercePendingWakeMarkers(
       })
     : [];
 }
+// Absent means "nothing pending"; unreadable or unparseable means damage. Every
+// write here is read-modify-write, so treating damage as an empty queue would
+// overwrite the pending wakes the file still holds.
 export function parsePendingWakeFile(
   raw: string | null,
-): DurablePendingWakeMarker[] {
-  if (raw == null) return [];
+): { entries: DurablePendingWakeMarker[]; damaged: boolean } {
+  if (raw == null) return { entries: [], damaged: false };
+  let value: unknown;
   try {
-    const value = JSON.parse(raw) as { pending?: unknown };
-    return typeof value === "object" && value != null
-      ? coercePendingWakeMarkers(value.pending)
-      : [];
+    value = JSON.parse(raw);
   } catch {
-    return [];
+    return { entries: [], damaged: true };
   }
+  if (typeof value !== "object" || value == null) return { entries: [], damaged: true };
+  const pending = (value as { pending?: unknown }).pending;
+  // Well-formed JSON with the wrong shape is damage too: the file exists and
+  // claims to be this queue, so it must not read as "nothing pending".
+  if (!Array.isArray(pending)) return { entries: [], damaged: true };
+  const entries = coercePendingWakeMarkers(pending);
+  return { entries, damaged: entries.length !== pending.length };
 }
 export function markerKeyMatches(
   marker: DurablePendingWakeMarker,
@@ -114,24 +117,30 @@ export class SandPendingWakeStore {
     this.filePath = join(rootDir, SAND_PENDING_WAKE_FILE_NAME);
   }
   markPending(marker: DurablePendingWakeMarker): boolean {
+    const state = this.readState();
+    // Quarantine rather than overwrite: the pending wakes the file still holds
+    // are the only record that those completions owe a replay.
+    if (state.damaged) { quarantineDurableFile(this.filePath, "pending-wake: unreadable pending file"); return false; }
     try {
-      this.write(upsertPendingWakeMarker(this.readPending(), marker));
+      this.write(upsertPendingWakeMarker(state.entries, marker));
       return true;
     } catch {
       return false;
     }
   }
   listPending(): DurablePendingWakeMarker[] {
-    return this.readPending();
+    return this.readState().entries;
   }
   hasPending(agentId: string, kind: PendingWakeKind, workId: string): boolean {
-    return this.readPending().some((entry) =>
+    return this.readState().entries.some((entry) =>
       markerKeyMatches(entry, agentId, kind, workId),
     );
   }
   clearOne(agentId: string, kind: PendingWakeKind, workId: string): boolean {
+    const state = this.readState();
+    if (state.damaged) { quarantineDurableFile(this.filePath, "pending-wake: unreadable pending file"); return false; }
     try {
-      const existing = this.readPending(),
+      const existing = state.entries,
         remaining = existing.filter(
           (entry) => !markerKeyMatches(entry, agentId, kind, workId),
         );
@@ -143,8 +152,10 @@ export class SandPendingWakeStore {
     }
   }
   clearAgent(agentId: string): void {
+    const state = this.readState();
+    if (state.damaged) { quarantineDurableFile(this.filePath, "pending-wake: unreadable pending file"); return; }
     try {
-      const existing = this.readPending(),
+      const existing = state.entries,
         remaining = existing.filter((entry) => entry.agentId !== agentId);
       if (remaining.length === existing.length) return;
       remaining.length === 0 ? this.deleteFile() : this.write(remaining);
@@ -154,8 +165,10 @@ export class SandPendingWakeStore {
     this.deleteFile();
   }
   pruneStale(maxAgeMs: number, nowMs = Date.now()): DurablePendingWakeMarker[] {
+    const state = this.readState();
+    if (state.damaged) { quarantineDurableFile(this.filePath, "pending-wake: unreadable pending file"); return []; }
     try {
-      const existing = this.readPending(),
+      const existing = state.entries,
         pruned = existing.filter(
           (entry) => nowMs - entry.markedAtMs > maxAgeMs,
         );
@@ -170,19 +183,24 @@ export class SandPendingWakeStore {
     }
   }
   readPending(): DurablePendingWakeMarker[] {
+    return this.readState().entries;
+  }
+  readState(): { entries: DurablePendingWakeMarker[]; damaged: boolean } {
+    let raw: string;
     try {
-      return parsePendingWakeFile(readFileSync(this.filePath, "utf8"));
-    } catch {
-      return [];
+      raw = readFileSync(this.filePath, "utf8");
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code === "ENOENT") return { entries: [], damaged: false };
+      writeDurableDegradedMarker(this.filePath, `pending-wake: read failed (${String(code ?? error)})`);
+      return { entries: [], damaged: true };
     }
+    const parsed = parsePendingWakeFile(raw);
+    if (parsed.damaged) writeDurableDegradedMarker(this.filePath, "pending-wake: unparseable pending file");
+    return parsed;
   }
   write(pending: readonly DurablePendingWakeMarker[]): void {
-    const part = `${this.filePath}.part`;
-    try {
-      mkdirSync(dirname(this.filePath), { recursive: true });
-    } catch {}
-    writeFileSync(part, JSON.stringify({ version: 1, pending }));
-    renameSync(part, this.filePath);
+    writeDurableEntries(this.filePath, { version: 1, pending });
   }
   deleteFile(): void {
     try {
