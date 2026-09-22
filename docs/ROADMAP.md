@@ -131,6 +131,20 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 `src/app/dist/renderer` 都不会改变发货内容，renderer 行为只能靠 `router-renderer-patch.mjs` 的补丁修改，
 且补丁锚点移动会让打包直接失败；`docker/arm64-exec-box.Dockerfile` 的注释计入 deps-pin，改注释必须重建薄层。
 
+**盒内推理出网间歇性卡住（2026-09-22 观察，环境侧）**：Mac 使用 Clash 的 TUN 接口（`utun4`，MTU 1380）接管
+fake-IP 网段 198.18.0.0/15，而 Docker 网桥的 MTU 是 1500。从盒内连推理端点时 SYN 会被丢弃并重试：
+
+| 位置 | connect | total |
+| --- | --- | --- |
+| Mac | 0.002-0.004 s | 0.11 s |
+| 盒内第一次 | 7.18 s | 7.29 s |
+| 盒内第二次 | 0.002 s | 0.10 s |
+
+同一盒内两次请求一次 7 秒一次瞬时，说明握手能否完成是随机的。盒内曾累积约 90 条 `SYN-SENT` 到
+`198.18.0.57`/`.59`。模型请求是流式长连接，遇到这种延迟会持续重试，那一轮就此停滞：转录里没有 assistant
+条目、没有浏览器进程、`claude` 子进程持续增加，UI 只显示「正在运行」。临时处置是重建容器终止该轮次。
+可行的对策有两个：把 Docker 网桥的 MTU 调到不高于 1380，或让盒内推理流量改走本机代理而不经过 TUN。
+
 **账号作用域同步（2026-09-21 加固）**：`reconcileMcp` 在没有账号作用域时不推送
 `mcpCustomInstructionsAccountScope: null`，因此常规同步不会触发宿主的 `clearAccountScope()`；该函数会删除
 `localToolPermission`、`computerUseModel`、`agentDefaultModel`、`autoReviewInstructions` 并清空三张 MCP 表。
