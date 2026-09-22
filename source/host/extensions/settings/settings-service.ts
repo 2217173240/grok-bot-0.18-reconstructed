@@ -6,7 +6,7 @@ import { normalizeSandLocalToolPermission, type SandLocalToolPermission } from "
 import type { SandAutoReviewInstructions } from "../../../shared/sand-auto-review-instructions.js";
 import type { SidebarSection } from "../../../shared/sidebar-sections.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
-import { isSandInferenceProvider, type SandInferenceProvider } from "../../../shared/inference-router.js";
+import { isCommandCodeModelId, isSandInferenceProvider, type SandInferenceProvider } from "../../../shared/inference-router.js";
 
 export function isValidIanaTimeZone(value: string): boolean { try { new Intl.DateTimeFormat("en", { timeZone: value }).format(); return true; } catch { return false; } }
 
@@ -15,7 +15,7 @@ export interface HostSettingsUpdate {
   mcpDisabledToolsByServerId?: Record<string, string[]>; mcpCustomInstructionsAccountScope?: string | null; mcpBoxServers?: string[];
   userTimeZone?: string; userTimeZoneOverride?: string; agentDefaultModel?: SandAgentModelSelection | null; computerUseModel?: SandAgentModelSelection | null;
   autoReviewInstructions?: SandAutoReviewInstructions; localToolPermission?: unknown; webauthnProxyEnabled?: boolean; pinnedAgentIds?: string[];
-  sidebarSections?: SidebarSection[]; hasSeenOnboarding?: boolean; featureFlagOverrides?: Record<string, boolean>; inferenceProvider?: unknown;
+  sidebarSections?: SidebarSection[]; hasSeenOnboarding?: boolean; featureFlagOverrides?: Record<string, boolean>; inferenceProvider?: unknown; commandCodeModel?: unknown;
 }
 
 export class SettingsService {
@@ -49,6 +49,7 @@ export class SettingsService {
     if (update.sidebarSections !== undefined) this.store.setSidebarSections(update.sidebarSections);
     if (update.hasSeenOnboarding !== undefined) this.store.setHasSeenOnboarding(update.hasSeenOnboarding);
     if (isSandInferenceProvider(update.inferenceProvider)) this.store.setInferenceProvider(update.inferenceProvider);
+    if (isCommandCodeModelId(update.commandCodeModel)) this.store.setCommandCodeModel(update.commandCodeModel);
     if (update.featureFlagOverrides !== undefined) for (const listener of [...this.featureFlagOverrideListeners]) listener(update.featureFlagOverrides);
     if (update.computerUseModel === null) this.store.setComputerUseModel(undefined); else if (isSandAgentModelSelection(update.computerUseModel)) this.store.setComputerUseModel(update.computerUseModel);
     const userTimeZone = this.store.getUserTimeZone(); if (userTimeZone !== previousUserTimeZone) for (const listener of [...this.userTimeZoneListeners]) listener(userTimeZone);

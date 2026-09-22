@@ -66,6 +66,8 @@ export const MAIN_METHOD_TABLE = {
   getAvailableModels: { args: "none" },
   getInferenceRouter: { args: "none" },
   setInferenceRouter: { args: "object" },
+  getCommandCodeModels: { args: "none" },
+  setCommandCodeModel: { args: "object" },
   getBoxRuntime: { args: "none" },
   setBoxRuntime: { args: "object" },
   transcribeAudio: { args: "object" },

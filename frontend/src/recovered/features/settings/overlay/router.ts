@@ -1,6 +1,6 @@
 import type { AgentDesktopBridge } from "../../../contracts/desktop-bridge";
 
-export type RouterProviderId = "cursor" | "claude-code" | "codex" | "openrouter";
+export type RouterProviderId = "cursor" | "claude-code" | "codex" | "openrouter" | "command-code";
 
 export interface RouterProvider {
   readonly id: RouterProviderId;
@@ -40,6 +40,13 @@ export const ROUTER_PROVIDERS: readonly RouterProvider[] = [
     label: "OpenRouter",
     description: "Use models and billing from your OpenRouter account.",
     usageDescription: "OpenRouter usage and spend are managed in your OpenRouter account and are not exposed as an in-app meter.",
+    usageSource: "external"
+  },
+  {
+    id: "command-code",
+    label: "Command Code",
+    description: "Use models and credits from your Command Code plan.",
+    usageDescription: "Command Code credits and limits are managed in your Command Code account and are not exposed as an in-app meter.",
     usageSource: "external"
   }
 ];
