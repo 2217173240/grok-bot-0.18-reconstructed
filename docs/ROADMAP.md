@@ -131,6 +131,24 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 `src/app/dist/renderer` 都不会改变发货内容，renderer 行为只能靠 `router-renderer-patch.mjs` 的补丁修改，
 且补丁锚点移动会让打包直接失败；`docker/arm64-exec-box.Dockerfile` 的注释计入 deps-pin，改注释必须重建薄层。
 
+**盒内推理出网曾间歇性卡住（2026-09-22，环境侧，未复现）**：Mac 用 Clash 的 TUN 接口（`utun4`，MTU 1380）
+接管 fake-IP 网段 198.18.0.0/15。卡住期间从盒内测同一个推理端点，两次结果差三个数量级：
+
+| 位置 | connect | total |
+| --- | --- | --- |
+| Mac | 0.002-0.004 s | 0.11 s |
+| 盒内（卡住期间） | 7.18 s | 7.29 s |
+| 盒内（同一容器，稍后） | 0.002 s | 0.10 s |
+
+当时盒内累积约 90 条 `SYN-SENT` 到 `198.18.0.57`/`.59`。模型请求是流式长连接，握手反复失败时会持续重试，
+那一轮就此停滞：转录里没有 assistant 条目、没有浏览器进程、`claude` 子进程持续增加，UI 只显示「正在运行」。
+临时处置是重建容器终止该轮次。
+
+随后在**同一个容器**（eth0 仍为 MTU 1500）连续测 11 次握手，全部 2-4 ms，`SYN-SENT` 为 0，故障不再出现。
+因此当时推断的「Docker 网桥 MTU 1500 与 TUN MTU 1380 不匹配」缺少支持：如果那是原因，低 MTU 不会自己消失。
+现在没有充分证据支持改动 MTU，改动反而可能引入新的分片问题。该现象按「代理 TUN 的瞬时故障」记录，
+再次出现时先在盒内连续测握手并把 `ss -tn` 的 `SYN-SENT` 计数记下来，再决定是否调整。
+
 **账号作用域同步（2026-09-21 加固）**：`reconcileMcp` 在没有账号作用域时不推送
 `mcpCustomInstructionsAccountScope: null`，因此常规同步不会触发宿主的 `clearAccountScope()`；该函数会删除
 `localToolPermission`、`computerUseModel`、`agentDefaultModel`、`autoReviewInstructions` 并清空三张 MCP 表。

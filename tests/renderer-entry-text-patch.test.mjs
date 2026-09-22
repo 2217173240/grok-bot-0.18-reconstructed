@@ -1,32 +1,35 @@
 // Regression guard for the chat-wide crash caused by the shipped renderer's
 // own entry-text extractor.
 //
-// The renderer's transcript projection (`frontend/src/production/model.ts`)
-// writes `text` on ordinary message entries. The extractor baked into the
-// shipped bundle read `content` and passed the result straight to
-// `String.prototype.matchAll`, so one ordinary message produced
-// `undefined.matchAll(...)`:
+// The renderer's transcript projection writes `text` on ordinary message
+// entries, while the extractor baked into the shipped bundle read `content` and
+// passed the result straight to `String.prototype.matchAll`. One ordinary
+// message therefore produced `undefined.matchAll(...)`:
 //
 //   TypeError: Cannot read properties of undefined (reading 'matchAll')
 //
 // The error boundary then replaced the whole chat with "Something went wrong".
-// The packaging step repairs the bundled extractor; this test pins the repair
-// against the real artifact bytes so a future repack cannot silently drop it.
+// Packaging repairs the bundled extractor. This test exercises that transform
+// on a fixture built from the transform's own anchors, so it also runs on a
+// fresh checkout: `src/app/dist/renderer` is a bootstrap output and CI does not
+// carry it. Whether the shipped artifact still contains those anchors is
+// enforced at package time, where a moved anchor fails the build instead of
+// being skipped.
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
 
 import {
+  RENDERER_ENTRY_TEXT_ANCHORS,
   patchOriginalEntryTextExtractor,
 } from "../scripts/lib/router-renderer-patch.mjs";
 
-const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const shippedRenderer = path.join(
-  repositoryRoot,
-  "src/app/dist/renderer/assets/index-UbX-y3il.js",
-);
+const {
+  entryTextBefore,
+  entryTextAfter,
+  prScanBefore,
+  prScanAfter,
+} = RENDERER_ENTRY_TEXT_ANCHORS;
 
 function extractFunction(source, name) {
   const key = `function ${name}(`;
@@ -44,20 +47,20 @@ function extractFunction(source, name) {
 }
 
 test("the packaged renderer extractor tolerates every entry spelling the app produces", async () => {
-  const original = await readFile(shippedRenderer, "utf8");
-  const patched = patchOriginalEntryTextExtractor(original);
+  // A fixture carrying both anchors in the order the real chunk has them.
+  const fixture = `const I_n=/https?:\\/\\/[^\\s<>()[\\]]+/g;${entryTextBefore}${prScanBefore}const s=t[0].replace(/[.,;:!?]+$/,""),r=Rpt(s);r!=null&&e.push({prNumber:r.prNumber,title:null,url:r.url})}return e}`;
+  const patched = patchOriginalEntryTextExtractor(fixture);
 
-  // The patch must be additive and idempotent-safe: it rewrites the two exact
-  // anchors and does not touch anything else structurally.
-  assert.notEqual(patched, original);
-  assert.ok(patched.length > original.length);
-  assert.ok(patched.includes("n.content??n.text??\"\""), "the extractor must fall back to `text`");
-  assert.ok(patched.includes("typeof n===\"string\"?n:\"\""), "the scan must never receive a non-string");
+  assert.ok(patched.includes(entryTextAfter), "the extractor must gain the fallback");
+  assert.ok(patched.includes(prScanAfter), "the scan must gain the string guard");
+  assert.ok(!patched.includes(entryTextBefore), "the original extractor must be gone");
+  assert.equal(
+    patched.length,
+    fixture.length + (entryTextAfter.length - entryTextBefore.length) + (prScanAfter.length - prScanBefore.length),
+  );
 
-  const extractBefore = eval(`(${extractFunction(original, "A_n")})`);
+  const extractBefore = eval(`(${extractFunction(fixture, "A_n")})`);
   const extractAfter = eval(`(${extractFunction(patched, "A_n")})`);
-  assert.equal(typeof extractBefore, "function");
-  assert.equal(typeof extractAfter, "function");
 
   const entries = [
     // What frontend/src/production/model.ts actually emits.
@@ -80,9 +83,11 @@ test("the packaged renderer extractor tolerates every entry spelling the app pro
   for (const entry of entries) {
     assert.equal(typeof extractAfter(entry), "string", `entry ${entry.id} must produce a string`);
   }
-  // Real values still come through.
   assert.equal(extractAfter(entries[0]), "hello");
   assert.equal(extractAfter(entries[1]), "hi");
   assert.equal(extractAfter(entries[2]), "from the host");
   assert.equal(extractAfter(entries[3]), "");
+
+  // A moved anchor must fail loudly rather than quietly skip the repair.
+  assert.throws(() => patchOriginalEntryTextExtractor("const nothing = 1;"), /anchor is missing or ambiguous/);
 });
