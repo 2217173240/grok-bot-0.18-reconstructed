@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -413,6 +413,42 @@ async function isDirectory(path: string): Promise<boolean> {
   try { return (await stat(path)).isDirectory(); } catch { return false; }
 }
 
+// Staging is content addressed, so every distinct host bundle leaves its own
+// v<layout>-<hostSha>-<daemonSha> directory behind and nothing ever removed the
+// older ones. Keep the newest few — the connector always mounts the newest, so
+// the live container's runtime is never a candidate — and drop anything older,
+// including directories from earlier layout versions.
+export const LOCAL_HOST_RUNTIME_RETAINED_DIRECTORIES = 3;
+const LOCAL_HOST_RUNTIME_DIRECTORY_PATTERN = /^v(\d+)-[0-9a-f]{64}-[0-9a-f]{64}$/;
+
+export async function pruneLocalHostRuntimeStaging(runtimeRoot: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(runtimeRoot);
+  } catch {
+    return [];
+  }
+  const staged: { path: string; modifiedAt: number }[] = [];
+  for (const name of entries) {
+    if (!LOCAL_HOST_RUNTIME_DIRECTORY_PATTERN.test(name)) continue;
+    const path = join(runtimeRoot, name);
+    try {
+      const info = await stat(path);
+      if (!info.isDirectory()) continue;
+      staged.push({ path, modifiedAt: info.mtimeMs });
+    } catch {}
+  }
+  staged.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  const removed: string[] = [];
+  for (const candidate of staged.slice(LOCAL_HOST_RUNTIME_RETAINED_DIRECTORIES)) {
+    try {
+      await rm(candidate.path, { recursive: true, force: true });
+      removed.push(candidate.path);
+    } catch {}
+  }
+  return removed;
+}
+
 async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBundle> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const readRuntimeTree = async (relative: string): Promise<readonly { name: string; bytes: Buffer }[]> => {
@@ -470,6 +506,10 @@ async function stageCurrentHostBundle(settingsPath: string): Promise<LocalHostBu
     if (sibling.name === "host-main.cjs") continue;
     await persistRuntime(join("sand-host", sibling.name), sibling.bytes);
   }
+  // Independent of whether this app instance already had its runtime staged:
+  // the pruning compares directory timestamps every time, so repeated starts
+  // converge on the same set.
+  await pruneLocalHostRuntimeStaging(dirname(directory));
   return {
     // The mount unit is the sand-host DIRECTORY: the host resolves worker
     // artifacts relative to argv[1] at runtime, so single-file mounts leave

@@ -113,6 +113,8 @@ chmod 600 ~/.grokbot-local/anthropic-token
 
 **自动生成（勿手工造）**：`settings.json`（首启 seed：claude-code + local-docker）、`local-docker-vm.json`（容器 gateway token）、`local-docker-runtime/v3-*`（staged host 树，App 自动维护）、`box-workspace/`（容器 /workspace 的 Mac 侧）、`local-intercept.jsonl`（审计账本）、`box-mode`。
 
+`local-docker-runtime/` 的保留规则：每次宿主 bundle 变化都会生成一个新的 `v<layout>-<hostSha>-<daemonSha>` 目录，App 在 staging 之后保留最新 3 个并删除更早的（含旧 layout 版本的目录）。容器挂载的总是最新那一个，因此清理不会碰到在用目录。同一规则可重复执行，第二次不再删除任何内容；不需要人工清理。
+
 **可选迁移（从源机拷）**：`mcp-servers.json` + `demo-mcp-server.cjs`（本地 MCP 插件源，二者的 Mac 路径已适配共享工作区）、`box-secrets.json`（Saved keys 镜像）。不拷则插件面为空，不影响主线。
 
 **可选挂载**：若要用 Codex/Claude 原生登录态，`~/.codex`、`~/.claude` 存在即被只读挂进容器（`/root/.codex`、`/root/.claude`）；默认推理路线不需要。
@@ -124,7 +126,23 @@ cd <grok-bot-repo>
 ./start-local.sh start
 ```
 
+**启动 shell 必须先剔除 `ELECTRON_RUN_AS_NODE`**。该变量存在时 Electron 以纯 Node 模式启动，
+二进制拒绝 `--user-data-dir` 并立即退出，日志只有一行
+`bad option: --user-data-dir=...`。脚本在开头无条件清除该变量，因此直接调用脚本即可；另外
+`npm test` 与 `npm run package` 里的 asar 相关用例需要用真实 Node 运行，否则会出现 `ENOTEMPTY`
+假失败（那个 `node` 指向的是 Electron）。
+
+```sh
+./start-local.sh start
+env -u ELECTRON_RUN_AS_NODE PATH="/usr/local/bin:$PATH" npm run package
+```
+
 脚本做的事（顺序即依赖序）：回收孤儿 host → 判定 1340 端口持有者（Docker 计算机的端口转发是合法持有者）→ seed settings → 导出环境（见下表）→ 校验 build-stamp ↔ HEAD → **直启 binary**（不走 `open`，否则环境被剥）→ 有界等待 45s 网关健康（`127.0.0.1:1340/health` + Bearer）。
+
+判定的前置条件是 Colima 的 docker socket 可达。本机 profile 名为 `finonelib`，
+`socket` 为 `unix://$HOME/.colima/finonelib/docker.sock`；不带参数的 `colima status` 会报告
+"not running"，`colima list` 才显示真实状态。socket 不可达时脚本无法把 1340 的持有者认成计算机的
+端口转发，会以 `port 1340 is held by something that is not our app or computer` 拒绝启动。
 
 **环境开关表**（`start-local.sh` 识别的）：
 
@@ -167,13 +185,17 @@ scripts/zero-remote-live.sh   # 断言账本零 cursor/xai 出网行
 | 症状 | 首查 | 常因 |
 | --- | --- | --- |
 | `start` 报 missing token | `~/.grokbot-local/anthropic-token` | §5 手工项没做 |
+| App 启动即退出，日志 `bad option: --user-data-dir` | `echo $ELECTRON_RUN_AS_NODE` | 启动 shell 带着该变量；`start-local.sh` 会自行清除它，若仍出现说明调用方不是该脚本 |
+| `npm test` 出现 `ENOTEMPTY`（asar 用例） | `node -e 'console.log(process.versions.electron)'` | `node` 是 Electron 而不是 Node；用真实 Node 运行（`PATH=/usr/local/bin:$PATH`） |
+| `start` 报 port 1340 held by something else | `lsof -nP -iTCP:1340 -sTCP:LISTEN` 与 `colima list` | Colima 的 docker socket 不可达（本机 profile 为 `finonelib`）；脚本自行发现 `~/.colima/*/docker.sock`，也可显式 `export DOCKER_HOST=…` |
+| UI 出现 “Something went wrong” 且控制台报 `matchAll` | 打包后 asar 是否带 renderer 提取器补丁 | renderer 产物自身的条目字段名与它的转录投影不一致；补丁在 `scripts/lib/router-renderer-patch.mjs`，随 `npm run package` 生效 |
 | 网关 45s 不健康 | `./start-local.sh logs` + `box-logs/sand-host.log` 尾部 | 容器崩溃循环：看 `docker logs grok-bot-local-vm`（历史两案：数据卷 root 属主 EACCES、镜像 pin 过期） |
 | `computer: docker unreachable` | `colima list` | Colima 没起；起后脚本自动发现 `~/.colima/*/docker.sock`（`/var/run/docker.sock` 不存在是常态，别手工造） |
 | 镜像警告 self-built missing | `docker/build-arm64-box.sh` | 薄层没建（§3）；不建则默认走 QEMU 回退（能用但慢 8-16×，状态面有黄字标注） |
-| G0 pin mismatch | 同上 | 仓库依赖变了：重建薄层即可，base 不用动 |
+| G0 pin mismatch | 同上 | 仓库依赖变了：重建薄层即可，base 不用动。`docker/arm64-exec-box.Dockerfile` 的**注释**也计入 pin，改注释就要重建镜像 |
+| `stale-image-refused` 账本行 | `docker image inspect grok-bot-exec-box:arm64` 的 pin label | 镜像存在但与当前 deps-pin 不符：重建薄层。连接器拒绝使用过期镜像，并且**不会**退回 QEMU |
 | tree-sitter 编译报 concept/requires | `npm run native:patch` 后重跑 package | node_modules 重装冲掉 c++20 补丁 |
 | App 行为像旧代码 | `Contents/Resources/build-stamp.json` vs `git rev-parse HEAD` | 打包静默失败装了旧包（启动时也会大声警告） |
-| 新会话在 UI 报 Agent failed | PR #29 是否合并；`docker logs` 查 TranscriptJournal | 盒内轮次的已知地雷区——门钉已防主要案，PR #29 在修 text-delivery；临时退避：`GROKBOT_TURN=mac` |
 | noVNC 白屏/连不上 | `./start-local.sh status` 的 handover URL 是否本次启动签发 | token 随容器重启重签即作废——重新让 bot ask（这是设计，URL 不跨重启） |
 | 容器替换循环 | `docker inspect grok-bot-local-vm` 的 labels（schema/pin/host-sha） | 契约漂移自动替换是正常自愈；若反复替换→对照 §3/§4 的 pin 与 staging |
 

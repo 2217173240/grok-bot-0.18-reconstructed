@@ -3,6 +3,7 @@ import {
   parseCoordinatorAgentThreadRequest,
   parseCoordinatorTranscriptWindowRequest,
 } from "../shared/rpc/coordinator.js";
+import { projectTranscriptPayloadForRenderer } from "./extensions/transcript/renderer-entry-shape.js";
 
 export const HOST_CAPABILITIES = [
   "orderedReplicasV1",
@@ -130,7 +131,7 @@ export function createHostGatewayApi(
       wasActive
     });
     void deps.kickstartIfPending(args.id);
-    return result;
+    return projectTranscriptPayloadForRenderer(result);
   };
 
   const markSharingAction = async (name: string, args: any) => {
@@ -164,21 +165,21 @@ export function createHostGatewayApi(
 
   return {
     getTranscript: () => method(manager, "ensureLoaded")(),
-    getAgentTranscript: (args: any) =>
-      method(manager, "getAgentTranscript")(args.id),
-    getAgentTranscriptPage: (args: any) =>
-      method(manager, "getAgentTranscriptPage")(args.id, args),
-    getAgentTranscriptWindow: (args: unknown) => {
+    getAgentTranscript: async (args: any) =>
+      projectTranscriptPayloadForRenderer(await method(manager, "getAgentTranscript")(args.id)),
+    getAgentTranscriptPage: async (args: any) =>
+      projectTranscriptPayloadForRenderer(await method(manager, "getAgentTranscriptPage")(args.id, args)),
+    getAgentTranscriptWindow: async (args: unknown) => {
       const request = parseCoordinatorTranscriptWindowRequest(args);
       if (request == null) throw new Error("Malformed getAgentTranscriptWindow request");
-      return method(manager, "getAgentTranscriptWindow")(request.id, args);
+      return projectTranscriptPayloadForRenderer(await method(manager, "getAgentTranscriptWindow")(request.id, args));
     },
-    getAgentTranscriptTail: (args: any) =>
-      method(manager, "getAgentTranscriptTail")(args.id, args),
-    getAgentThread: (args: unknown) => {
+    getAgentTranscriptTail: async (args: any) =>
+      projectTranscriptPayloadForRenderer(await method(manager, "getAgentTranscriptTail")(args.id, args)),
+    getAgentThread: async (args: unknown) => {
       const request = parseCoordinatorAgentThreadRequest(args);
       if (request == null) throw new Error("Malformed getAgentThread request");
-      return method(manager, "getAgentThread")(request.id, request.rootId);
+      return projectTranscriptPayloadForRenderer(await method(manager, "getAgentThread")(request.id, request.rootId));
     },
 
     sendPrompt: async (args: any) => {

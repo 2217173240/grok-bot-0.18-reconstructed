@@ -9,6 +9,16 @@ const GENERAL_AFTER = 'Q=x==="general"?a.jsx(Te,{children:a.jsx(Sa,{auth:t})}):x
 const USAGE_BEFORE = 'Z=x==="usage"?a.jsx(Te,{children:a.jsx(Na,{})}):null';
 const USAGE_AFTER = 'Z=x==="usage"?a.jsx(Te,{children:a.jsx(RRouterUsage,{})}):null';
 const COMPONENT_ANCHOR = 'function Sa(s){';
+// The shipped renderer is its own worst enemy here: its transcript projection
+// writes `text` on ordinary message entries, while this extractor reads
+// `content` and feeds the result straight to `String.prototype.matchAll`. A
+// single ordinary message therefore yields `undefined.matchAll`, and the error
+// boundary replaces the whole chat with "Something went wrong". Accept both
+// spellings and never hand a non-string to matchAll.
+const ENTRY_TEXT_BEFORE = 'function A_n(n){switch(n.kind){case"message":return n.content;case"send-message":return n.message.type==="text"?n.message.content:"";case"notice":return n.text;default:return""}}';
+const ENTRY_TEXT_AFTER = 'function A_n(n){switch(n.kind){case"message":return n.content??n.text??"";case"send-message":return n.message.type==="text"?n.message.content??n.message.text??"":"";case"notice":return n.text??"";default:return""}}';
+const PR_SCAN_BEFORE = 'function Fpt(n){const e=[];for(const t of n.matchAll(I_n)){';
+const PR_SCAN_AFTER = 'function Fpt(n){const e=[];const s0=typeof n==="string"?n:"";for(const t of s0.matchAll(I_n)){';
 const COMPONENT_SOURCE = String.raw`
 const RRouterProviders=[
   {value:"cursor",label:"Cursor",description:"Use your signed-in Cursor account.",kind:"account"},
@@ -46,6 +56,12 @@ export function patchOriginalSettingsRegistry(source) {
   return replaceExactlyOnce(source, REGISTRY_BEFORE, REGISTRY_AFTER, "settings registry");
 }
 
+export function patchOriginalEntryTextExtractor(source) {
+  let patched = replaceExactlyOnce(source, ENTRY_TEXT_BEFORE, ENTRY_TEXT_AFTER, "entry text extractor");
+  patched = replaceExactlyOnce(patched, PR_SCAN_BEFORE, PR_SCAN_AFTER, "PR scan receiver");
+  return patched;
+}
+
 export function patchOriginalSettingsPanel(source) {
   let patched = replaceExactlyOnce(source, COMPONENT_ANCHOR, `${COMPONENT_SOURCE}${COMPONENT_ANCHOR}`, "component insertion");
   patched = replaceExactlyOnce(patched, GENERAL_BEFORE, GENERAL_AFTER, "Router panel switch");
@@ -81,12 +97,34 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
       patched: { bytes: Buffer.byteLength(patched), sha256: sha256(patched) },
     });
   }
+  // The entry-text extractor lives in the renderer entry chunk, not the
+  // Settings chunks above, so patch it wherever it is found.
+  const entryTextCandidates = [];
+  for (const name of await readdir(assetsRoot)) {
+    if (!name.endsWith(".js")) continue;
+    const target = path.join(assetsRoot, name);
+    const source = await readFile(target, "utf8");
+    if (source.includes(ENTRY_TEXT_BEFORE)) entryTextCandidates.push({ name, target, source });
+  }
+  if (entryTextCandidates.length !== 1) {
+    throw new Error(`Expected one renderer chunk carrying the entry text extractor, found ${entryTextCandidates.length}.`);
+  }
+  for (const candidate of entryTextCandidates) {
+    const patched = patchOriginalEntryTextExtractor(candidate.source);
+    await writeFile(candidate.target, patched);
+    changes.push({
+      role: "entry-text-extractor",
+      path: `dist/renderer/assets/${candidate.name}`,
+      original: { bytes: Buffer.byteLength(candidate.source), sha256: sha256(candidate.source) },
+      patched: { bytes: Buffer.byteLength(patched), sha256: sha256(patched) },
+    });
+  }
   const record = {
     schemaVersion: 1,
     mode: "original-renderer-settings-extension",
     chunks: changes,
-    features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider"],
-    transformations: ["settings-registry", "router-panel", "usage-panel"],
+    features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider", "transcript-entry-text-shape"],
+    transformations: ["settings-registry", "router-panel", "usage-panel", "entry-text-extractor"],
   };
   const provenancePath = path.join(stageRoot, "dist", "renderer-router-extension.json");
   await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
