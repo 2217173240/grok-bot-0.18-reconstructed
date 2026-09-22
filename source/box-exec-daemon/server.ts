@@ -25,6 +25,7 @@ import {
   type ExecServerMessage,
 } from "../packages/proto/generated/agent/v1/exec_pb.js";
 import { ExecStreamElement } from "../packages/proto/generated/agent/v1/exec_service_pb.js";
+import { BoxMcpHost } from "./mcp-host.js";
 import {
   BackgroundShellSpawnError,
   BackgroundShellSpawnResult,
@@ -90,6 +91,8 @@ export interface BoxExecDaemonOptions {
   readonly workspaceRoot: string;
   readonly terminalsDirectory?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Where the MCP host reports server lifecycle events; defaults to silence. */
+  readonly mcpLog?: (message: string) => void;
 }
 
 export interface BoxExecDaemonHandle {
@@ -217,7 +220,7 @@ class BoxExecRuntime {
     throw new PathRejectedError(`Resolved path escapes configured roots: ${requested}`);
   }
 
-  async *execute(request: ExecServerMessage, signal: AbortSignal): AsyncGenerator<ExecStreamElement> {
+  async *execute(request: ExecServerMessage, signal: AbortSignal, mcpHost?: BoxMcpHost): AsyncGenerator<ExecStreamElement> {
     try {
       switch (request.message.case) {
         case "readArgs":
@@ -243,6 +246,21 @@ class BoxExecRuntime {
         case "writeShellStdinArgs":
           yield client(request.id, request.execId, { case: "writeShellStdinResult", value: await this.writeStdin(request.message.value) });
           break;
+        case "mcpStateExecArgs":
+        case "mcpArgs": {
+          if (mcpHost == null) {
+            yield thrown(request.id, "This daemon was started without an MCP host.", "BOX_EXEC_UNSUPPORTED");
+            break;
+          }
+          // Tool listing and tool calls go through the same serial queue the
+          // config push uses, so a call cannot race a reconnect.
+          if (request.message.case === "mcpStateExecArgs") {
+            yield client(request.id, request.execId, { case: "mcpStateExecResult", value: await mcpHost.listState(request.message.value) });
+          } else {
+            yield client(request.id, request.execId, { case: "mcpResult", value: await mcpHost.callTool(request.message.value) });
+          }
+          break;
+        }
         default:
           yield thrown(request.id, `Unsupported ExecServerMessage case: ${request.message.case ?? "unset"}`, "BOX_EXEC_UNSUPPORTED");
       }
@@ -445,24 +463,10 @@ class BoxExecRuntime {
 }
 
 function closeServer(server: Server): Promise<void> {
+  // Keep-alive sockets outlive the last request, and a plain close() waits for
+  // them: the daemon then holds the process open after it was told to stop.
+  server.closeIdleConnections?.();
   return new Promise((resolve, reject) => server.close(error => error == null ? resolve() : reject(error)));
-}
-
-// Reads the server names out of a pushed MCP config. The config is the standard
-// { mcpServers: { name: {...} } } shape; anything else is a caller bug and is
-// reported as such, so a malformed payload never reads as "nothing to load".
-function requestedMcpServerNames(configJson: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(configJson);
-  } catch (error) {
-    throw new ConnectError(`MCP server config is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, Code.InvalidArgument, undefined, undefined, error);
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new ConnectError("MCP server config must be a JSON object", Code.InvalidArgument);
-  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
-  if (servers === undefined || servers === null) return [];
-  if (typeof servers !== "object" || Array.isArray(servers)) throw new ConnectError("MCP server config must carry an mcpServers object", Code.InvalidArgument);
-  return Object.keys(servers);
 }
 
 export async function startBoxExecDaemon(options: BoxExecDaemonOptions): Promise<BoxExecDaemonHandle> {
@@ -481,29 +485,29 @@ export async function startBoxExecDaemon(options: BoxExecDaemonOptions): Promise
     if (!info.isDirectory()) throw new Error(`workspaceRoot is not a directory: ${workspaceRoot}`);
   });
   const runtime = new BoxExecRuntime(workspaceRoot, terminalsDirectory, options.environment ?? process.env);
+  const mcpHost = new BoxMcpHost({ workspaceRoot, ...(options.mcpLog == null ? {} : { log: options.mcpLog }) });
   const adapter = connectNodeAdapter({
     routes(router) {
       router.service(BoxControlService, {
         ping: async () => new PingResponse(),
         getCapabilities: async () => new GetCapabilitiesResponse({ computerUseSupported: false, installPluginArtifactSupported: false }),
         updateEnvironmentVariables: async request => new UpdateEnvironmentVariablesResponse(runtime.applyEnvironment(request)),
-        // This daemon hosts no MCP servers: nothing spawns the stdio servers a
-        // config names, and the exec surface has no mcpArgs or mcpStateExecArgs
-        // case, so it answers those with BOX_EXEC_UNSUPPORTED. An empty success
-        // here was worse than a refusal, because the caller recorded the config
-        // as pushed and then looked for tools that had never been loaded. A
-        // config naming no servers is a genuine no-op and still succeeds.
+        // The stdio MCP servers configured for this computer are started here:
+        // the daemon owns their lifetime, and the exec surface below answers the
+        // list and call requests the host sends. A config naming no servers is a
+        // genuine no-op and loads nothing; a config the daemon cannot read is a
+        // caller bug and is refused rather than read as "nothing to load".
         loadMcpServers: async request => {
-          const names = requestedMcpServerNames(request.mcpConfigJson);
-          if (names.length === 0) return new LoadMcpServersResponse();
-          throw new ConnectError(
-            `The local computer's box daemon cannot load MCP servers (requested: ${names.join(", ")}). `
-            + "Plugin tools need an MCP host inside the box, which this build does not provide; the tools are not available on this computer.",
-            Code.Unimplemented,
-          );
+          let loadedServerNames: string[];
+          try {
+            loadedServerNames = await mcpHost.load(request.mcpConfigJson);
+          } catch (error) {
+            throw new ConnectError(error instanceof Error ? error.message : String(error), Code.InvalidArgument, undefined, undefined, error);
+          }
+          return new LoadMcpServersResponse({ loadedServerNames });
         },
       });
-      router.service(BoxExecService, { exec: (request, context) => runtime.execute(request, context.signal) });
+      router.service(BoxExecService, { exec: (request, context) => runtime.execute(request, context.signal, mcpHost) });
     },
   });
   let readyState = false;
@@ -535,6 +539,7 @@ export async function startBoxExecDaemon(options: BoxExecDaemonOptions): Promise
       if (stopped) return;
       stopped = true;
       readyState = false;
+      await mcpHost.dispose();
       await runtime.stop();
       await closeServer(server);
     },

@@ -17,6 +17,7 @@ import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
+import { createRoutedMcpBridge } from "../../../shared/node/mcp/routed-mcp-bridge.js";
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 
 type Loose = Record<string, any>;
@@ -263,6 +264,14 @@ const CLAUDE_READ_ONLY_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch"
 // box waits for a human, and while local tool access is set to "Never".
 const CLAUDE_BOX_READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"]);
 
+// The plugin tools of this computer, as the CLI child needs them: a way to list
+// the definitions it may call and a way to perform each call. The daemon owns
+// the MCP servers; these two functions are the host's half of that path.
+export interface HostMcpTools {
+  listTools(): Promise<unknown>;
+  callTool(tool: { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly args: unknown; readonly toolCallId: string }): Promise<unknown>;
+}
+
 export function resolveAgentWorkspace(): string {
   const override = process.env.SAND_AGENT_WORKSPACE?.trim();
   if (override != null && override.length > 0) return override;
@@ -291,6 +300,15 @@ export function awaitingHumanAskFilePath(env: NodeJS.ProcessEnv = process.env): 
   return join(root, ".grokbot", "ask-human.json");
 }
 
+// An allow carries the tool input back unchanged. The permission result's
+// `updatedInput` REPLACES the input the tool executes with, so an empty object
+// here silently erased every argument the model supplied — invisible for the
+// built-in tools whose arguments the CLI re-reads from its own state, and fatal
+// for MCP tools, whose arguments exist nowhere else.
+function allowUnchanged(input?: unknown): PermissionResult {
+  return { behavior: "allow", updatedInput: typeof input === "object" && input != null && !Array.isArray(input) ? input as Record<string, unknown> : {} };
+}
+
 export function claudeToolPermission(toolName: string, input?: unknown, localToolPermission?: SandLocalToolPermission): PermissionResult {
   if (isLocalAdminEnabled()) {
     const askPath = awaitingHumanAskFilePath();
@@ -299,10 +317,10 @@ export function claudeToolPermission(toolName: string, input?: unknown, localToo
       const isHandBack = /ask-human\.json/.test(command) && /(^|\s)(rm|unlink)\b/.test(command);
       if (isHandBack) {
         appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-handback-allowed", tool: toolName });
-        return { behavior: "allow", updatedInput: {} };
+        return allowUnchanged(input);
       }
       if (CLAUDE_BOX_READ_TOOLS.has(toolName)) {
-        return { behavior: "allow", updatedInput: {} };
+        return allowUnchanged(input);
       }
       appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-denied", tool: toolName });
       return {
@@ -322,9 +340,9 @@ export function claudeToolPermission(toolName: string, input?: unknown, localToo
           + `${toolName} cannot run here. Change the setting in Settings → Agent → Execution on Local Computer, or answer without changing anything.`,
       };
     }
-    return { behavior: "allow", updatedInput: {} };
+    return allowUnchanged(input);
   }
-  if (CLAUDE_READ_ONLY_TOOLS.has(toolName)) return { behavior: "allow", updatedInput: {} };
+  if (CLAUDE_READ_ONLY_TOOLS.has(toolName)) return allowUnchanged(input);
   appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
   return {
     behavior: "deny",
@@ -406,7 +424,16 @@ export function claudeLocalToolsPrompt(env: NodeJS.ProcessEnv = process.env): st
   return [...CLAUDE_LOCAL_TOOLS_PROMPT_LINES, ...CLAUDE_LOCAL_ADMIN_IDENTITY_LINES, ...localAdminDesktopPrimitiveLines(env)].join("\n");
 }
 
-function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, onUsage?: (usage: UsageRecord) => void, mcpServerUrl?: string, localToolPermission?: SandLocalToolPermission) {
+interface ClaudeExecutorOptions {
+  readonly onUsage?: (usage: UsageRecord) => void;
+  /** A bridge the caller already runs; this executor does not close it. */
+  readonly mcpServerUrl?: string;
+  /** Plugin tools this executor exposes through its own bridge, closed with the stream. */
+  readonly mcp?: HostMcpTools;
+  readonly localToolPermission?: SandLocalToolPermission;
+}
+
+function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, options?: ClaudeExecutorOptions) {
   const executable = resolveClaudeCodeCliPath();
   if (executable == null) throw new Error("Claude Code is not installed. Install and sign in to Claude Code, then reopen Grok Bot.");
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
@@ -414,7 +441,15 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
+    // The CLI child speaks MCP over HTTP itself, so the plugin tools reach it
+    // through a loopback bridge that exists for exactly this stream. The bridge
+    // is closed with the stream, which keeps a crashed turn from leaving a
+    // listener behind or holding a tool call open.
+    let bridge: { url: string; close(): Promise<void> } | undefined;
     try {
+      const mcp = options?.mcp;
+      if (mcp != null) bridge = await createRoutedMcpBridge({ listTools: () => mcp.listTools(), callTool: tool => mcp.callTool(tool) });
+      const mcpServerUrl = bridge?.url ?? options?.mcpServerUrl;
       let final: SDKResultMessage | undefined;
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
       for await (const message of queryClaude({ prompt: providerPrompt(messages, claudeLocalToolsPrompt()), options: {
@@ -424,7 +459,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }),
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
-          const decision = claudeToolPermission(toolName, input, localToolPermission);
+          const decision = claudeToolPermission(toolName, input, options?.localToolPermission);
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },
@@ -441,7 +476,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       const text = final.result;
       if (text.length > 0) yield { type: "text-delta" as const, textDelta: text };
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
-      onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
+      options?.onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
       extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
       metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
@@ -456,6 +491,10 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         settled.promise.catch(() => undefined);
       }
       throw error;
+    } finally {
+      // Closed with the stream: a crashed turn must not leave the loopback
+      // listener behind or hold a tool call open.
+      await bridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "mcp-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
     }
   })();
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
@@ -489,19 +528,24 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools) { super(new BasePromptBuilder(initialMessages)); }
   stream(_ctx: unknown, invocationId = crypto.randomUUID(), _definitions?: readonly Loose[]) {
-    // Host-owned sessions are text-only. Claude CLI, Codex auth, and MCP tools
-    // live on the Mac coordinator; advertising tools here with no executor is a lie.
+    // Codex and OpenRouter take tool definitions with a local executor; the
+    // Claude CLI is given an MCP server instead, so it fetches the schemas and
+    // performs the calls itself.
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
-    if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, this.onUsage, undefined, this.localToolPermission);
+    if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {
+      ...(this.onUsage === undefined ? {} : { onUsage: this.onUsage }),
+      ...(this.localToolPermission === undefined ? {} : { localToolPermission: this.localToolPermission }),
+      ...(this.mcp === undefined ? {} : { mcp: this.mcp }),
+    });
     return openRouterExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.mcp) };
 }
 
 export async function runRoutedProviderText(provider: RoutedProvider, messages: readonly ProviderMessage[], options?: {
@@ -515,7 +559,7 @@ export async function runRoutedProviderText(provider: RoutedProvider, messages: 
   const result = provider === "codex"
     ? codexExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage)
     : provider === "claude-code"
-      ? claudeExecutor(messages, invocationId, onUsage, options?.mcpServerUrl)
+      ? claudeExecutor(messages, invocationId, { onUsage, ...(options?.mcpServerUrl === undefined ? {} : { mcpServerUrl: options.mcpServerUrl }) })
       : openRouterExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage);
   let text = "";
   for await (const event of result.fullStream) {

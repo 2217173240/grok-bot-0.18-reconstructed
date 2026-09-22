@@ -667,6 +667,9 @@ export function createTurnAgentStreamStart(
 export interface TurnAgentMcpTurnProvider {
   getTools(ctx: Context): Promise<readonly unknown[]>;
   refreshAccountConfig(): void;
+  /** The same tool set the model may call, in the shape the CLI child needs. */
+  listTools?(ctx: Context): Promise<readonly unknown[]>;
+  executeTool?(ctx: Context, args: { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly args: unknown; readonly toolCallId: string; readonly agentId?: string }): Promise<unknown>;
 }
 
 export interface TurnAgentRunInputProjectionFactoryInput {

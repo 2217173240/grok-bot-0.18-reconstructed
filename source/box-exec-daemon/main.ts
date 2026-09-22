@@ -10,6 +10,10 @@ export async function runBoxExecDaemonEntrypoint(): Promise<void> {
     ...(portText == null ? {} : { port: Number.parseInt(portText, 10) }),
     ...(process.env.SAND_BOX_TERMINALS_DIRECTORY == null ? {} : { terminalsDirectory: process.env.SAND_BOX_TERMINALS_DIRECTORY }),
     ...(process.env.SAND_BOX_EXEC_DAEMON_AUTH_TOKEN == null ? {} : { authToken: process.env.SAND_BOX_EXEC_DAEMON_AUTH_TOKEN }),
+    // Plugin servers start and stop on the operator's behalf, and their own
+    // stderr already reaches this stream. Without the lifecycle lines a plugin
+    // that never started is indistinguishable from one that exposes nothing.
+    mcpLog: message => process.stderr.write(`box-exec-daemon: mcp: ${message}\n`),
   });
   process.stdout.write(`${JSON.stringify({ event: "box-exec-daemon-ready", url: handle.url, workspaceRoot: handle.workspaceRoot, terminalsDirectory: handle.terminalsDirectory })}\n`);
   const shutdown = async () => {

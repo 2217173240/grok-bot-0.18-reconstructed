@@ -33,7 +33,7 @@ async function loadModule(buildRoot, entry, name) {
   return await import(pathToFileURL(outfile).href);
 }
 
-test("the box daemon refuses MCP servers it cannot host, and accepts an empty config", async () => {
+test("the box daemon loads the MCP config it is given and refuses a broken one", async () => {
   const { Code, ConnectError, createClient } = await import("@connectrpc/connect");
   const { createConnectTransport } = await import("@connectrpc/connect-node");
   const buildRoot = await mkdtemp(path.join(repositoryRoot, ".tmp-box-daemon-mcp-"));
@@ -56,23 +56,29 @@ test("the box daemon refuses MCP servers it cannot host, and accepts an empty co
     const absent = await load("{}");
     assert.deepEqual([...absent.loadedServerNames], []);
 
-    // A config that names servers is refused, and the refusal names them so the
-    // operator can see which plugin was dropped rather than finding an empty
-    // tool list later.
-    await assert.rejects(
-      () => load(JSON.stringify({ mcpServers: { demo: { command: "node", args: ["server.js"] }, second: { command: "node" } } })),
-      (error) => {
-        assert.ok(error instanceof ConnectError);
-        assert.equal(error.code, Code.Unimplemented);
-        assert.match(error.rawMessage, /demo, second/);
-        return true;
+    // Named servers are loaded and reported. A command that does not exist is a
+    // per-server failure the state request exposes, so the name still comes back
+    // rather than the whole load failing.
+    const named = await load(JSON.stringify({
+      mcpServers: {
+        demo: { command: path.join(workspaceRoot, "no-such-binary") },
+        second: { command: path.join(workspaceRoot, "no-such-binary-either") },
       },
-    );
+    }));
+    assert.deepEqual([...named.loadedServerNames].sort(), ["demo", "second"]);
+
+    // Dropping them again disconnects both, and the response says so.
+    const dropped = await load("{}");
+    assert.deepEqual([...dropped.loadedServerNames], []);
 
     // A malformed payload is a caller bug, reported as one instead of being
     // treated as nothing to load.
     await assert.rejects(
       () => load("{ not json"),
+      (error) => error instanceof ConnectError && error.code === Code.InvalidArgument,
+    );
+    await assert.rejects(
+      () => load(JSON.stringify({ mcpServers: { demo: { url: "https://example.invalid/mcp" } } })),
       (error) => error instanceof ConnectError && error.code === Code.InvalidArgument,
     );
 

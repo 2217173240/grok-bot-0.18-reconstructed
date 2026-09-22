@@ -101,13 +101,30 @@ test("local tool access set to Never stops the in-box CLI child, not only the Ma
       assert.equal(claudeToolPermission("Bash", {}, permission).behavior, "allow", `permission ${permission} keeps the box boundary`);
     }
 
+    // The permission result's updatedInput replaces the input the tool runs
+    // with, so an allow must carry the input through unchanged: returning an
+    // empty object erased every argument the model supplied, which is fatal for
+    // a plugin tool and invisible for the built-in ones.
+    const toolInput = { text: "plugin-ok", nested: { keep: true } };
+    assert.deepEqual(claudeToolPermission("Read", toolInput, "never").updatedInput, toolInput);
+    assert.deepEqual(claudeToolPermission("Bash", toolInput, "ask").updatedInput, toolInput);
+    assert.deepEqual(claudeToolPermission("Bash", toolInput, undefined).updatedInput, toolInput);
+    assert.deepEqual(claudeToolPermission("Bash", toolInput, "always").updatedInput, toolInput);
+    // The value handed back is the same object, not a copy the tool would see as
+    // a different input.
+    assert.equal(claudeToolPermission("Bash", toolInput, "ask").updatedInput, toolInput);
+
     // A human handoff still wins: the box is paused for the human at the screen.
     const askDirectory = path.join(workspace, ".grokbot");
     await mkdir(askDirectory, { recursive: true });
     await writeFile(path.join(askDirectory, "ask-human.json"), "{}\n");
-    const duringHandoff = claudeToolPermission("Bash", {}, "never");
-    assert.equal(duringHandoff.behavior, "deny");
-    assert.match(duringHandoff.message, /awaiting a human handoff/);
+    const handBack = { command: "rm .grokbot/ask-human.json" };
+    const duringHandoff = claudeToolPermission("Bash", handBack, "never");
+    assert.equal(duringHandoff.behavior, "allow");
+    assert.deepEqual(duringHandoff.updatedInput, handBack);
+    const blocked = claudeToolPermission("Bash", toolInput, "never");
+    assert.equal(blocked.behavior, "deny");
+    assert.match(blocked.message, /awaiting a human handoff/);
   } finally {
     if (previousAdmin === undefined) delete process.env.SAND_LOCAL_ADMIN;
     else process.env.SAND_LOCAL_ADMIN = previousAdmin;
