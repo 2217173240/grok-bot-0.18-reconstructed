@@ -12,6 +12,7 @@
 #   G3  a real exec round-trips through the daemon's ConnectRPC service on
 #       1337 (protocol + Bearer token + workspace mapping) with exact output
 #   G4  cold container has no Chromium processes (browsers start on demand)
+#   G5  box 用户可以在自己的缓存目录创建 Claude CLI MCP 日志
 #
 # Desktop profile additionally (GROKBOT_EVAL_DESKTOP=1 via the runner):
 #   D1  the desktop plane is alive (xdpyinfo) at the pinned geometry 1280x800
@@ -132,6 +133,12 @@ elif [ "$PROBE_OUTPUT" = "0" ]; then
   pass "G4 no Chromium processes on the cold container (browsers on demand)"
 else
   fail "G4 Chromium processes present: $PROBE_OUTPUT"
+fi
+
+if in_box 'mkdir -p /home/box/.cache/claude-cli-nodejs/gate && test -w /home/box/.cache/claude-cli-nodejs/gate'; then
+  pass "G5 Claude CLI MCP log cache is writable by the box user"
+else
+  fail "G5 Claude CLI MCP log cache is not writable by the box user"
 fi
 
 
