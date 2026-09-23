@@ -103,7 +103,7 @@ flowchart TD
 
 ## 需要用户提供条件才能继续验收的能力
 
-1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空，本轮遵循“仅验收已配置项”，所以没有真实账户调用结果。提供者可在应用 Settings → Router 保存各自密钥，再执行文本、图片、工具调用、取消和转录回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，因此 Codex 图片附件与桌面应用 Settings 切换后的真实回合没有验收结论。
+1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空，本轮遵循“仅验收已配置项”，所以没有真实账户调用结果。提供者可在应用 Settings → Router 保存各自密钥，再执行文本、图片、工具调用、取消和转录回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，生产容器也不绑定 `~/.codex`；因此 Codex 图片附件与桌面应用 Settings 切换后的真实回合没有验收结论。
 2. **passkey 与人工接管。** `sand-webauthn-signer` 已随固定哈希的原生依赖进入安装包，尚未在用户的 passkey 服务完成真实注册或登录。noVNC 的正确 token 与错误 token 已经通过真实 WebSocket 握手核对，Computer 也已操作桌面。用户决定本轮只验收自动化路径；真人输入凭据、交还控制权和会话恢复需要以后提供测试站点并亲自完成。
 3. **公开分发与原版专用服务。** 当前本地安装已经完成；公开再分发仍需按 `PROVENANCE.md` 对原版 Electron、renderer、18 张图片和原生文件执行权利审查。发布包明确不包含 `csnaps` carrier，代码库遥测接口提供无操作实现。若交付目标包括复现该原版服务，需要单独确定其数据范围和用途。
 

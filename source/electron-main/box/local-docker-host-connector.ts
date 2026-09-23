@@ -440,11 +440,11 @@ export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcess
   return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
-    const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> } };
+    const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> }; Mounts?: readonly { Destination?: unknown }[] };
     return {
       exists: true,
       running: value.State?.Running === true,
@@ -453,6 +453,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       hostSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.host-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.host-sha256"] as string : "",
       boxExecDaemonSha256: typeof value.Config?.Labels?.[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] === "string" ? value.Config.Labels[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
+      hasCodexAuthMount: value.Mounts?.some(mount => mount.Destination === "/root/.codex") === true,
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
       desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
@@ -651,12 +652,11 @@ export async function stageCurrentHostBundle(settingsPath: string): Promise<Loca
   };
 }
 
-async function localAuthMountArguments(): Promise<string[]> {
-  const mounts: string[] = [];
-  for (const [source, destination] of [[join(homedir(), ".codex"), "/root/.codex"], [join(homedir(), ".claude"), "/root/.claude"]] as const) {
-    if (await isDirectory(source)) mounts.push("--mount", `type=bind,src=${source},dst=${destination},readonly`);
-  }
-  return mounts;
+async function localClaudeMountArguments(): Promise<string[]> {
+  const source = join(homedir(), ".claude");
+  return await isDirectory(source)
+    ? ["--mount", `type=bind,src=${source},dst=/root/.claude,readonly`]
+    : [];
 }
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
@@ -708,7 +708,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // reporting itself current, and staged-runtime pruning may then delete the
   // directory it is still reading.
   const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
@@ -742,7 +742,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // truth; the merge runs only at container creation.
     const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
     await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
-    const authMounts = await localAuthMountArguments();
+    const authMounts = await localClaudeMountArguments();
     // Plugin definitions are the one input the box cannot obtain for itself.
     // Binding the user's file means the computer always reads the current
     // version, and an installation that never wrote one simply has no mount.
