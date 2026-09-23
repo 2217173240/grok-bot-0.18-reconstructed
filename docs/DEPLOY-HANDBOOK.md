@@ -49,7 +49,7 @@ Colima VM (aarch64) ── grok-bot-local-vm 容器    ← 计算机（Linux 桌
 ```sh
 # 主仓库（重建版 bot）
 git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
-cd grok-bot-0.18-reconstructed && git checkout 671541a   # 或 main 最新
+cd grok-bot-0.18-reconstructed
 
 # box 镜像源仓库（base 镜像 grok-box-base:arm64 的全部构建输入）
 git clone https://github.com/2217173240/grok-bot-box-image.git
@@ -63,8 +63,9 @@ git clone https://github.com/2217173240/grok-bot-box-image.git
 
 ```sh
 # 源机：
-docker save grok-box-base:arm64 -o /tmp/base.tar
-docker save grok-bot-exec-box:arm64 -o /tmp/exec-box.tar
+mkdir -p .cache
+docker save grok-box-base:arm64 -o .cache/base.tar
+docker save grok-bot-exec-box:arm64 -o .cache/exec-box.tar
 # 传到新机后：
 docker load -i base.tar && docker load -i exec-box.tar
 docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}'
@@ -75,12 +76,13 @@ docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "c
 
 ```sh
 # 1) Colima VM（源机参数，照抄）：aarch64 / 4C / 6GiB / 30GiB
-colima start --cpu 4 --memory 6 --disk 30 --arch aarch64
+colima start --profile grokbot --cpu 4 --memory 6 --disk 30 --arch aarch64
+export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
 # ⚠ Colima 默认只共享 /Users —— 仓库和数据根必须在 /Users 下，/tmp 下的 bind mount 对容器不可见（实测坑）
 
 # 2) base 镜像（box 镜像源仓库根为上下文；31 步全过为成功判据）
 cd grok-bot-box-image
-docker build --platform linux/arm64 -f box-image/Dockerfile -t grok-box-base:arm64 .
+docker build --platform linux/arm64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -f box-image/Dockerfile -t grok-box-base:arm64 .
 
 # 3) 薄层（自带临时小上下文，避免把仓库 node_modules 撑进去）
 cd <grok-bot-repo>
@@ -88,7 +90,9 @@ docker/build-arm64-box.sh
 # 成功判据：构建日志含 "tree-sitter loads natively" 和 "node:sqlite available"
 ```
 
-**deps-pin 三处对账**（防"仓库依赖升了、镜像里还是旧的"）：pin = sha256(package-lock.json ‖ scripts/apply-third-party-patches.mjs ‖ docker/arm64-exec-box.Dockerfile)，同时存在于 App 的 build-stamp、镜像 label、门禁 G0。任一不符：`docker/build-arm64-box.sh` 重建薄层（base 不用动）。
+基础镜像需要与 `docker/base-image.json` 的 digest、源码提交和平台匹配。构建源码应检出其中的 `sourceRevision`；APT 软件源变更仍可能改变产物，因此重新生成的镜像需经过验收并显式更新清单。构建脚本同时检查 OCI 源仓库与提交 label。
+
+依赖 pin 的输入由 `scripts/lib/deps-pin.mjs` 统一列举，包括基础镜像清单、依赖锁文件和本仓库镜像脚本。App 的 build-stamp、执行镜像 label 和门禁 G0 使用相同的 pin；输入改变后需重新构建执行镜像。
 
 ## 4. 打包链（App 本体）
 

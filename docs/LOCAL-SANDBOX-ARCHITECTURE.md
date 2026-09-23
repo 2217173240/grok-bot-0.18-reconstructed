@@ -111,6 +111,9 @@ flowchart TD
 
 基础镜像身份记录在 `docker/base-image.json`，由构建脚本按 digest 选择，并进入 `readDepsPin`。
 `org.opencontainers.image.base.name` 镜像 label 保存构建使用的父镜像引用。
+清单中的 `sourceRepository` 与 `sourceRevision` 对应基础镜像的 OCI label，构建时同时核对。Chromium 主 profile 的数据卷链接由基础镜像提供。
+
+多屏同步使用 host 每三秒发布的全局 activity 文件。任意 agent 运行、状态超过十五秒、状态无法读取或人工接管文件存在时，延后后台写入；全部 agent 空闲后再同步。页面内在写入时检查 origin 和已有键，空页初始化与刷新在同一次页面执行中完成。每个浏览器实例和 origin 最多尝试两次自动刷新，同步轮次串行执行。该状态检查在发送命令前进行，不构成与任意外部浏览器操作的互斥锁；cookie 的读取和写入也受 CDP 两次调用之间的时间窗口限制。
 
 ## 代码保证的准确范围
 
@@ -144,12 +147,13 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 - `scripts/ui-sandbox-smoke.mjs` 仅在 Linux 容器中运行，通过真实 Electron CDP 输入任务并读取 DOM。隔离网络中创建 Bot、发送任务，收到 Linux、文件 SHA256 和 MCP echo 回复。容器文件独立计算的 SHA256 为 `b9fb3a42d2e8df8f50f0221b7b13e39545416da389fd70f88cdc49a5e7e40876`，与 UI 回复一致；工具记录含对应 `mcp__grok_bot_plugins__echo__echo` 请求及成功结果。该场景使用 Claude SDK 和 GLM 5.2。
 - UI 验收启动前需要通过产品设置或带 `version: 1` 的有效设置文件选择 `inferenceProvider: "claude-code"`。测试数据根、网关和浏览器 profile 均独立于生产。验收脚本输出随机文件名，需另外在 provider 容器核对文件内容和工具执行记录。
 
-- 当前 main 在 macOS 完整执行 `npm run package`：前端与源码类型检查、110 项测试均通过，零失败、零跳过。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。GitHub main 的 `check` 同样通过。
+- 当前 main 在 macOS 完整执行 `npm run package`：前端与源码类型检查、115 项测试均通过，零失败、零跳过。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。GitHub main 的 `check` 同样通过。
 - 从当前 main 重新构建 `grok-bot-exec-box:arm64` 后，exec 门禁 G0–G5 与 desktop 门禁 D1–D6 全部通过，涵盖真实 Connect RPC 工具往返、缓存写入、1280×800 桌面、noVNC 访问控制、XTEST 截图与桌面进程持有者。
 - `/Applications` 中的新包启动后，local admin 直接显示会话输入，不显示登录按钮。真实 GLM 回合完成容器内文件写入与读取、SHA-256、stdio MCP echo；独立读取的文件与界面回复一致。
 - 真实 UI 请求经 `Task` 派发 `computerUse` 子代理，子代理用 `Computer` 完成鼠标移动和截图；独立检查持久化文件为 1280×800 PNG。截图 MIME、扩展名与文件内容一致。
 - 真实 UI 上传仓库自带的 Router 设置页 PNG，发送后的用户转录含 `[Image]`；配置的 GLM 服务完成图像分析并识别 Router 页面。附件暂存使用 `node:crypto` 的 `randomUUID` 独立导出，避免未绑定方法在 Electron 主进程产生 `ERR_INVALID_THIS`。
 - `scripts/command-code-invalid-key-smoke.mjs` 在只读隔离容器中调用 Command Code 的真实 `/chat/completions` 接口。固定无效密钥收到 HTTP 401；流、响应、用量和元数据五项均在超时前返回清晰的鉴权错误。该检查不使用生产凭据，也不验证有效账号的功能。
+- 镜像仓库的真实双 Chromium 探针通过 22 项断言，涵盖忙态恢复、无效状态、人工接管、origin 变更和常驻刷新上限。`scripts/box-profile-persistence-e2e.mjs` 在独立数据卷写入真实 cookie/localStorage，随后强制结束并替换容器，验证数据保留及旧 Chromium 锁的恢复。
 - Mac 拦截记录扫描 4171 行，包含 2114 次受阻的 Cursor/xAI 请求，零外发记录；容器记录扫描 961 行，零 Cursor/xAI 外发记录。这个证据覆盖已执行的回合与记录范围。早期网络隔离测试还在 Docker `--internal` 网络中只允许 GLM endpoint，并拒绝 Cursor/xAI 目标。
 - 旧 `finonelib` profile 中与 Grok Bot 相关的容器、卷和镜像已清理，profile 本身因属于其他项目而保留并停止。运行中的项目专用 `grokbot` profile 只保留生产容器、生产数据卷、当前执行镜像和构建所需的基础镜像。
 

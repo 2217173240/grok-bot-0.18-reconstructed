@@ -26,6 +26,9 @@ export async function readBaseImage(repoRoot) {
   if (typeof value.reference !== "string" || !/^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(value.reference) || value.platform !== "linux/arm64") {
     throw new Error("Base image must specify a sha256 digest and linux/arm64 platform.");
   }
+  if (value.sourceRepository !== "https://github.com/2217173240/grok-bot-box-image" || !/^[a-f0-9]{40}$/.test(value.sourceRevision ?? "")) {
+    throw new Error("Base image must identify its source repository and full source revision.");
+  }
   return value;
 }
 
@@ -43,5 +46,6 @@ export async function readDepsPin(repoRoot) {
 
 if (process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  process.stdout.write(`${process.argv.includes("--base-image") ? (await readBaseImage(repoRoot)).reference : await readDepsPin(repoRoot)}\n`);
+  const base = await readBaseImage(repoRoot);
+  process.stdout.write(`${process.argv.includes("--base-image") ? base.reference : process.argv.includes("--base-image-revision") ? base.sourceRevision : await readDepsPin(repoRoot)}\n`);
 }

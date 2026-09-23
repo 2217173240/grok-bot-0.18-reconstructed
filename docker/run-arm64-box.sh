@@ -10,7 +10,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
 NAME=grok-bot-exec-eval
-IMAGE=grok-bot-exec-box:arm64
+IMAGE="${GROKBOT_EVAL_IMAGE:-grok-bot-exec-box:arm64}"
 WAIT="${1:-90}"
 GATEWAY_PORT="${GROKBOT_EVAL_PORT:-1341}"
 
@@ -27,8 +27,9 @@ TOKEN=$(python3 -c "import json; print(json.load(open('$TOKEN_FILE'))['token'])"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 # A fresh named volume is root-owned; the box user must own /workspace like
 # the production bind mount does (the EACCES lesson, eval-container edition).
-docker run --rm -v grok-bot-exec-eval-workspace:/workspace \
-  --entrypoint /bin/sh "$IMAGE" -c 'chown -R box:box /workspace' >/dev/null 2>&1 || true
+docker run --rm --user root -v grok-bot-exec-eval-workspace:/workspace \
+  -v grok-bot-exec-eval-data:/home/box/sand-data \
+  --entrypoint /bin/sh "$IMAGE" -c 'chown -R box:box /workspace /home/box/sand-data' >/dev/null
 # The custom image has no supervisor; the bind-mounted host IS the container
 # process. GROKBOT_EVAL_DESKTOP=1 mirrors the production desktop contract:
 # box-init-exec entrypoint (desktop in the background, host foreground),
@@ -46,6 +47,7 @@ fi
 docker run --detach --name "$NAME" \
   "${MODE_ARGS[@]}" \
   --env SAND_GATEWAY_BIND_HOST=0.0.0.0 \
+  --env SAND_HOST_IN_BOX=1 --env SAND_LOCAL_ADMIN=1 \
   --env SAND_HOST_PORT=1340 \
   --env "SAND_GATEWAY_TOKEN=$TOKEN" \
   --env SAND_GATEWAY_REQUIRE_AUTH=1 \
