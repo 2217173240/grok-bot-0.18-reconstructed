@@ -320,7 +320,7 @@ test("docker CLI finds the project's own Colima profile instead of whichever one
     const server = createServer();
     await new Promise((resolve, reject) => {
       server.once("error", reject);
-      server.listen(socket, resolve);
+      server.listen(path.relative(process.cwd(), socket), resolve);
     });
     servers.push(server);
   }
