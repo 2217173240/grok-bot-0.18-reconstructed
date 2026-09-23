@@ -20,6 +20,8 @@ import {
   RequestContext,
   RequestContextEnv,
 } from "../packages/proto/generated/agent/v1/request_context_exec_pb.js";
+import { ConversationStateStructure } from "../packages/proto/generated/agent/v1/agent_pb.js";
+import { CustomSubagentPermissionMode } from "../packages/proto/generated/agent/v1/subagents_pb.js";
 import {
   SummarizationHandler,
   type SummarizationPromptSession,
@@ -116,7 +118,13 @@ import {
   createShellWatchReadAccessor,
   type ShellTerminalWatchHost,
 } from "./runner/shell-terminal-watch.js";
-import { DEFAULT_SAND_SYSTEM_PROMPT } from "./runner/system-prompt.js";
+import { DEFAULT_SAND_SYSTEM_PROMPT, buildSandSubagentSystemPrompt } from "./runner/system-prompt.js";
+import {
+  createSandComputerUseSubagentConfig,
+  isComputerUseSubagentType,
+} from "./runner/tools/sand-computer-use-subagent.js";
+import type { TurnUsage } from "./runner/turn-usage.js";
+import { createSandBrowserUseSubagentConfig } from "./runner/tools/sand-browser-use-subagent.js";
 import {
   createSystemPromptAssembly,
   type PromptSnapshotStore,
@@ -258,6 +266,7 @@ export interface ProductionSessionBoundRunner {
   readonly computerUse: {
     allocateWindow(agentId: string): unknown | null;
     freeWindow(agentId: string): void;
+    recordTurnEnded?(usage: TurnUsage | undefined): void;
   } | undefined;
   run(prompt: string, options?: SubagentRunOptions): Promise<unknown>;
   interrupt(reason: string): unknown;
@@ -265,6 +274,7 @@ export interface ProductionSessionBoundRunner {
   getObservedToolCallCount(): number;
   getActivitySnapshot(): readonly string[];
   getTranscriptPath(): string | null;
+  setAgentConversationStateStructure(structure: ConversationStateStructure): void;
   setAgentStore(agentStore: unknown, agentProfileProvider?: unknown): void;
   setMemoryStore(memoryStore: unknown): void;
   setUserMemory(userMemory: unknown): void;
@@ -995,13 +1005,13 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
     const createTurnToolProjections =
       autoReviewGate == null
         ? undefined
-        : (input: ProductionTurnToolInputs): ProductionTurnHostToolProjections => {
+        : (input: ProductionTurnToolInputs, agentId = session.id): ProductionTurnHostToolProjections => {
           const shell = createHostShellExecutor({
             resourceAccessor: input.resourceAccessor,
             assertNoPendingApproval: autoReviewGate.assertNoPendingApproval,
             auditShellCommand: command => {
               method(actionAuditor as DynamicApi, "record")?.({
-                agentId: session.id,
+                agentId,
                 occurredAtMs: Date.now(),
                 action: {
                   kind: "shellCommand",
@@ -1019,7 +1029,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
               resourceAccessor: input.resourceAccessor,
               autoReview: {
                 mode: projectionAutoReviewModes.computer,
-                agentId: session.id,
+                agentId,
                 boxIdentity: {
                   boxId: session.id,
                   windowGeneration: `${autoReviewController?.hostGeneration ?? "host"}:${session.id}`,
@@ -1048,7 +1058,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
               onComputerAction: action => {
                 deps.emitGatewayEvent({
                   channel: "computer-action",
-                  payload: { agentId: session.id, ...action },
+                  payload: { agentId, ...action },
                 });
               },
             }),
@@ -1064,11 +1074,11 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
               resourceAccessor: input.resourceAccessor,
               box: remoteBox as unknown as HostBrowserBoxOwner<unknown>,
               getBoxId: () => session.id,
-              getDefaultViewId: () => session.id,
+              getDefaultViewId: () => agentId,
               executeShell: shell,
               autoReview: {
                 mode: projectionAutoReviewModes.computer,
-                agentId: session.id,
+                agentId,
                 boxIdentity: {
                   boxId: session.id,
                   windowGeneration: `${autoReviewController?.hostGeneration ?? "host"}:${session.id}`,
@@ -1258,7 +1268,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
     let shellWatchWatermark:
       | { readonly turnCount: number; readonly boundaryRef: Uint8Array; readonly lastUserMessageId?: string; readonly hasUserTurn: boolean }
       | undefined;
-    const productionPromptGlue = productionContext === undefined
+    const createProductionPromptGlue = (agentId: string, subagentType?: string) => productionContext === undefined
       || productionRequestContext === undefined
       ? undefined
       : (() => {
@@ -1278,9 +1288,9 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           remoteBox: remoteBoxForPrompt,
           userComputers,
           remoteBoxHasDesktop: true,
-          isSubagentRunner: false,
-          isComputerUseSubagent: false,
-          isBrowserUseSubagent: false,
+          isSubagentRunner: subagentType !== undefined,
+          isComputerUseSubagent: isComputerUseSubagentType(subagentType),
+          isBrowserUseSubagent: subagentType?.replace(/[-_ ]/g, "").toLowerCase() === "browseruse",
           requestContext: productionRequestContext,
           ...(typeof hooks.agentProfileProvider === "function"
             ? { agentProfileProvider: () => hooks.agentProfileProvider?.() ?? { name: "", description: "" } }
@@ -1290,9 +1300,9 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             : { readVideoAttachmentBytes: readVideoAttachment }),
           isSpotlightEnabled: () => method(experiments, "isSpotlightEnabled")?.() ?? false,
           uploadAttachmentsIntoBox: async paths =>
-            new Map(await method(attachments, "stageIntoBox")?.(session.id, paths) ?? []),
+            new Map(await method(attachments, "stageIntoBox")?.(agentId, paths) ?? []),
           getRemoteBoxAvailable: () => method(remoteBox, "isAvailable")?.() !== false,
-          getConversationId: () => session.id,
+          getConversationId: () => agentId,
           resolveBoxId: () => session.id,
           ...(mcpCustomInstructions === undefined
             ? {}
@@ -1317,9 +1327,9 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             const shellHost: ShellTerminalWatchHost<Context> = {
               ctx: productionContext,
               ...generated,
-              getConversationId: () => session.id,
-              ensureBoxReady: async (pollContext, agentId) => {
-                const connection = await remoteBox.ensureReady(pollContext, agentId);
+              getConversationId: () => agentId,
+              ensureBoxReady: async (pollContext) => {
+                const connection = await remoteBox.ensureReady(pollContext, session.id);
                 return {
                   terminalsFolder: method(remoteBox, "getTerminalsFolder")?.() ?? "",
                   remoteAccessor: createShellWatchReadAccessor(connection.remoteAccessor),
@@ -1334,6 +1344,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           },
         });
       })();
+    const productionPromptGlue = createProductionPromptGlue(session.id);
     const productionSystemPromptAssembly = productionContext === undefined
       || productionRequestContext === undefined
       ? undefined
@@ -1520,15 +1531,17 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
       options,
     );
 
-    const baseProductionResourceAccessor = createPerTurnResourceAccessor(
-      remoteBox as unknown as ProductionBoxResourceOwner,
-      session.id,
-    );
-    const productionResourceAccessor = async (
-      context: unknown,
-    ): Promise<ProductionResourceAccessor> => {
+    const createProductionResourceAccessor = (
+      getRunner: () => Runner | undefined,
+      agentId: string,
+    ) => {
+      const baseProductionResourceAccessor = createPerTurnResourceAccessor(
+        remoteBox as unknown as ProductionBoxResourceOwner,
+        session.id,
+      );
+      return async (context: unknown): Promise<ProductionResourceAccessor> => {
       const owner = asRemoteBoxResourceOwner(remoteBox);
-      const runner = builtRunner as {
+      const runner = getRunner() as {
         readonly computerUse?: RemoteBoxResourceHost["computerUse"];
         setRemoteBoxTerminalsFolder?(folder: string): void;
         probeNavigationAfterComputerUse?(
@@ -1561,7 +1574,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
         remoteBox: owner,
         remoteBoxHasDesktop: true,
         resolveBoxId: () => session.id,
-        getConversationId: () => session.id,
+        getConversationId: () => agentId,
         setRemoteBoxTerminalsFolder: folder => runner.setRemoteBoxTerminalsFolder?.(folder),
         autoReviewGate: remoteAutoReviewGate,
         auditShellCommand: (_agentId, kind, command, _target, attribution) =>
@@ -1574,7 +1587,12 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           : { autoReviewClassifierExecutor: autoReview.autoReviewClassifierExecutor }),
       });
       return asProductionResourceAccessor(accessor);
+      };
     };
+    const productionResourceAccessor = createProductionResourceAccessor(
+      () => builtRunner,
+      session.id,
+    );
     const localProductionResourceAccessor = createPerTurnResourceAccessor(
       localExec.box as ProductionBoxResourceOwner,
       session.id,
@@ -2219,8 +2237,12 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
       };
     };
 
-    const createProductionTurnSettleHost = (): TurnSettleHost => {
-      const runner = builtRunner as {
+    const createProductionTurnSettleHostFor = (
+      getRunner: () => Runner | undefined,
+      agentId: string,
+      isSubagent: boolean,
+    ): TurnSettleHost => {
+      const runner = getRunner() as {
         readonly isSubagentRunner?: boolean;
         getBlobStore?: () => unknown;
         getConversationStateStructure?: () => unknown;
@@ -2236,15 +2258,15 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
       ) throw new TypeError("production Agent checkpoint store is not bound");
       const generation = runner?.currentRunGeneration;
       return {
-        isSubagentRunner: isSharedRoomTurn,
-        ...(transcriptMirrorForTurn === undefined
+        isSubagentRunner: isSubagent || isSharedRoomTurn,
+        ...(isSubagent || transcriptMirrorForTurn === undefined
           ? {}
           : { transcriptMirror: transcriptMirrorForTurn }),
-        getTranscriptId: () => session.id,
+        getTranscriptId: () => agentId,
         getBlobStore: () => runner?.getBlobStore?.() ?? getAgentBlobStore(
           store as Parameters<typeof getAgentBlobStore>[0],
         ),
-        agentStore: () => ({
+        agentStore: () => isSubagent ? null : ({
           handleCheckpoint: (context: unknown, checkpoint: unknown) =>
             store.handleCheckpoint(context, checkpoint),
           getMetadata: (key: string) => store.getMetadata(key),
@@ -2301,20 +2323,90 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
       };
       const baseTurn: TurnToolsetTurnInput = {
         autoReviewModes,
-        subagentConfigs: [],
+        subagentConfigs: [
+          {
+            ...createSandComputerUseSubagentConfig({
+              browserUseOffered: method(experiments, "isBrowserUseSubagentEnabled")?.() === true,
+            }),
+            permissionMode: CustomSubagentPermissionMode.DEFAULT,
+          },
+          ...(method(experiments, "isBrowserUseSubagentEnabled")?.() === true
+            ? [{ ...createSandBrowserUseSubagentConfig(), permissionMode: CustomSubagentPermissionMode.DEFAULT }]
+            : []),
+        ] as unknown as NonNullable<TurnToolsetTurnInput["subagentConfigs"]>,
       };
       const staticModelId = process.env.SAND_AGENT_MODEL ?? DEFAULT_SAND_MODEL;
+      const createProductionShell = (
+        getRunner: () => Runner | undefined,
+        agentId: string,
+        subagentType?: string,
+      ) => {
+      const isSubagent = subagentType !== undefined;
+      const isComputerUse = isComputerUseSubagentType(subagentType);
+      const isBrowserUse = subagentType?.replace(/[-_ ]/g, "").toLowerCase() === "browseruse";
+      const promptGlue = isSubagent
+        ? createProductionPromptGlue(agentId, subagentType)
+        : productionPromptGlue;
+      if (promptGlue === undefined) throw new TypeError("production prompt glue is not bound");
+      const desktopToolInputs = (
+        turn: TurnToolsetTurnInput,
+        props: Parameters<NonNullable<TurnToolsetHostFactoryProvider["createComputerToolInputs"]>>[1],
+      ) => {
+        if (turn.remoteBoxResourceAccessor === undefined) {
+          throw new TypeError("desktop resource accessor is not bound");
+        }
+        const projectedInput = {
+          ...props,
+          resourceAccessor: turn.remoteBoxResourceAccessor,
+        } as unknown as ProductionTurnToolInputs;
+        return {
+          input: projectedInput,
+          projection: createTurnToolProjections?.(projectedInput, agentId),
+        };
+      };
       const lazyToolHost = () => createProductionTurnToolsetHost({
         turn: baseTurn,
-        factoryProvider: createTurnToolsetFactoryProvider(hostDependencies()),
-        isSubagentRunner: false,
+        factoryProvider: {
+          ...createTurnToolsetFactoryProvider(hostDependencies()),
+          ...(isComputerUse
+            ? {
+                createComputerToolInputs: (turn, props) => {
+                  const { input, projection } = desktopToolInputs(turn, props);
+                  const create = projection?.createComputerToolDependencies;
+                  if (create === undefined) throw new TypeError("Computer tool is not bound");
+                  return { dependencies: create(input) };
+                },
+              } satisfies Pick<TurnToolsetHostFactoryProvider, "createComputerToolInputs">
+            : {}),
+          ...(!isSubagent
+            ? {
+                createScreenshotToolInputs: (turn, props) => {
+                  const { input, projection } = desktopToolInputs(turn, props);
+                  const create = projection?.createScreenshotToolDependencies;
+                  if (create === undefined) throw new TypeError("Screenshot tool is not bound");
+                  return { dependencies: create(input) };
+                },
+              } satisfies Pick<TurnToolsetHostFactoryProvider, "createScreenshotToolInputs">
+            : {}),
+          ...(isBrowserUse
+            ? {
+                createBrowserToolInputs: (turn, props) => {
+                  const { input, projection } = desktopToolInputs(turn, props);
+                  const create = projection?.createBrowserDriverDependencies;
+                  if (create === undefined) throw new TypeError("Browser tool is not bound");
+                  return { dependencies: create(input) };
+                },
+              } satisfies Pick<TurnToolsetHostFactoryProvider, "createBrowserToolInputs">
+            : {}),
+        },
+        isSubagentRunner: isSubagent,
         isSharedRoomRunner: isSharedRoomTurn,
-        isBoxScopedSubagent: false,
-        isComputerUseSubagent: false,
-        isBrowserUseSubagent: false,
+        isBoxScopedSubagent: isComputerUse || isBrowserUse,
+        isComputerUseSubagent: isComputerUse,
+        isBrowserUseSubagent: isBrowserUse,
         isSystemPromptOverridden: typeof overrides.systemPrompt === "string",
         remoteBoxHasDesktop: true,
-        getConversationId: () => session.id,
+        getConversationId: () => agentId,
         getRemoteBoxAvailable: () => method(remoteBox, "isAvailable")?.() !== false,
         cloudAgentsDisabledByTeam: () => method(experiments, "isCloudAgentsDisabledByTeam")?.() ?? false,
         spotlightEnabled: () => method(experiments, "isSpotlightEnabled")?.() ?? false,
@@ -2326,7 +2418,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           : { localToolPermission: projectedLocalToolPermission }),
       });
       const getProductionConversationState = () => {
-        const runner = builtRunner as {
+        const runner = getRunner() as {
           getAgentConversationStateStructure?: () => unknown;
         } | undefined;
         if (typeof runner?.getAgentConversationStateStructure === "function") {
@@ -2338,7 +2430,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
         }
         throw new TypeError("production Agent conversation state is not bound");
       };
-      runnerOptions.productionTurnRunShell = createProductionTurnRunShellHostInput({
+      return createProductionTurnRunShellHostInput({
         createAgentOwnerInput: ({ requestId, runOptions, context, cancelThisRun, emitUpdate }) => {
           if (session.agentStore == null || typeof session.agentStore.getBlobStore !== "function") {
             throw new TypeError("production Agent blob store is not bound");
@@ -2358,7 +2450,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             ? undefined
             : {
                 mode,
-                agentId: session.id,
+                agentId,
                 surface,
                 requestContext: autoReviewRequestContext,
                 ...(autoReviewController === undefined
@@ -2412,24 +2504,28 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           };
           return {
             context,
-            conversationId: session.id,
+            conversationId: agentId,
             requestId,
             inference: createTypedInferenceOwner(extensions.api("inference").port),
             onRequestId: requestIdForwarder(hooks, "agent"),
-            isSubagentRunner: false,
+            isSubagentRunner: isSubagent,
             isSilenceAllowed: runOptions.isSilenceAllowed === true,
             ...(runOptions.ackToken === undefined
               ? {}
               : { ackToken: runOptions.ackToken }),
             canUseSelfSummary: () => true,
             cancelThisRun: reason => {
-              const runner = builtRunner as { interrupt?: (value: string) => boolean } | undefined;
+              const runner = getRunner() as { interrupt?: (value: string) => boolean } | undefined;
               runner?.interrupt?.(reason.reason);
             },
-            createResourceAccessor: localProductionResourceAccessor,
-            createRemoteBoxResourceAccessor: productionResourceAccessor,
+            createResourceAccessor: isSubagent
+              ? createPerTurnResourceAccessor(localExec.box as ProductionBoxResourceOwner, agentId)
+              : localProductionResourceAccessor,
+            createRemoteBoxResourceAccessor: isSubagent
+              ? createProductionResourceAccessor(getRunner, agentId)
+              : productionResourceAccessor,
             createTurnLocalResourceProjectionInput: baseAccessor => {
-              const runner = builtRunner;
+              const runner = getRunner();
               if (runner === undefined) {
                 throw new TypeError("production turn resource runner is not bound");
               }
@@ -2445,16 +2541,30 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                   ...runnerOptions,
                   conversationId: agentId,
                   transcriptId: agentId,
+                  getAgentId: () => agentId,
+                  getBoxId: () => session.id,
                   isSubagent: true,
                   subagentType: args.subagentType,
+                  // 子 Agent 的增量留在本回合，完成后由子代理运行时向主 Agent 交付结果。
+                  transport: {
+                    onUpdate: (update: { readonly type: string; readonly usage?: unknown }) => {
+                      if (update.type === "turn-ended") {
+                        child.computerUse?.recordTurnEnded?.(update.usage as TurnUsage | undefined);
+                      }
+                    },
+                  },
+                  onRunLifecycle: () => {},
                   initialState: {
                     turns: [],
                     summaryArchives: [],
                     turnTimings: [],
                   },
-                  productionTurnRunShell: undefined,
+                  productionTurnRunShell: createProductionShell(
+                    () => child, agentId, args.subagentType,
+                  ),
                 });
                 bindSessionOwnedRunner(child);
+                child.setAgentConversationStateStructure(new ConversationStateStructure());
                 ownedRunners.add(child);
                 return {
                   run: async (prompt, options) => {
@@ -2503,7 +2613,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                   assertNoPendingApproval: () => turnAutoReviewGate.assertNoPendingApproval(),
                 },
                 actionAuditor: projectedActionAuditor,
-                agentId: session.id,
+                agentId,
               };
             },
             blobStore: getAgentBlobStore(
@@ -2514,17 +2624,19 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             staticConfig: {
               modelId: staticModelId,
               agentTokenLimit: 200_000,
-              conversationId: session.id,
-              isBoxScopedSubagent: false,
-              isSubagentRunner: false,
+              conversationId: agentId,
+              isBoxScopedSubagent: isComputerUse || isBrowserUse,
+              isSubagentRunner: isSubagent,
               isSharedRoomRunner: isSharedRoomTurn,
               sandSendMessageDeliveryOwed: method(experiments, "isSendMessageDeliveryOwedEnabled")?.() ?? false,
-              systemPromptGenerator: () => productionSystemPromptAssembly?.getSystemPrompt() ?? DEFAULT_SAND_SYSTEM_PROMPT,
+              systemPromptGenerator: () => isSubagent
+                ? buildSandSubagentSystemPrompt({ subagentType })
+                : productionSystemPromptAssembly?.getSystemPrompt() ?? DEFAULT_SAND_SYSTEM_PROMPT,
             },
             emitUpdate,
             interactionObservers: {},
             diskPressureReminder: foreverBox.diskPressureReminder,
-            ...(productionSystemPromptAssembly === undefined
+            ...(isSubagent || productionSystemPromptAssembly === undefined
               ? {}
               : (() => {
                   const profilePromptSnapshotStore = asPromptSnapshotStore(session.db);
@@ -2536,7 +2648,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           } satisfies ProductionTurnAgentOwnerInput;
         },
         promptOptions: (_prompt, options) => toGeneratedTurnPromptOptions(options),
-        assembleGeneratedTurnAction: productionPromptGlue.assembleGeneratedTurnAction,
+        assembleGeneratedTurnAction: promptGlue.assembleGeneratedTurnAction,
         compactionEpoch: () => 0,
         getConversationState: getProductionConversationState,
         ...(mcp.mcp != null && typeof mcp.mcp.getTools === "function"
@@ -2574,24 +2686,32 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           getExecutor: () => createTextExecutor(owner.runContext.toolSession.getExecutor()),
         }),
         context: () => productionContext,
-        createSettleHost: createProductionTurnSettleHost,
+        createSettleHost: () => createProductionTurnSettleHostFor(
+          getRunner, agentId, isSubagent,
+        ),
         profilePromptSnapshots: () => session.db,
-        isSubagentRunner: false,
+        isSubagentRunner: isSubagent,
         subagents: { sessions: new Map() },
-        getConversationId: () => session.id,
-        runGeneration: () => (builtRunner as { currentRunGeneration?: number } | undefined)?.currentRunGeneration ?? 0,
+        getConversationId: () => agentId,
+        runGeneration: () => (getRunner() as { currentRunGeneration?: number } | undefined)?.currentRunGeneration ?? 0,
         setActiveTurnRequestSource: () => {},
         beginAutoReviewUserMessageEpoch: () => {},
         setActiveRunInterrupted: () => {},
         setAwaitingUserSelection: () => {},
         isAwaitingUserSelection: () => false,
-        emitRunLifecycle: event => hooks.onRunLifecycle?.(event),
-        emitUpdate: update => hooks.transport.onUpdate(update),
-        ...(hooks.transport.lastReactionApplied === undefined
+        emitRunLifecycle: event => { if (!isSubagent) hooks.onRunLifecycle?.(event); },
+        emitUpdate: update => {
+          if (!isSubagent) hooks.transport.onUpdate(update);
+        },
+        ...(isSubagent || hooks.transport.lastReactionApplied === undefined
           ? {}
           : { lastReactionApplied: () => hooks.transport.lastReactionApplied?.() === true }),
         cancelThisRun: () => {},
       });
+      };
+      runnerOptions.productionTurnRunShell = createProductionShell(
+        () => builtRunner, session.id,
+      );
     }
 
     if (deps.createRunStep != null && runnerOptions.productionTurnRunShell === undefined) {

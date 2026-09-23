@@ -129,7 +129,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   // The in-box CLI child reaches plugin tools through a loopback bridge, so
   // the tools must be advertised and the bridge closed with the stream.
   assert.match(providers, /maxTurns: 24/);
-  assert.match(providers, /xtest-input-local\.py/);
+  assert.match(providers, /use Task to delegate browserUse or computerUse/);
   assert.match(providers, /do not fall back to curl/);
   // Sensitive-input discipline (C2): typed desktop input is redacted in the
   // ledger copy, the ledger is 0600, and the agent never handles credentials.
@@ -149,18 +149,15 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(navigate, /kind: "egress-gate"/);
   assert.match(navigate, /Page\.navigate/);
   assert.match(localDocker, /MAC_BOT_PROXY=\$\{process\.env\.SAND_BOT_PROXY\.trim\(\)\}/);
-  assert.match(providers, /box-navigate/);
+  assert.match(providers, /Never drive the desktop or browser through Bash/);
   assert.match(providers, /cwd: resolveAgentWorkspace\(\)/);
   assert.match(providers, /Never simulate, guess, or invent command output/);
   // Local-admin turns carry the local identity: the assistant must know it IS
   // the sandbox and never present cursor/xai remotes as its backend.
   assert.match(providers, /there is no cloud sandbox behind you/i);
-  // The identity block is gated on local admin, and the desktop primitives are
-  // composed per execution plane: the box has no docker CLI, so in-box prompts
-  // must name the wrappers directly. tests/local-admin-desktop-primitives.test.mjs
-  // asserts the composed prompt for both planes.
+  // 本地管理员桌面提示按当前回合的 Task、Browser 与 Computer 工具选择动作。
   assert.match(providers, /localAdminDesktopPrimitiveLines/);
-  assert.match(providers, /SAND_HOST_IN_BOX/);
+  assert.match(providers, /If this turn exposes Computer/);
   // The human-handoff contract (C1): the identity teaches the ask protocol
   // with the staleness note; the box gate wraps shell/stream/computer use.
   assert.match(providers, /ask-human\.json/);
