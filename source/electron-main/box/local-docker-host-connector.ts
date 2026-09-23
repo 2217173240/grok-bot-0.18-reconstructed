@@ -326,24 +326,25 @@ export function colimaProfileName(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 // 候选顺序与 scripts/lib/docker-socket.sh 一致，独立于主机上的 socket 状态。
-export function dockerSocketCandidates(env: NodeJS.ProcessEnv, homeDir: string, profiles: readonly string[]): string[] {
+export function dockerSocketCandidates(env: NodeJS.ProcessEnv, homeDir: string, profiles: readonly string[], systemSocket = "/var/run/docker.sock"): string[] {
   return [
     join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
-    "/var/run/docker.sock",
+    systemSocket,
     join(homeDir, ".colima", "docker.sock"),
     join(homeDir, ".colima", "default", "docker.sock"),
     ...[...profiles].sort().map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
+    join(homeDir, ".orbstack", "run", "docker.sock"),
   ];
 }
 
-export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
+export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir(), systemSocket = "/var/run/docker.sock"): string | undefined {
   const configured = env.DOCKER_HOST?.trim();
   if (configured != null && configured.length > 0) return configured;
   let profiles: string[] = [];
   try {
     profiles = readdirSync(join(homeDir, ".colima"));
   } catch {}
-  for (const socket of dockerSocketCandidates(env, homeDir, profiles)) {
+  for (const socket of dockerSocketCandidates(env, homeDir, profiles, systemSocket)) {
     try {
       if (statSync(socket).isSocket()) return `unix://${socket}`;
     } catch (error) {
