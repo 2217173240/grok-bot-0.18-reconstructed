@@ -147,7 +147,8 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 - `scripts/ui-sandbox-smoke.mjs` 仅在 Linux 容器中运行，通过真实 Electron CDP 输入任务并读取 DOM。隔离网络中创建 Bot、发送任务，收到 Linux、文件 SHA256 和 MCP echo 回复。容器文件独立计算的 SHA256 为 `b9fb3a42d2e8df8f50f0221b7b13e39545416da389fd70f88cdc49a5e7e40876`，与 UI 回复一致；工具记录含对应 `mcp__grok_bot_plugins__echo__echo` 请求及成功结果。该场景使用 Claude SDK 和 GLM 5.2。
 - UI 验收启动前需要通过产品设置或带 `version: 1` 的有效设置文件选择 `inferenceProvider: "claude-code"`。测试数据根、网关和浏览器 profile 均独立于生产。验收脚本输出随机文件名，需另外在 provider 容器核对文件内容和工具执行记录。
 
-- 当前 main 在 macOS 完整执行 `npm run package`：前端与源码类型检查、115 项测试均通过，零失败、零跳过。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。GitHub main 的 `check` 同样通过。
+- macOS 完整构建执行 `npm run package`，包括前端与源码类型检查及全部自动化测试。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。
+- `Task` 默认在当前回合等待子代理结果，显式 `run_in_background: true` 才注册后续回合通知。父任务取消会终止前台子任务；两种模式共享状态、用量、审计和窗口释放流程。6 项真实子进程测试覆盖两种模式、取消与错误清理；`tests/provider-live-foreground-task.mjs` 在隔离容器经真实 Claude SDK / GLM API 和 host MCP bridge 验证子任务结果返回父任务，执行各一次、后台通知为零。
 - 从当前 main 重新构建 `grok-bot-exec-box:arm64` 后，exec 门禁 G0–G5 与 desktop 门禁 D1–D6 全部通过，涵盖真实 Connect RPC 工具往返、缓存写入、1280×800 桌面、noVNC 访问控制、XTEST 截图与桌面进程持有者。
 - `/Applications` 中的新包启动后，local admin 直接显示会话输入，不显示登录按钮。真实 GLM 回合完成容器内文件写入与读取、SHA-256、stdio MCP echo；独立读取的文件与界面回复一致。
 - 真实 UI 请求经 `Task` 派发 `computerUse` 子代理，子代理用 `Computer` 完成鼠标移动和截图；独立检查持久化文件为 1280×800 PNG。截图 MIME、扩展名与文件内容一致。

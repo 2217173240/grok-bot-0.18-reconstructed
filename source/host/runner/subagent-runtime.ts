@@ -132,12 +132,13 @@ interface DispatchParams {
   readonly quietOrigin?: string;
 }
 
-type RunOutcome =
+export type SubagentRunOutcome =
   | { readonly status: "completed"; readonly text: string }
   | { readonly status: "aborted" }
   | { readonly status: "error"; readonly error: string };
 
 interface RuntimeMeta extends SubagentDispatchMeta {
+  readonly runInBackground: boolean;
   readonly parentAgentId: string;
   readonly subagentType: string;
   readonly title: string;
@@ -152,7 +153,7 @@ function errorMessage(error: unknown): string {
 export function createSubagentRuntime(host: SubagentRuntimeHost) {
   const now = host.now ?? Date.now;
   const subagentSessions = new Map<string, SubagentSession>();
-  const backgroundSubagentRuns = new Map<string, Promise<void>>();
+  const backgroundSubagentRuns = new Map<string, Promise<SubagentRunOutcome>>();
   const subagentMeta = new Map<string, RuntimeMeta>();
   const subagentRegistry = new Map<string, SubagentRecord>();
   const subagentOutlines = new Map<string, readonly unknown[]>();
@@ -193,12 +194,22 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
   }
 
   function dispatchBackgroundSubagent(params: DispatchParams): void {
-    if (backgroundSubagentRuns.has(params.subagentAgentId)) return;
+    void dispatchSubagent(params, true);
+  }
+
+  function dispatchForegroundSubagent(params: DispatchParams): Promise<SubagentRunOutcome> {
+    return dispatchSubagent(params, false);
+  }
+
+  function dispatchSubagent(params: DispatchParams, runInBackground: boolean): Promise<SubagentRunOutcome> {
+    const existing = backgroundSubagentRuns.get(params.subagentAgentId);
+    if (existing != null) return existing;
 
     const title = deriveBackgroundSubagentTitle(params.prompt);
     const startedAtMs = now();
     const parentAgentId = host.getConversationId();
     const meta: RuntimeMeta = {
+      runInBackground,
       parentAgentId,
       subagentType: params.subagentType,
       toolCallId: params.toolCallId,
@@ -216,14 +227,14 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     });
 
     logLifecycle("dispatched", params.subagentAgentId);
-    onBackgroundSubagentDispatched?.({
+    if (runInBackground) onBackgroundSubagentDispatched?.({
       parentAgentId,
       subagentAgentId: params.subagentAgentId,
       subagentType: params.subagentType,
       toolCallId: params.toolCallId,
       subagentRequestId: computeSubagentRequestId(params.toolCallId),
     });
-    host.onPendingWakeArmed?.({
+    if (runInBackground) host.onPendingWakeArmed?.({
       parentAgentId,
       kind: "subagent",
       workId: params.subagentAgentId,
@@ -233,13 +244,13 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     });
     emitSubagentsChanged();
     host.emitAsyncTasksChanged();
-    startBackgroundSubagentTurn(params.subagentAgentId, params.run);
+    return startBackgroundSubagentTurn(params.subagentAgentId, params.run);
   }
 
   function startBackgroundSubagentTurn(
     subagentAgentId: string,
     runTurn: () => Promise<SubagentRunResult>,
-  ): void {
+  ): Promise<SubagentRunOutcome> {
     let turn: Promise<SubagentRunResult>;
     try {
       turn = runTurn();
@@ -255,38 +266,45 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
             ? { status: "aborted" }
             : { status: "completed", text: result.text },
         ),
-      )
-      .catch((error: unknown) =>
+        (error: unknown) =>
         settleBackgroundSubagentTurn(subagentAgentId, {
           status: "error",
           error: errorMessage(error),
         }),
       );
     backgroundSubagentRuns.set(subagentAgentId, promise);
+    return promise;
   }
 
   async function settleBackgroundSubagentTurn(
     subagentAgentId: string,
-    outcome: RunOutcome,
-  ): Promise<void> {
-    backgroundSubagentRuns.delete(subagentAgentId);
-    const pendingSteer = pendingSubagentSteers.get(subagentAgentId);
+    outcome: SubagentRunOutcome,
+  ): Promise<SubagentRunOutcome> {
     const runner = subagentSessions.get(subagentAgentId);
     const meta = subagentMeta.get(subagentAgentId);
 
+    if (runner != null) {
+      try {
+        subagentOutlines.set(
+          subagentAgentId,
+          await runner.getResolvedOutline(),
+        );
+      } catch {}
+    }
+
+    const pendingSteer = pendingSubagentSteers.get(subagentAgentId);
     if (
       pendingSteer != null
       && runner != null
       && !abortingSubagents.has(subagentAgentId)
     ) {
       pendingSubagentSteers.delete(subagentAgentId);
-      startBackgroundSubagentTurn(subagentAgentId, () => {
+      return startBackgroundSubagentTurn(subagentAgentId, () => {
         const prompt = formatSteerPrompt(pendingSteer);
         return meta == null
           ? runner.run(prompt)
           : runner.run(prompt, subagentSteerRunOptions(meta));
       });
-      return;
     }
 
     pendingSubagentSteers.delete(subagentAgentId);
@@ -303,18 +321,10 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     }
     host.emitAsyncTasksChanged();
 
-    if (runner != null) {
-      try {
-        subagentOutlines.set(
-          subagentAgentId,
-          await runner.getResolvedOutline(),
-        );
-      } catch {}
-    }
-
     host.computerUse.freeWindow(subagentAgentId);
     subagentSessions.delete(subagentAgentId);
     subagentMeta.delete(subagentAgentId);
+    backgroundSubagentRuns.delete(subagentAgentId);
 
     const isComputerUse = meta != null
       && host.isComputerUseSubagentType?.(meta.subagentType) === true;
@@ -362,16 +372,16 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     }
 
     if (aborted) {
-      if (meta != null) {
+      if (meta?.runInBackground === true) {
         host.onPendingWakeDisarmed?.({
           parentAgentId: meta.parentAgentId,
           kind: "subagent",
           workId: subagentAgentId,
         });
       }
-      return;
+      return { status: "aborted" };
     }
-    if (meta == null || onBackgroundSubagentSettled == null) return;
+    if (meta?.runInBackground !== true || onBackgroundSubagentSettled == null) return outcome;
 
     onBackgroundSubagentSettled({
       parentAgentId: meta.parentAgentId,
@@ -389,6 +399,7 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
           : outcome.error,
       ...(meta.quietOrigin == null ? {} : { quietOrigin: meta.quietOrigin }),
     });
+    return outcome;
   }
 
   function buildRunningSubagentInfo(
@@ -449,7 +460,7 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     abortingSubagents.add(subagentAgentId);
     pendingSubagentSteers.delete(subagentAgentId);
     const meta = subagentMeta.get(subagentAgentId);
-    if (meta != null) {
+    if (meta?.runInBackground === true) {
       host.onPendingWakeDisarmed?.({
         parentAgentId: meta.parentAgentId,
         kind: "subagent",
@@ -494,6 +505,7 @@ export function createSubagentRuntime(host: SubagentRuntimeHost) {
     isAborting: (id: string): boolean => abortingSubagents.has(id),
     isRunning: (id: string): boolean => backgroundSubagentRuns.has(id),
     dispatchBackgroundSubagent,
+    dispatchForegroundSubagent,
     startBackgroundSubagentTurn,
     listRunningSubagents,
     getRunningSubagent,
