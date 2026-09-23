@@ -23,6 +23,7 @@ import {
   type McpResultFactory,
 } from "./mcp-image-assets.js";
 import { toJsonArgs } from "./mcp-validation.js";
+import { isLocalAdminEnabled } from "../local-admin.js";
 
 export const MCP_TOOLS_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 export const TOOLS_DISCOVERY_DEADLINE_MS = 120_000;
@@ -159,10 +160,12 @@ export function createMcpToolsDiscovery(
   async function ensureBoxServersPushed(): Promise<void> {
     const boxMcpExec = boxMcpExecSlot;
     if (boxMcpExec == null) return;
-    const stdioConfigs = await core.definitionSource.getStdioServerConfigs();
-    const configJson = JSON.stringify({ mcpServers: stdioConfigs });
+    const localConfigs = isLocalAdminEnabled()
+      ? await core.definitionSource.getUserServerConfigs()
+      : await core.definitionSource.getStdioServerConfigs();
+    const configJson = JSON.stringify({ mcpServers: localConfigs });
     if (configJson === lastPushedBoxConfigJson) return;
-    if (Object.keys(stdioConfigs).length === 0 && !hasEverPushedBoxConfig)
+    if (Object.keys(localConfigs).length === 0 && !hasEverPushedBoxConfig)
       return;
     const push = boxPushChain.then(async () => {
       if (configJson === lastPushedBoxConfigJson) return;
@@ -199,6 +202,7 @@ export function createMcpToolsDiscovery(
   }
 
   async function httpServerNamesForBackend(): Promise<string[]> {
+    if (isLocalAdminEnabled()) return [];
     const userServers = await core.definitionSource.getUserServerConfigs();
     return Object.entries(userServers)
       .filter(([, config]: [string, any]) => "url" in config)
@@ -206,9 +210,9 @@ export function createMcpToolsDiscovery(
   }
 
   async function stdioServerNamesForBox(): Promise<string[]> {
-    return boxMcpExecSlot == null
-      ? []
-      : Object.keys(await core.definitionSource.getStdioServerConfigs());
+    return boxMcpExecSlot == null ? [] : Object.keys(isLocalAdminEnabled()
+      ? await core.definitionSource.getUserServerConfigs()
+      : await core.definitionSource.getStdioServerConfigs());
   }
 
   async function discoverHttpTools(
@@ -386,8 +390,7 @@ export function createMcpToolsDiscovery(
   ): Promise<boolean> {
     try {
       return (
-        providerIdentifier in
-        (await core.definitionSource.getStdioServerConfigs())
+        providerIdentifier in (await core.definitionSource.getUserServerConfigs())
       );
     } catch {
       return false;
@@ -398,7 +401,7 @@ export function createMcpToolsDiscovery(
     args: any,
     auditIdentity: any,
   ): Promise<McpResultLike> {
-    if (await isHttpProvider(args.providerIdentifier)) {
+    if (!isLocalAdminEnabled() && await isHttpProvider(args.providerIdentifier)) {
       const result = await core.backendMcpExec.executeTool({
         serverIdentifier: args.providerIdentifier,
         toolName: args.name,

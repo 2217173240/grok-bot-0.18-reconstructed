@@ -10,6 +10,7 @@ const INTERCEPT_LOG_MAX_BYTES = 2_000_000;
 const INTERCEPT_LOG_KEEP_BYTES = 512_000;
 const HEARTBEAT_KINDS = new Set(["already-ready"]);
 const HEARTBEAT_MIN_INTERVAL_MS = 60_000;
+const LOCAL_ADMIN_INTERCEPT_INSTALLED = Symbol.for("grokbot.local-admin-intercept-installed");
 let lastHeartbeatAtMs = 0;
 
 export function localInterceptLogPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -70,13 +71,17 @@ export function appendLocalIntercept(record: Readonly<Record<string, unknown>>, 
 
 export function installLocalAdminNetworkIntercept(env: NodeJS.ProcessEnv = process.env): void {
   if (!isLocalAdminEnabled(env)) return;
+  const current = globalThis.fetch as typeof fetch & { [LOCAL_ADMIN_INTERCEPT_INSTALLED]?: boolean };
+  if (current[LOCAL_ADMIN_INTERCEPT_INSTALLED] === true) return;
   const original = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+  const intercepted = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url);
     if (isCursorProductionBackendUrl(url)) {
       appendLocalIntercept({ kind: "blocked-fetch", url, method: init?.method ?? "GET" }, env);
       throw new Error(`SAND_LOCAL_ADMIN blocked fetch ${url}`);
     }
     return await original(input, init);
-  }) as typeof fetch;
+  }) as typeof fetch & { [LOCAL_ADMIN_INTERCEPT_INSTALLED]?: boolean };
+  intercepted[LOCAL_ADMIN_INTERCEPT_INSTALLED] = true;
+  globalThis.fetch = intercepted;
 }

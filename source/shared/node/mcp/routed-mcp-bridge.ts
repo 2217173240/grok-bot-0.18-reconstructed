@@ -1,39 +1,40 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, ToolSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod/v4";
+import { adaptSdkTransport } from "./sdk-transport.js";
 
-type Tool = {
-  readonly name: string;
-  readonly providerIdentifier: string;
-  readonly toolName: string;
-  readonly description?: string;
-  readonly inputSchema?: unknown;
-};
+const RoutedToolSchema = ToolSchema.extend({
+  providerIdentifier: z.string().min(1),
+  toolName: z.string().min(1),
+  inputSchema: ToolSchema.shape.inputSchema.default({ type: "object", additionalProperties: true }),
+});
+type Tool = { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly description?: string; readonly inputSchema?: unknown };
 
-function record(value: unknown): Record<string, any> | null {
-  return typeof value === "object" && value != null && !Array.isArray(value) ? value as Record<string, any> : null;
-}
-
-function isReadOnly(tool: Tool): boolean {
-  const label = `${tool.name} ${tool.toolName} ${tool.description ?? ""}`.toLowerCase();
-  return /(^|[^a-z])(read|search|find|list|get|fetch|query|lookup|inspect|view|download|retrieve)([^a-z]|$)/.test(label)
-    && !/(send|create|update|delete|remove|write|upload|post|reply|archive|move|rename|modify|cancel|purchase|buy)/.test(label);
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function mcpResult(value: unknown): Record<string, unknown> {
-  const root = record(value);
-  const result = record(root?.result);
+  const result = record(record(value)?.result);
+  const payload = record(result?.value);
   if (result?.case !== "success") {
-    const detail = record(result?.value);
-    return { isError: true, content: [{ type: "text", text: typeof detail?.error === "string" ? detail.error : JSON.stringify(value) }] };
+    return { isError: true, content: [{ type: "text", text: typeof payload?.error === "string" ? payload.error : JSON.stringify(value) }] };
   }
-  const success = record(result.value);
-  const content: Record<string, unknown>[] = Array.isArray(success?.content) ? success.content.flatMap((raw: unknown): Record<string, unknown>[] => {
-    const item = record(raw), carrier = record(item?.content), payload = record(carrier?.value);
-    if (carrier?.case === "text" && typeof payload?.text === "string") return [{ type: "text", text: payload.text }];
-    if (carrier?.case === "image" && payload?.data != null && typeof payload?.mimeType === "string") return [{ type: "image", data: payload.data, mimeType: payload.mimeType }];
-    return [];
-  }) : [];
-  return { isError: success?.isError === true, content: content.length === 0 ? [{ type: "text", text: JSON.stringify(success ?? value) }] : content, ...(success?.structuredContent == null ? {} : { structuredContent: success.structuredContent }) };
+  if (!Array.isArray(payload?.content)) throw new Error("MCP success response has no content array");
+  const content = payload.content.map((item: unknown) => {
+    const carrier = record(record(item)?.content);
+    const data = record(carrier?.value);
+    if (carrier?.case === "text" && typeof data?.text === "string") return { type: "text", text: data.text };
+    if (carrier?.case === "image" && typeof data?.mimeType === "string") {
+      if (data.data instanceof Uint8Array) return { type: "image", data: Buffer.from(data.data).toString("base64"), mimeType: data.mimeType };
+      if (typeof data.data === "string") return { type: "image", data: data.data, mimeType: data.mimeType };
+    }
+    throw new Error("Unsupported routed MCP content");
+  });
+  return { isError: payload.isError === true, content, ...(payload.structuredContent == null ? {} : { structuredContent: payload.structuredContent }) };
 }
 
 export async function createRoutedMcpBridge(deps: {
@@ -41,48 +42,50 @@ export async function createRoutedMcpBridge(deps: {
   readonly callTool: (args: Tool & { readonly args: unknown; readonly toolCallId: string }) => Promise<unknown>;
 }): Promise<{ readonly url: string; close(): Promise<void> }> {
   const secret = randomUUID();
-  let tools = new Map<string, Tool>();
-  const server = createServer(async (request, response) => {
-    if (request.method !== "POST" || request.url !== `/mcp/${secret}`) { response.writeHead(404).end(); return; }
-    let body = "";
-    for await (const chunk of request) {
-      body += String(chunk);
-      if (body.length > 1_048_576) { response.writeHead(413).end(); return; }
-    }
-    let message: Record<string, any>;
-    try { message = JSON.parse(body) as Record<string, any>; }
-    catch { response.writeHead(400).end(); return; }
-    if (message.method === "notifications/initialized") { response.writeHead(202).end(); return; }
-    const reply = (result: unknown) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result })); };
-    try {
-      if (message.method === "initialize") { reply({ protocolVersion: "2025-03-26", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "grok-bot-plugins", version: "1" } }); return; }
-      if (message.method === "tools/list") {
-        const discovered = await deps.listTools();
-        const rows = Array.isArray(discovered) ? discovered : [];
-        tools = new Map(rows.flatMap(raw => {
-          const row = record(raw);
-          if (typeof row?.name !== "string" || typeof row.providerIdentifier !== "string" || typeof row.toolName !== "string") return [];
-          return [[row.name, row as Tool]];
-        }));
-        reply({ tools: [...tools.values()].map(tool => {
-          const readOnly = isReadOnly(tool);
-          return { name: tool.name, description: tool.description ?? `${tool.toolName} via ${tool.providerIdentifier}`, inputSchema: record(tool.inputSchema) ?? { type: "object", additionalProperties: true }, annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: readOnly, openWorldHint: !readOnly } };
-        }) });
-        return;
-      }
-      if (message.method === "tools/call") {
-        const name = record(message.params)?.name, selected = typeof name === "string" ? tools.get(name) : undefined;
-        if (selected == null) { reply({ isError: true, content: [{ type: "text", text: `Unknown Grok Bot plugin tool: ${String(name)}` }] }); return; }
-        reply(mcpResult(await deps.callTool({ ...selected, args: record(message.params)?.arguments ?? {}, toolCallId: randomUUID() })));
-        return;
-      }
-      reply({});
-    } catch (error) {
-      reply({ isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] });
-    }
+  let tools = new Map<string, z.infer<typeof RoutedToolSchema>>();
+  const mcp = new Server({ name: "grok-bot-plugins", version: "1" }, { capabilities: { tools: { listChanged: false } } });
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => {
+    const discovered = z.array(RoutedToolSchema).parse(await deps.listTools());
+    const next = new Map(discovered.map(tool => [tool.name, tool]));
+    if (next.size !== discovered.length) throw new Error("Duplicate routed MCP tool names");
+    tools = next;
+    return { tools: discovered.map(tool => ({ name: tool.name, description: tool.description ?? `${tool.toolName} via ${tool.providerIdentifier}`, inputSchema: tool.inputSchema })) };
   });
-  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  mcp.setRequestHandler(CallToolRequestSchema, async request => {
+    const selected = tools.get(request.params.name);
+    if (selected == null) throw new McpError(ErrorCode.InvalidParams, `Unknown Grok Bot plugin tool: ${request.params.name}`);
+    return mcpResult(await deps.callTool({ name: selected.name, providerIdentifier: selected.providerIdentifier, toolName: selected.toolName, args: request.params.arguments ?? {}, toolCallId: randomUUID() }));
+  });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
+  await mcp.connect(adaptSdkTransport(transport));
+  const server = createServer((request, response) => {
+    if (request.url !== `/mcp/${secret}`) { response.writeHead(404).end(); return; }
+    void transport.handleRequest(request, response).catch(error => {
+      if (response.headersSent) { response.destroy(error instanceof Error ? error : undefined); return; }
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: ErrorCode.InternalError, message: "MCP transport failed" } }));
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+    });
+  } catch (error) {
+    await mcp.close();
+    throw error;
+  }
   const address = server.address();
   if (address == null || typeof address === "string") throw new Error("Could not bind the routed MCP bridge");
-  return { url: `http://127.0.0.1:${address.port}/mcp/${secret}`, close: () => new Promise<void>((resolve, reject) => { server.closeAllConnections(); server.close(error => error == null ? resolve() : reject(error)); }) };
+  let closing: Promise<void> | undefined;
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp/${secret}`,
+    close: () => closing ??= (async () => {
+      const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      server.closeAllConnections();
+      const outcomes = await Promise.allSettled([mcp.close(), closed]);
+      const failures = outcomes.filter(result => result.status === "rejected");
+      if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), "MCP bridge close failed");
+    })(),
+  };
 }

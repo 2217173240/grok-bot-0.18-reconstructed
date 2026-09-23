@@ -178,7 +178,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /executeTool: async \(definition, toolArgs, toolCallId\)/);
   assert.match(coordinatorMain, /command\(commands, "listRoutedMcpTools", args\)/);
   assert.match(coordinator, /inference-router-transcript\.json/);
-  assert.match(mcpBridge, /openWorldHint: !readOnly/);
+  assert.doesNotMatch(mcpBridge, /openWorldHint: !readOnly/);
   assert.match(coordinator, /schemaVersion: 2/);
   assert.match(coordinator, /\["getAgentTranscriptTail", "openAgentTail", "getAgentTranscriptWindow"\]/);
   assert.match(coordinator, /\.map\(projectInferenceRouterTranscriptEntry\)/);
@@ -195,7 +195,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(coordinator, /listRoutedMcpTools/);
   assert.match(coordinator, /executeRoutedMcpTool/);
   assert.match(mcpBridge, /server\.listen\(0, "127\.0\.0\.1"/);
-  assert.match(mcpBridge, /readOnlyHint: readOnly/);
+  assert.doesNotMatch(mcpBridge, /readOnlyHint: readOnly/);
   assert.match(mcpBridge, /request\.url !== `\/mcp\/\$\{secret\}`/);
   assert.match(coordinator, /kind: "send-message"/);
   assert.match(coordinatorMain, /createCoordinatorInferenceRouter/);
@@ -203,8 +203,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(inferenceRouter, /routedProviderToolSteps/);
   assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
   assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
-  assert.match(providers, /codexExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
-  assert.match(providers, /openRouterExecutor\(this\.getMessages\(\), invocationId, undefined, undefined/);
+  assert.match(providers, /codexExecutor\(this\.getMessages\(\), invocationId, definitions, undefined/);
+  assert.match(providers, /openRouterExecutor\(this\.getMessages\(\), invocationId, definitions, undefined/);
   assert.match(codexDirect, /type: "tool-call"/);
   assert.match(codexDirect, /SimplePromptToolExecutor/);
   assert.match(secretsIpc, /persistBoxSecretsSnapshot/);
@@ -218,9 +218,9 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
   assert.match(localDocker, /export function resolveDockerHost/);
   assert.match(localDocker, /ensureLocalAdminHost/);
-  // Docker is the default local-admin computer; the Mac host is the fallback.
+  // 默认要求 Docker，宿主机执行由用户显式选择。
   assert.match(localDocker, /resolveLocalAdminBox/);
-  assert.match(localDocker, /return dockerAvailable \? "docker" : "mac-host"/);
+  assert.match(localDocker, /if \(!dockerAvailable\) throw new Error\("Docker sandbox is unavailable/);
   assert.match(localDocker, /refusing to silently fall back to the emulated official image/);
   assert.match(localDocker, /SELF_BUILT_EXEC_BOX_IMAGE/);
   // The default-path fallback (self-built image missing, no explicit pin) is

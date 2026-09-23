@@ -29,6 +29,7 @@ export type CodexDirectOptions = {
   readonly tools?: readonly CodexDirectTool[];
   readonly executeTool?: (tool: CodexDirectTool, args: unknown, toolCallId: string) => Promise<unknown>;
   readonly maxSteps?: number;
+  readonly signal?: AbortSignal;
 };
 
 function record(value: unknown): Loose | null {
@@ -51,6 +52,7 @@ async function* sseEvents(response: Response): AsyncGenerator<Loose> {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  try {
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
@@ -69,6 +71,9 @@ async function* sseEvents(response: Response): AsyncGenerator<Loose> {
     if (done) break;
   }
   if (buffer.trim().length > 0 && buffer.trim() !== "data: [DONE]") throw new Error("Codex direct response ended with an incomplete SSE event.");
+  } finally {
+    try { await reader.cancel(); } finally { reader.releaseLock(); }
+  }
 }
 
 function usageOf(response: Loose): CodexDirectUsage {
@@ -132,6 +137,7 @@ export async function* streamCodexDirectResponses(options: CodexDirectOptions): 
         stream: true,
         store: false,
       }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     if (!response.ok) throw await responseError(response);
 

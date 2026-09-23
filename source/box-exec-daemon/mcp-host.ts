@@ -1,6 +1,8 @@
 import { Value, type JsonValue } from "@bufbuild/protobuf";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { adaptSdkTransport } from "../shared/node/mcp/sdk-transport.js";
 
 import {
   McpError,
@@ -25,7 +27,7 @@ import { McpInstructions, McpToolDefinition } from "../packages/proto/generated/
 // stdio MCP servers belong on the computer the agent acts on, so this daemon
 // owns them: it spawns each configured server, keeps one MCP client per server,
 // and answers the two exec requests the host sends (list state, call tool).
-// HTTP servers stay on the backend and never reach here.
+// local-admin 的 HTTP MCP 也由容器直接连接。
 //
 // Nothing is invented about the protocol: the official client speaks it, the
 // config is the standard { mcpServers: { name: { command, args, env, cwd } } }
@@ -41,9 +43,11 @@ type StdioServerConfig = {
   readonly env?: Readonly<Record<string, string>>;
   readonly cwd?: string;
 };
+type HttpServerConfig = { readonly url: string; readonly headers?: Readonly<Record<string, string>> };
+type ServerConfig = StdioServerConfig | HttpServerConfig;
 
 type LoadedServer = {
-  readonly config: StdioServerConfig;
+  readonly config: ServerConfig;
   readonly client: Client;
   status: string;
   errorMessage: string | undefined;
@@ -61,7 +65,7 @@ export interface BoxMcpHostOptions {
 
 // Reads the servers out of a pushed config. A payload that is not the standard
 // shape is a caller bug and is reported as one rather than read as "none".
-export function parseMcpServerConfigs(configJson: string): Record<string, StdioServerConfig> {
+export function parseMcpServerConfigs(configJson: string): Record<string, ServerConfig> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(configJson);
@@ -72,13 +76,19 @@ export function parseMcpServerConfigs(configJson: string): Record<string, StdioS
   const servers = (parsed as { mcpServers?: unknown }).mcpServers;
   if (servers === undefined || servers === null) return {};
   if (typeof servers !== "object" || Array.isArray(servers)) throw new Error("MCP server config must carry an mcpServers object");
-  const result: Record<string, StdioServerConfig> = {};
+  const result: Record<string, ServerConfig> = {};
   for (const [name, raw] of Object.entries(servers as Record<string, unknown>)) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error(`MCP server "${name}" must be an object`);
     const record = raw as Record<string, unknown>;
-    if (typeof record.command !== "string" || record.command.length === 0) {
-      throw new Error(`MCP server "${name}" needs a command; HTTP servers are executed on the backend and do not belong in this config`);
+    if (typeof record.url === "string" && record.url.length > 0) {
+      if (record.type === "sse") throw new Error(`MCP server "${name}" requires the Streamable HTTP endpoint; legacy SSE is not supported by this computer.`);
+      const endpoint = new URL(record.url);
+      if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") throw new Error(`MCP server "${name}" requires an HTTP or HTTPS URL`);
+      if (record.headers !== undefined && (typeof record.headers !== "object" || record.headers === null || Array.isArray(record.headers) || Object.values(record.headers as Record<string, unknown>).some((item) => typeof item !== "string"))) throw new Error(`MCP server "${name}" has a non-string headers entry`);
+      result[name] = { url: record.url, ...(record.headers === undefined ? {} : { headers: record.headers as Record<string, string> }) };
+      continue;
     }
+    if (typeof record.command !== "string" || record.command.length === 0) throw new Error(`MCP server "${name}" needs a command or url`);
     const args = record.args;
     if (args !== undefined && (!Array.isArray(args) || args.some((item) => typeof item !== "string"))) throw new Error(`MCP server "${name}" has a non-string args entry`);
     const env = record.env;
@@ -96,8 +106,13 @@ export function parseMcpServerConfigs(configJson: string): Record<string, StdioS
   return result;
 }
 
-function sameConfig(left: StdioServerConfig, right: StdioServerConfig): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (typeof value === "object" && value !== null) return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonical(item)]));
+  return value;
+}
+function sameConfig(left: ServerConfig, right: ServerConfig): boolean {
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
 function serverEnvironment(config: StdioServerConfig): Record<string, string> {
@@ -119,6 +134,9 @@ export class BoxMcpHost {
   private readonly connectTimeoutMs: number;
   private readonly callTimeoutMs: number;
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly clients = new Set<Client>();
+  private readonly shutdown = new AbortController();
+  private closing: Promise<void> | undefined;
   private disposed = false;
 
   constructor(private readonly options: BoxMcpHostOptions) {
@@ -149,11 +167,18 @@ export class BoxMcpHost {
       }
       const loaded: string[] = [];
       for (const [name, config] of Object.entries(configs)) {
-        if (this.servers.has(name)) {
+        if (this.disposed) throw new Error("The MCP host has been disposed.");
+        if (this.servers.has(name) && this.servers.get(name)!.status === "connected") {
           loaded.push(name);
           continue;
         }
+        const previous = this.servers.get(name);
+        if (previous != null) {
+          this.servers.delete(name);
+          await this.closeServer(name, previous);
+        }
         const server = await this.connect(name, config);
+        if (this.disposed) { await this.closeServer(name, server); throw new Error("The MCP host has been disposed."); }
         this.servers.set(name, server);
         loaded.push(name);
       }
@@ -161,16 +186,14 @@ export class BoxMcpHost {
     });
   }
 
-  private async connect(name: string, config: StdioServerConfig): Promise<LoadedServer> {
+  private async connect(name: string, config: ServerConfig): Promise<LoadedServer> {
     const client = new Client({ name: `grok-bot-box-daemon/${name}`, version: "1" }, { capabilities: {} });
+    this.clients.add(client);
     try {
-      const transport = new StdioClientTransport({
-        command: config.command,
-        ...(config.args === undefined ? {} : { args: [...config.args] }),
-        env: serverEnvironment(config),
-        cwd: config.cwd ?? this.options.workspaceRoot,
-      });
-      await client.connect(transport, { timeout: this.connectTimeoutMs });
+      const transport = "url" in config
+        ? new StreamableHTTPClientTransport(new URL(String(config.url)), config.headers == null ? {} : { requestInit: { headers: config.headers } })
+        : new StdioClientTransport({ command: config.command, ...(config.args === undefined ? {} : { args: [...config.args] }), env: serverEnvironment(config), cwd: config.cwd ?? this.options.workspaceRoot });
+      await client.connect(adaptSdkTransport(transport), { timeout: this.connectTimeoutMs, signal: this.shutdown.signal });
       const server = await client.getServerVersion();
       const instructions = client.getInstructions();
       const connected: LoadedServer = {
@@ -181,10 +204,16 @@ export class BoxMcpHost {
         tools: [],
         instructions: instructions == null || instructions.length === 0 ? [] : [new McpInstructions({ serverName: name, serverIdentifier: name, instructions })],
       };
+      client.onclose = () => {
+        this.clients.delete(client);
+        connected.status = "error";
+        connected.errorMessage = "MCP transport closed.";
+      };
       this.log(`mcp server "${name}" connected${server == null ? "" : ` (${server.name} ${server.version})`}`);
       return connected;
     } catch (error) {
       await client.close().catch(() => undefined);
+      this.clients.delete(client);
       // A server that will not start is a per-server failure: the operator sees
       // which plugin is down and why, and the others still work.
       const message = error instanceof Error ? error.message : String(error);
@@ -198,6 +227,8 @@ export class BoxMcpHost {
       await server.client.close();
     } catch (error) {
       this.log(`mcp server "${name}" did not close cleanly: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.clients.delete(server.client);
     }
   }
 
@@ -210,8 +241,19 @@ export class BoxMcpHost {
   private async refreshTools(name: string, server: LoadedServer): Promise<void> {
     if (server.status !== "connected") return;
     try {
-      const listed = await server.client.listTools(undefined, { timeout: this.connectTimeoutMs });
-      server.tools = listed.tools.map((tool) => new McpToolDefinition({
+      const listedTools = [];
+      let cursor: string | undefined;
+      const seenCursors = new Set<string>();
+      do {
+        if (cursor != null) {
+          if (seenCursors.has(cursor)) throw new Error(`MCP server "${name}" repeated pagination cursor "${cursor}"`);
+          seenCursors.add(cursor);
+        }
+        const listed = await server.client.listTools(cursor == null ? undefined : { cursor }, { timeout: this.connectTimeoutMs });
+        listedTools.push(...listed.tools);
+        cursor = listed.nextCursor;
+      } while (cursor != null && cursor.length > 0);
+      server.tools = listedTools.map((tool) => new McpToolDefinition({
         name: this.toolName(name, tool.name),
         providerIdentifier: name,
         toolName: tool.name,
@@ -229,9 +271,10 @@ export class BoxMcpHost {
 
   listState(args: McpStateExecArgs): Promise<McpStateExecResult> {
     return this.takeTurn(async () => {
+      if (this.disposed) return new McpStateExecResult({ result: { case: "error", value: new McpStateError({ error: "The MCP host has been disposed." }) } });
       const requested = args.serverIdentifiers.length === 0 ? [...this.servers.keys()] : [...args.serverIdentifiers];
       const missing = requested.filter((name) => !this.servers.has(name));
-      if (missing.length > 0 && requested.length === missing.length) {
+      if (missing.length > 0 && missing.length === requested.length) {
         return new McpStateExecResult({
           result: { case: "error", value: new McpStateError({ error: `No MCP server is loaded on this computer (requested: ${missing.join(", ")}).` }) },
         });
@@ -239,9 +282,13 @@ export class BoxMcpHost {
       try {
         // kickOnly is the status surface: it must not block on a slow server, so
         // it answers from the tool list the last real listing produced.
-        if (args.kickOnly !== true) for (const name of requested) await this.refreshTools(name, this.servers.get(name)!);
-        const servers = requested.filter((name) => this.servers.has(name)).map((name) => {
-          const loaded = this.servers.get(name)!;
+        if (args.kickOnly !== true) for (const name of requested) {
+          const loaded = this.servers.get(name);
+          if (loaded != null) await this.refreshTools(name, loaded);
+        }
+        const servers = requested.map((name) => {
+          const loaded = this.servers.get(name);
+          if (loaded == null) return new McpStateServer({ serverIdentifier: name, serverName: name, status: "error", errorMessage: "MCP server is not loaded.", tools: [], instructions: [] });
           return new McpStateServer({
             serverIdentifier: name,
             serverName: name,
@@ -262,6 +309,7 @@ export class BoxMcpHost {
 
   callTool(args: McpArgs): Promise<McpResult> {
     return this.takeTurn(async () => {
+      if (this.disposed) return new McpResult({ result: { case: "error", value: new McpError({ error: "The MCP host has been disposed." }) } });
       // At this boundary `name` is the server's own tool and `toolName` is the
       // label the caller used: the gateway swaps them on the way here, and the
       // HTTP execution path reads the server's tool from `name` the same way.
@@ -281,8 +329,11 @@ export class BoxMcpHost {
       // since the last listing is found by re-listing before refusing.
       const knows = (): boolean => loaded.tools.some((tool) => tool.toolName === toolName);
       if (!knows()) await this.refreshTools(args.providerIdentifier, loaded);
-      if (!knows()) {
+      if (!knows() && loaded.status === "connected") {
         return new McpResult({ result: { case: "toolNotFound", value: new McpToolNotFound({ name: displayName, availableTools: loaded.tools.map((tool) => tool.toolName) }) } });
+      }
+      if (!knows()) {
+        return new McpResult({ result: { case: "error", value: new McpError({ error: `MCP tool discovery failed for "${displayName}": ${loaded.errorMessage ?? "the server is unavailable"}` }) } });
       }
       try {
         // Key names only: an operator needs to see which call arrived, and the
@@ -304,11 +355,18 @@ export class BoxMcpHost {
     });
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.closing != null) return this.closing;
     this.disposed = true;
-    await this.queue.catch(() => undefined);
-    const servers = [...this.servers];
-    this.servers.clear();
-    for (const [name, server] of servers) await this.closeServer(name, server);
+    this.shutdown.abort(new Error("The MCP host has been disposed."));
+    this.closing = (async () => {
+      const results = await Promise.allSettled([...this.clients].map(client => client.close()));
+      await this.queue;
+      this.clients.clear();
+      this.servers.clear();
+      const failures = results.filter(result => result.status === "rejected");
+      if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), "MCP host close failed");
+    })();
+    return this.closing;
   }
 }

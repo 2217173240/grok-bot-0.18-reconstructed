@@ -11,6 +11,7 @@ import type { ResourceAccessor } from "../../../packages/agent-exec/resource-pro
 import type { RemoteExecManager } from "../../../packages/agent-exec/remote.js";
 import { createContext } from "../../../packages/context/core.js";
 import { recordMcpExecErrorClass } from "../../../shared/node/mcp/mcp-diagnostics.js";
+import { toJsonArgs } from "../../../shared/node/mcp/mcp-validation.js";
 import {
   boxLoadMcpServers,
   boxMcpResourceAccessor,
@@ -64,12 +65,12 @@ type McpAccessor = ResourceAccessor<RemoteExecManager>;
 // nothing about protobuf. Normalize at this one boundary, the same way the
 // backend exec port does, so the serializer never receives a raw value and
 // fails while looking for `toJson`.
-function toMcpArgs(args: unknown): McpArgs {
+export function toMcpArgs(args: unknown): McpArgs {
   if (args instanceof McpArgs) return args;
   const raw = (typeof args === "object" && args != null ? args : {}) as Record<string, unknown>;
   const encoded: Record<string, Value> = {};
   if (typeof raw.args === "object" && raw.args != null) {
-    for (const [key, value] of Object.entries(raw.args as Record<string, unknown>)) encoded[key] = Value.fromJson(value as JsonValue);
+    for (const [key, value] of Object.entries(toJsonArgs(raw.args as Record<string, unknown>))) encoded[key] = Value.fromJson(value as JsonValue);
   }
   const text = (key: string): string => (typeof raw[key] === "string" ? raw[key] as string : "");
   return new McpArgs({

@@ -25,6 +25,16 @@ Colima VM (aarch64) ── grok-bot-local-vm 容器    ← 计算机（Linux 桌
 
 ## 1. 前置条件（新 Mac 清单）
 
+自建执行镜像的基础输入由 `docker/base-image.json` 指定不可变 digest，并参与应用、镜像和门禁共用的依赖 pin。
+迁移时需要保留该 digest 对应的基础镜像。构建脚本拒绝缺失或平台不符的基础镜像；更新基础镜像需要显式修改此文件并重新构建、验证。
+`GROKBOT_BUILD_IMAGE` 可指定候选镜像标签，用于验证时保留正在使用的镜像标签。
+
+`mcp-servers.json` 是受信执行配置：能够修改其中 `command`、`args`、`env`、`cwd` 的操作者，可以让插件以容器内 box 用户的权限执行代码。
+工作目录、浏览器会话和配置给插件的凭据均属于它可能访问的资源。容器工作目录的 bind mount 写入会影响对应的宿主机目录。
+
+基础镜像 digest 固定已构建的系统软件层；Archive 中的 `apt-get install` 仍使用发行源当时的软件包集合。
+因此从 Archive 配方重新生成同一镜像尚无逐字节复现保证。要重新生成并更新受信基线，需要同时固定 Debian 基础镜像、软件源快照、直接与传递软件包版本，并验证更新后的完整镜像。
+
 - macOS **Apple Silicon**（arm64 原生是整个方案的前提；Intel Mac 会整体落 QEMU，性能失义）
 - Xcode Command Line Tools：`xcode-select --install`（原生模块编译需要）
 - **mise**（Node 版本管理；仓库钉 `.node-version`=26.5.0）：`brew install mise` 并启用 shims。打包环境实测要求：mise node 26.5.0、`CXX=clang++`、`CXXFLAGS=-std=c++20`（tree-sitter 原生编译，c++17 会撞 Node 24+ 的 V8 头）

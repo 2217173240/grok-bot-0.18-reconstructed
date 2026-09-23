@@ -151,21 +151,21 @@ do_start() {
   export SAND_LOCAL_ADMIN=1
   export SAND_DISABLE_SENTRY=1
   export SAND_DISABLE_TELEMETRY=1
-  export SAND_CLAUDE_MODEL=glm-5.2
-  export ANTHROPIC_BASE_URL='https://open.bigmodel.cn/api/anthropic'
+  export SAND_CLAUDE_MODEL="${SAND_CLAUDE_MODEL:-glm-5.2}"
+  export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://open.bigmodel.cn/api/anthropic}"
   # The real token stays in the 0600 file; the provider layer injects it into
   # the CLI child only. This marker just satisfies the logged-in check.
   export ANTHROPIC_API_KEY='local-file'
-  export ANTHROPIC_DEFAULT_FABLE_MODEL='glm-5.3[1M]'
-  export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME='glm-5.3'
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL='glm-5.3-flash'
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME='glm-5.3-flash'
-  export ANTHROPIC_DEFAULT_OPUS_MODEL='glm-5.3[1M]'
-  export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME='glm-5.3'
-  export ANTHROPIC_DEFAULT_SONNET_MODEL='glm-5.2[1M]'
-  export ANTHROPIC_DEFAULT_SONNET_MODEL_NAME='glm-5.2'
-  export ANTHROPIC_MODEL='glm-5.2'
-  export CLAUDE_CODE_SUBAGENT_MODEL='glm-5.2[1M]'
+  export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$SAND_CLAUDE_MODEL}"
+  export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME="${ANTHROPIC_DEFAULT_FABLE_MODEL_NAME:-$ANTHROPIC_DEFAULT_FABLE_MODEL}"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$SAND_CLAUDE_MODEL}"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME="${ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME:-$ANTHROPIC_DEFAULT_HAIKU_MODEL}"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$SAND_CLAUDE_MODEL}"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="${ANTHROPIC_DEFAULT_OPUS_MODEL_NAME:-$ANTHROPIC_DEFAULT_OPUS_MODEL}"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$SAND_CLAUDE_MODEL}"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL_NAME="${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME:-$ANTHROPIC_DEFAULT_SONNET_MODEL}"
+  export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$SAND_CLAUDE_MODEL}"
+  export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$SAND_CLAUDE_MODEL}"
   export ENABLE_TOOL_SEARCH='true'
   export DISABLE_AUTOUPDATER=1
   # Stale package guard: the app bundle carries a build stamp; warn loudly when
@@ -185,32 +185,19 @@ do_start() {
 
   export SAND_DATA_ROOT="$DATA_ROOT"
   export SAND_USER_DATA_DIR="$PROFILE"
-  # GROKBOT_BOX=docker runs the computer as the local Docker VM instead of a
-  # Mac-side host process. Docker (Colima) must be running; the connector
-  # discovers Colima sockets on its own.
-  # Computer selection: GROKBOT_BOX=host forces the Mac-side host process;
-  # GROKBOT_BOX=docker forces the container; unset lets the connector default
-  # to Docker when its daemon is reachable (the isolated Linux lab) and fall
-  # back to the Mac host otherwise. GROKBOT_IMAGE pins a specific image.
-  if [ "${GROKBOT_BOX:-}" = "docker" ]; then
+  # 默认在容器执行；宿主机诊断需要显式指定 GROKBOT_BOX=host。
+  if [ "${GROKBOT_BOX:-docker}" = "docker" ]; then
     resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
     docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
     export SAND_LOCAL_ADMIN_BOX=docker
     echo docker > "$DATA_ROOT/box-mode"
-    say "computer: Docker VM (forced)"
+    say "computer: Docker VM"
   elif [ "${GROKBOT_BOX:-}" = "host" ]; then
     export SAND_LOCAL_ADMIN_BOX=host
     echo mac-host > "$DATA_ROOT/box-mode"
     say "computer: Mac host process (forced)"
   else
-    if resolve_docker_host 2>/dev/null && docker info >/dev/null 2>&1; then
-      export SAND_LOCAL_ADMIN_BOX=docker
-      echo docker > "$DATA_ROOT/box-mode"
-      say "computer: Docker VM (auto; daemon reachable)"
-    else
-      echo auto > "$DATA_ROOT/box-mode"
-      say "computer: auto (Mac host fallback; Docker unavailable)"
-    fi
+    die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker or host)"
   fi
   if [ -n "${GROKBOT_IMAGE:-}" ]; then
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
@@ -225,10 +212,13 @@ do_start() {
   # end to end (reply persisted via the legacy transcript route). GROKBOT_TURN=mac
   # opts back to the Mac coordinator plane.
   if [ "${GROKBOT_TURN:-}" = "mac" ]; then
+    export SAND_LOCAL_ADMIN_TURN=mac
     say "turns: Mac coordinator plane (GROKBOT_TURN=mac)"
-  else
+  elif [ "${GROKBOT_TURN:-host}" = "host" ]; then
     export SAND_LOCAL_ADMIN_TURN=host
     say "turns: in-box execution plane (default; GROKBOT_TURN=mac to opt out)"
+  else
+    die "unsupported GROKBOT_TURN: $GROKBOT_TURN (expected host or mac)"
   fi
   # The desktop plane is the default computer (complete bot; both gate
   # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.
@@ -307,14 +297,12 @@ do_status() {
   local pid hpid token
   pid="$(app_pid)"; hpid="$(host_pid)"
   say "data root:   $DATA_ROOT"
-  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac-host) (GROKBOT_BOX=docker to switch)"
-  # QEMU fallback honesty: with no pinned image and the self-built arm64 image
-  # missing, the default path runs the emulated official image. The connector
-  # records the same fact in the intercept ledger when it connects.
+  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo docker) (GROKBOT_BOX=docker to switch)"
+  # 盒内回合要求自建镜像，状态信息给出对应的构建入口。
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -z "${GROKBOT_IMAGE:-}" ]; then
     if resolve_docker_host && docker info >/dev/null 2>&1 && \
        ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
-      say "image:       WARNING self-built arm64 image missing — default falls back to the emulated official image (QEMU); build with docker/build-arm64-box.sh"
+      say "image:       self-built arm64 image missing — in-box turns require docker/build-arm64-box.sh"
     fi
   fi
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -d "$DATA_ROOT/box-workspace" ]; then

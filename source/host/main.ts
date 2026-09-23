@@ -17,6 +17,7 @@ import {
   type OwnedBoxExecDaemon,
 } from "./box/exec-daemon-process.js";
 import { resolveExecDaemonAuthTokenFromEnv } from "./box/loopback-sand-box.js";
+import { installLocalAdminNetworkIntercept } from "../shared/node/local-admin-intercept.js";
 
 export const BOX_COPY_IN_ARG = "--box-copy-in";
 export const BOX_COPY_IN_EXIT_FAILED = 1;
@@ -172,6 +173,7 @@ export function startProductionHost(
   ports: HostProductionPorts,
   processControl: HostProcessControl = defaultProcessControl
 ): Promise<void> {
+  installLocalAdminNetworkIntercept();
   return main(createProductionHostMainDependencies(ports), processControl);
 }
 
@@ -194,6 +196,7 @@ export async function main(
   deps: HostMainDependencies,
   processControl: HostProcessControl = defaultProcessControl
 ): Promise<void> {
+  installLocalAdminNetworkIntercept();
   const log = deps.log ?? console;
 
   if (processControl.argv.includes(BOX_COPY_IN_ARG)) {

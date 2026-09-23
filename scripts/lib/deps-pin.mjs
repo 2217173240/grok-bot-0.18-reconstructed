@@ -18,13 +18,23 @@ export const DEPS_PIN_FILES = [
   "docker/bin/box-init-exec",
   "docker/bin/xtest-input-local.py",
   "docker/bin/box-navigate",
+  "docker/base-image.json",
 ];
+
+export async function readBaseImage(repoRoot) {
+  const value = JSON.parse(await readFile(path.join(repoRoot, "docker/base-image.json"), "utf8"));
+  if (typeof value.reference !== "string" || !/^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(value.reference) || value.platform !== "linux/arm64") {
+    throw new Error("Base image must specify a sha256 digest and linux/arm64 platform.");
+  }
+  return value;
+}
 
 export function computeDepsPin(contents) {
   return createHash("sha256").update(contents.join("")).digest("hex");
 }
 
 export async function readDepsPin(repoRoot) {
+  await readBaseImage(repoRoot);
   const contents = await Promise.all(
     DEPS_PIN_FILES.map(relative => readFile(path.join(repoRoot, relative), "utf8")),
   );
@@ -33,5 +43,5 @@ export async function readDepsPin(repoRoot) {
 
 if (process.argv[1] && import.meta.url === new URL(`file://${path.resolve(process.argv[1])}`).href) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-  process.stdout.write(`${await readDepsPin(repoRoot)}\n`);
+  process.stdout.write(`${process.argv.includes("--base-image") ? (await readBaseImage(repoRoot)).reference : await readDepsPin(repoRoot)}\n`);
 }

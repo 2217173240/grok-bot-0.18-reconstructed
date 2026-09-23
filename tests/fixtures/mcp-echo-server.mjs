@@ -30,4 +30,10 @@ server.registerTool(
   async () => ({ content: [{ type: "text", text: "this tool failed on purpose" }], isError: true }),
 );
 
+if (process.argv.includes("--image")) server.registerTool(
+  "image",
+  { description: "Returns a small PNG payload", inputSchema: {} },
+  async () => ({ content: [{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=", mimeType: "image/png" }] }),
+);
+
 await server.connect(new StdioServerTransport());

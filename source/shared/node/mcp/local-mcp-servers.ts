@@ -10,7 +10,7 @@ import { getSandRootDir } from "../../../host/host-paths.js";
 // the familiar `{ "mcpServers": { name: { command, args, env } | { url } } }`
 // convention (Claude Code / Cursor style), so existing configs drop in as-is.
 
-export interface LocalMcpServerConfig { readonly command?: string; readonly args?: readonly string[]; readonly env?: Readonly<Record<string, string>>; readonly url?: string }
+export interface LocalMcpServerConfig { readonly command?: string; readonly args?: readonly string[]; readonly env?: Readonly<Record<string, string>>; readonly cwd?: string; readonly url?: string; readonly headers?: Readonly<Record<string, string>>; readonly type?: "http" | "sse" }
 export interface LocalMcpRuntimeConfig { readonly mcpServers: Readonly<Record<string, LocalMcpServerConfig>> }
 
 export const LOCAL_MCP_SERVERS_FILENAME = "mcp-servers.json";
@@ -27,9 +27,14 @@ function parseServerEntry(value: unknown): LocalMcpServerConfig | undefined {
       command: command.trim(),
       ...(Array.isArray(args) && args.every((entry) => typeof entry === "string") ? { args: args as string[] } : {}),
       ...(typeof env === "object" && env != null && Object.values(env).every((entry) => typeof entry === "string") ? { env: env as Record<string, string> } : {}),
+      ...(typeof record.cwd === "string" ? { cwd: record.cwd } : {}),
     };
   }
-  if (typeof url === "string" && url.trim().length > 0) return { url: url.trim() };
+  if (typeof url === "string" && url.trim().length > 0) {
+    const headers = record.headers;
+    if (headers !== undefined && (typeof headers !== "object" || headers == null || Array.isArray(headers) || Object.values(headers).some(value => typeof value !== "string"))) throw new Error("MCP HTTP headers must contain string values.");
+    return { url: url.trim(), ...(headers === undefined ? {} : { headers: headers as Record<string, string> }), ...(record.type === "http" || record.type === "sse" ? { type: record.type } : {}) };
+  }
   return undefined;
 }
 
@@ -56,7 +61,10 @@ export async function readLocalMcpServersConfig(
   try {
     const raw = await readFileImpl(join(sandRootDir, filename), "utf8");
     return parseLocalMcpServersConfig(raw);
-  } catch { return null; }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 // One swap shared by the host-side and desktop-side MCP managers: under local
@@ -86,7 +94,10 @@ export function createLocalMcpServersFileWriter(sandRootDir: string, deps: Local
   const renameImpl = deps.rename ?? renameSync;
   const target = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
   const readConfig = (): LocalMcpRuntimeConfig => {
-    try { return parseLocalMcpServersConfig(readFileImpl(target, "utf8")); } catch { return { mcpServers: {} }; }
+    try { return parseLocalMcpServersConfig(readFileImpl(target, "utf8")); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { mcpServers: {} };
+      throw error;
+    }
   };
   return {
     async getConfigForEdit() { return { config: readConfig(), serverIdsByName: {} as Readonly<Record<string, bigint>> }; },

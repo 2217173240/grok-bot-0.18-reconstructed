@@ -78,7 +78,7 @@ test("the box daemon loads the MCP config it is given and refuses a broken one",
       (error) => error instanceof ConnectError && error.code === Code.InvalidArgument,
     );
     await assert.rejects(
-      () => load(JSON.stringify({ mcpServers: { demo: { url: "https://example.invalid/mcp" } } })),
+      () => load(JSON.stringify({ mcpServers: { demo: { url: 42 } } })),
       (error) => error instanceof ConnectError && error.code === Code.InvalidArgument,
     );
 
