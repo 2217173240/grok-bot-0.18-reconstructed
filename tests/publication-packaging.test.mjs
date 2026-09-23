@@ -136,11 +136,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /Never handle credentials yourself/);
   assert.match(providers, /display notification/);
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /redactTypedDesktopInput/);
-  // Session persistence (C3, S-7): the browser profile rides the data volume
-  // so a handoff login survives container replacement; the Archive
-  // session-sync daemon mirrors login state across screens (no-op single).
-  const dockerfile = await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8");
-  assert.match(dockerfile, /ln -s \/home\/box\/sand-data\/chrome-profile \/home\/box\/chrome-profile/);
+  // profile 的持久目录由基础镜像提供，实际路径由容器门禁验证。
   assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /session-sync\.mjs/);
   // Egress gate (C4, S-8): navigation passes a private/reserved destination
   // check with a ledger line; the browser proxy rides MAC_BOT_PROXY.

@@ -1,4 +1,6 @@
 {
-  "reference": "grok-box-base@sha256:7bed36841b81cf2a3529d4513316933a27be83219ec12446c0ef76a693c82aa2",
-  "platform": "linux/arm64"
+  "reference": "grok-box-base@sha256:54142f153e92ac86b02ad70aa992bbd01e272490882d7f600655a569c0ecf2f8",
+  "platform": "linux/arm64",
+  "sourceRepository": "https://github.com/2217173240/grok-bot-box-image",
+  "sourceRevision": "d12224a5d3acb92983d0e993b6e0128176f7e28a"
 }

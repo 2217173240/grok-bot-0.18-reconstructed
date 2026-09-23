@@ -14,6 +14,11 @@ if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
 fi
 BASE_PLATFORM=$(docker image inspect "$BASE_IMAGE" --format '{{.Os}}/{{.Architecture}}')
 [ "$BASE_PLATFORM" = linux/arm64 ] || { echo "Base image has unexpected platform: $BASE_PLATFORM" >&2; exit 1; }
+BASE_REVISION=$(node "$REPO/scripts/lib/deps-pin.mjs" --base-image-revision)
+ACTUAL_REVISION=$(docker image inspect "$BASE_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+[ "$BASE_REVISION" = "$ACTUAL_REVISION" ] || { echo "Base image source revision does not match docker/base-image.json" >&2; exit 1; }
+ACTUAL_SOURCE=$(docker image inspect "$BASE_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')
+[ "$ACTUAL_SOURCE" = 'https://github.com/2217173240/grok-bot-box-image' ] || { echo "Base image source repository does not match" >&2; exit 1; }
 
 # Small context: the repo root carries node_modules; only manifests are needed.
 mkdir -p "$REPO/.cache"

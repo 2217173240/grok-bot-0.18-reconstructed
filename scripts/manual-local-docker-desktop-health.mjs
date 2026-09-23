@@ -15,7 +15,7 @@ import { build } from "esbuild";
 
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
-const image = "grok-bot-exec-box:arm64";
+const image = process.env.GROKBOT_EVAL_IMAGE || "grok-bot-exec-box:arm64";
 const runtime = process.argv[2];
 if (runtime == null) throw new Error("Pass the staged v3 runtime directory as the first argument.");
 for (const entry of ["sand-host/host-main.cjs", "box-exec-daemon/main.cjs"]) {
@@ -51,6 +51,7 @@ async function startContainer() {
     "--entrypoint", "/usr/local/bin/box-init-exec",
     "--memory", "4g",
     "--env", "SAND_GATEWAY_BIND_HOST=0.0.0.0",
+    "--env", "SAND_HOST_IN_BOX=1", "--env", "SAND_LOCAL_ADMIN=1",
     "--env", "SAND_HOST_PORT=1340",
     "--env", `SAND_GATEWAY_TOKEN=${token}`,
     "--env", "SAND_GATEWAY_REQUIRE_AUTH=1",
@@ -66,7 +67,8 @@ async function startContainer() {
   while (Date.now() < deadline) {
     try {
       await docker("exec", name, "curl", "--fail", "--silent", "--max-time", "2", "--header", `authorization: Bearer ${token}`, "http://127.0.0.1:1340/health");
-      return;
+      const activity = JSON.parse((await docker("exec", name, "cat", "/home/box/.cache/grok-session-sync/activity.json")).stdout);
+      if (activity.version === 1 && activity.state === "idle" && Date.now() - activity.updatedAt < 15_000) return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }

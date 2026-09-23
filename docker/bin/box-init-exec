@@ -43,6 +43,10 @@ node /usr/local/bin/sand-window-router.mjs >/tmp/router.log 2>&1 &
 
 # 登录态镜像（S-7）：跨屏只补缺地同步 cookie/localStorage。单屏时是 no-op，
 # 多窗口一到即工作；断路器/忙屏不重载的语义都在脚本里（Archive 原版）。
+export SAND_SESSION_SYNC_STATE_FILE=/home/box/.cache/grok-session-sync/activity.json
+mkdir -p "$(dirname "$SAND_SESSION_SYNC_STATE_FILE")" || exit 1
+chmod 700 "$(dirname "$SAND_SESSION_SYNC_STATE_FILE")" || exit 1
+rm -f "$SAND_SESSION_SYNC_STATE_FILE" || exit 1
 node /usr/local/bin/session-sync.mjs >/tmp/sand-session-sync.log 2>&1 &
 
 # noVNC 真鉴权：TokenFile 的 token 是随机签发的，绝不是显示号（Archive 规格 §9.4

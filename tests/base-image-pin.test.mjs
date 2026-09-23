@@ -20,6 +20,8 @@ test("基础镜像身份变更使依赖 pin 变化，可变标签被拒绝", asy
     assert.notEqual(await readDepsPin(directory), pin);
     await writeFile(filename, JSON.stringify({ ...original, reference: "grok-box-base:arm64" }));
     await assert.rejects(readDepsPin(directory), /sha256 digest/);
+    await writeFile(filename, JSON.stringify({ ...original, sourceRevision: "main" }));
+    await assert.rejects(readBaseImage(directory), /full source revision/);
     assert.match(await readFile(path.join(root, "docker/arm64-exec-box.Dockerfile"), "utf8"), /FROM \$\{BASE_IMAGE\}/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -38,6 +38,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 NAME=grok-bot-exec-eval
+IMAGE="${GROKBOT_EVAL_IMAGE:-grok-bot-exec-box:arm64}"
 BOX_CONTAINER="$NAME"
 . "$REPO/scripts/lib/box-probe.sh"
 PROFILE="exec"
@@ -58,8 +59,8 @@ if ! docker info >/dev/null 2>&1; then
   echo "Docker daemon unreachable (start Colima: colima start --profile ${GROKBOT_COLIMA_PROFILE:-grokbot}, or start OrbStack)" >&2
   exit 1
 fi
-if ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
-  echo "grok-bot-exec-box:arm64 not built; run docker/build-arm64-box.sh first" >&2
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "$IMAGE not built; run docker/build-arm64-box.sh first" >&2
   exit 1
 fi
 
@@ -67,7 +68,7 @@ fi
 # inputs (the same pin the app stamps at package time). A stale-but-present
 # image is exactly the case presence checks cannot catch.
 EXPECTED_PIN=$(node "$REPO/scripts/lib/deps-pin.mjs")
-ACTUAL_PIN=$(docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}' 2>/dev/null || true)
+ACTUAL_PIN=$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}' 2>/dev/null || true)
 if [ -n "$EXPECTED_PIN" ] && [ "$ACTUAL_PIN" = "$EXPECTED_PIN" ]; then
   pass "G0 image deps pin matches the repository (${EXPECTED_PIN:0:12}…)"
 else
@@ -139,6 +140,12 @@ if in_box 'mkdir -p /home/box/.cache/claude-cli-nodejs/gate && test -w /home/box
   pass "G5 Claude CLI MCP log cache is writable by the box user"
 else
   fail "G5 Claude CLI MCP log cache is not writable by the box user"
+fi
+
+if in_box 'test "$(readlink /home/box/chrome-profile)" = /home/box/sand-data/chrome-profile && mkdir -p /home/box/sand-data/chrome-profile/Default && test -w /home/box/chrome-profile/Default'; then
+  pass "G6 browser profile uses the writable data volume"
+else
+  fail "G6 browser profile is not backed by the writable data volume"
 fi
 
 
