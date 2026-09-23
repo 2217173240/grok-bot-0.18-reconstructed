@@ -14,7 +14,7 @@ import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
 import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
 import { SAND_BOX_DATA_ROOT } from "../../host/host-paths.js";
-import { ensureLocalAdminHost, stopLocalAdminHost } from "./local-admin-host.js";
+import { stopLocalAdminHost } from "./local-admin-host.js";
 
 export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
 // SAND_LOCAL_ADMIN_IMAGE switches the local-admin computer to a self-built
@@ -116,10 +116,8 @@ async function readExpectedDepsPin(): Promise<string | undefined> {
   return expectedDepsPinValue;
 }
 
-// 默认要求容器；宿主机执行必须由用户显式选择。
-export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" | "mac-host" {
+export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" {
   const explicit = env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase();
-  if (explicit === "host" || explicit === "mac" || explicit === "mac-host") return "mac-host";
   if (explicit && explicit !== "docker") throw new Error(`Unsupported SAND_LOCAL_ADMIN_BOX: ${explicit}`);
   if (!dockerAvailable) throw new Error("Docker sandbox is unavailable. Start Docker or Colima before connecting.");
   return "docker";
@@ -392,6 +390,30 @@ async function gatewayReady(token: string): Promise<boolean> {
   } catch { return false; }
 }
 
+export interface LocalDockerDesktopProcesses {
+  readonly router: number;
+  readonly sessionSync: number;
+}
+
+export function parseLocalDockerDesktopProcessCounts(output: string): LocalDockerDesktopProcesses {
+  const counts = /^(\d+)\n(\d+)$/.exec(output);
+  if (counts == null) throw new Error(`Could not inspect local Docker desktop processes: ${output || "empty process counts"}`);
+  return { router: Number(counts[1]), sessionSync: Number(counts[2]) };
+}
+
+// pgrep 的表达式包含方括号，避免把执行探测的 shell 自身计入进程。
+// 两个计数必须来自同一次成功的 docker exec；探测失败不能解释成进程退出。
+export async function probeLocalDockerDesktopProcesses(containerName: string): Promise<LocalDockerDesktopProcesses> {
+  const result = await runDocker(["exec", containerName, "sh", "-c", 'pgrep -fc "[s]and-window-router.mjs"; pgrep -fc "[s]ession-sync.mjs"; true']);
+  if (!result.ok) throw new Error(`Could not inspect local Docker desktop processes: ${result.output || "docker exec failed"}`);
+  return parseLocalDockerDesktopProcessCounts(result.output);
+}
+
+export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcesses): string | undefined {
+  if (processes.router === 1 && processes.sessionSync === 1) return undefined;
+  return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
+}
+
 async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
   if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
@@ -419,8 +441,19 @@ export async function getLocalDockerStatus(settingsPath: string): Promise<LocalD
   const inspected = await inspectContainer();
   if (!inspected.exists) return { available: true, running: false, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: LOCAL_DOCKER_BOX_IMAGE, detail: "Ready to create the local VM." };
   if (!inspected.owned) return { available: true, running: inspected.running, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: inspected.image, detail: `Container ${LOCAL_DOCKER_BOX_CONTAINER} exists but is not owned by Grok Bot.` };
-  const ready = inspected.running && await gatewayReady(await readOrCreateToken(settingsPath));
-  return { available: true, running: inspected.running, ready, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: inspected.image, detail: ready ? "Local Docker VM is ready." : inspected.running ? "Container is starting." : "Local Docker VM is stopped." };
+  const gateway = inspected.running && await gatewayReady(await readOrCreateToken(settingsPath));
+  let detail = gateway ? "Local Docker VM is ready." : inspected.running ? "Container is starting." : "Local Docker VM is stopped.";
+  let desktopHealthy = true;
+  if (gateway && inspected.desktop) {
+    try {
+      const reason = desktopProcessRebuildReason(await probeLocalDockerDesktopProcesses(LOCAL_DOCKER_BOX_CONTAINER));
+      if (reason != null) { desktopHealthy = false; detail = reason; }
+    } catch (error) {
+      desktopHealthy = false;
+      detail = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return { available: true, running: inspected.running, ready: gateway && desktopHealthy, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: inspected.image, detail };
 }
 
 let ensureInFlight: Promise<GatewayConnection> | undefined;
@@ -712,7 +745,13 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   }
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (await gatewayReady(token)) return { baseUrl: LOCAL_DOCKER_GATEWAY_URL, token };
+    if (await gatewayReady(token)) {
+      if (desktop) {
+        const reason = desktopProcessRebuildReason(await probeLocalDockerDesktopProcesses(LOCAL_DOCKER_BOX_CONTAINER));
+        if (reason != null) throw new Error(reason);
+      }
+      return { baseUrl: LOCAL_DOCKER_GATEWAY_URL, token };
+    }
     const state = await inspectContainer();
     if (!state.running) {
       const logs = await runDocker(["logs", "--tail", "80", LOCAL_DOCKER_BOX_CONTAINER]);
@@ -808,19 +847,10 @@ export function createSettingsRoutedHostConnector(
           appendLocalIntercept({ kind: "local-computer", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
           throw new Error(message);
         }
-        const box = resolveLocalAdminBox(process.env, await probeDockerAvailable());
+        resolveLocalAdminBox(process.env, await probeDockerAvailable());
         try {
-          const connection = box === "docker"
-            ? await (stopLocalAdminHost(), ensureLocalDockerBox(settings.settingsPath, undefined))
-            // The Mac host and the container share port 1340 and the token
-            // file; without stopping the container first, the host branch's
-            // already-ready probe answers from the CONTAINER and silently
-            // returns the wrong computer as if it were the Mac host. A stop
-            // that cannot be shown to have taken effect therefore aborts this
-            // branch: continuing would answer as the computer we failed to
-            // stop. An unreachable docker daemon is not a failure here, since
-            // there is then nothing running to stop.
-            : await (await stopLocalDockerBox(), ensureMacHostComputer());
+          stopLocalAdminHost();
+          const connection = await ensureLocalDockerBox(settings.settingsPath, undefined);
           resetLocalHostBreaker();
           return connection;
         } catch (error) {
@@ -835,7 +865,7 @@ export function createSettingsRoutedHostConnector(
             localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
             appendLocalIntercept({ kind: "local-computer", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
           }
-          appendLocalIntercept({ kind: box === "docker" ? "docker" : "local-host", event: "connect-failed", error: localHostLastFailure });
+          appendLocalIntercept({ kind: "docker", event: "connect-failed", error: localHostLastFailure });
           throw error;
         }
       }
@@ -851,11 +881,6 @@ export function createSettingsRoutedHostConnector(
       }
     })().finally(() => { ensureInFlight = undefined; });
     return ensureInFlight;
-    async function ensureMacHostComputer(): Promise<GatewayConnection> {
-      const token = await readOrCreateToken(settings.settingsPath);
-      const hostBundle = await stageCurrentHostBundle(settings.settingsPath);
-      return await ensureLocalAdminHost({ settingsPath: settings.settingsPath, hostMainPath: hostBundle.path, token });
-    }
   };
   return {
     connect: async () => (isLocalAdminEnabled() || settings.getBoxRuntime() === "local-docker") ? await localConnect() : await remote.connect(),
@@ -863,14 +888,11 @@ export function createSettingsRoutedHostConnector(
     ...(remote.issueInferenceCredential == null ? {} : { issueInferenceCredential: remote.issueInferenceCredential.bind(remote) }),
     recreate: async (args): Promise<RecreateResult> => {
       if (isLocalAdminEnabled()) {
-        if (await probeDocker() && resolveLocalAdminBox(process.env, true) === "docker") {
-          const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
-          if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
-          resetLocalHostBreaker();
-          await localConnect();
-          return { status: "started-untrackable" };
-        }
-        stopLocalAdminHost();
+        resolveLocalAdminBox(process.env, await probeDocker());
+        const inspected = await inspectContainer();
+        if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
+        const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
+        if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
         resetLocalHostBreaker();
         await localConnect();
         return { status: "started-untrackable" };
@@ -881,6 +903,8 @@ export function createSettingsRoutedHostConnector(
       }
       // A missing container is not a restart failure — connect() creates it
       // (mirrors the local-admin branch's fallback instead of hard-failing).
+      const inspected = await inspectContainer();
+      if (inspected.exists && !inspected.owned) return { status: "rejected", reason: `Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.` };
       const stopped = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]);
       if (!stopped.ok && !/no such container/i.test(stopped.output)) throw new Error(`Could not restart the local Docker VM: ${stopped.output}`);
       if (!stopped.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
@@ -890,8 +914,12 @@ export function createSettingsRoutedHostConnector(
     forceRecreate: async (): Promise<RecreateResult> => {
       if (isLocalAdminEnabled()) {
         stopLocalAdminHost();
+        resolveLocalAdminBox(process.env, await probeDocker());
+        const inspected = await inspectContainer();
+        if (inspected.exists && !inspected.owned) return { status: "rejected", reason: `Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.` };
         resetLocalHostBreaker();
-        if (await probeDocker() && resolveLocalAdminBox(process.env, true) === "docker") await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
+        const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
+        if (!removed.ok && !/no such container/i.test(removed.output)) return { status: "rejected", reason: removed.output };
         // Discard any in-flight ensure from a concurrent connect: it is
         // polling the world we just destroyed and would fail with a
         // misleading "stopped before ready" instead of building the new one.
@@ -903,6 +931,8 @@ export function createSettingsRoutedHostConnector(
         if (remote.forceRecreate == null) return { status: "rejected", reason: "Remote computer reset is unavailable." };
         return await remote.forceRecreate();
       }
+      const inspected = await inspectContainer();
+      if (inspected.exists && !inspected.owned) return { status: "rejected", reason: `Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.` };
       const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
       if (!removed.ok && !/no such container/i.test(removed.output)) return { status: "rejected", reason: removed.output };
       await localConnect();

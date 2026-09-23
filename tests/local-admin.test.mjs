@@ -557,35 +557,17 @@ test("the local computer-use executor enforces desktop geometry before touching 
   }
 });
 
-test("local host connector opens a breaker after repeated failures and resets on recreate", async () => {
-  const connectorLoaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
-  const settingsLoaded = await loadModule("source/shared/node/settings/sand-settings-store.ts");
-  const root = await mkdtemp(path.join(os.tmpdir(), "grok-local-breaker-"));
-  const previous = process.env.SAND_LOCAL_ADMIN;
-  const previousBox = process.env.SAND_LOCAL_ADMIN_BOX;
-  process.env.SAND_LOCAL_ADMIN = "1";
-  process.env.SAND_LOCAL_ADMIN_BOX = "host";
+test("local admin accepts only the Docker computer", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
   try {
-    const settingsPath = path.join(root, "settings.json");
-    await writeFile(settingsPath, `${JSON.stringify({ version: 1, mcpBoxServers: [], autoUpdateWhenIdleOptIn: false, egressTunnelEnabled: false, webauthnProxyEnabled: true, mcpCustomInstructions: {}, mcpCustomInstructionsByServerId: {}, mcpDisabledToolsByServerId: {}, conciergeConsent: "unset", settingsMigrations: [] })}\n`);
-    const connector = connectorLoaded.module.createSettingsRoutedHostConnector(
-      { connect: async () => { throw new Error("no remote in local admin"); } },
-      new settingsLoaded.module.SandSettingsStore(settingsPath),
-    );
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await assert.rejects(() => connector.connect(), /reconstructed runtime is unavailable/);
+    assert.equal(loaded.module.resolveLocalAdminBox({}, true), "docker");
+    assert.equal(loaded.module.resolveLocalAdminBox({ SAND_LOCAL_ADMIN_BOX: "docker" }, true), "docker");
+    for (const value of ["host", "mac", "mac-host"]) {
+      assert.throws(() => loaded.module.resolveLocalAdminBox({ SAND_LOCAL_ADMIN_BOX: value }, true), /Unsupported SAND_LOCAL_ADMIN_BOX/);
     }
-    await assert.rejects(() => connector.connect(), /circuit breaker is open after 3 consecutive failures/);
-    await assert.rejects(() => connector.recreate({}), /reconstructed runtime is unavailable/);
-    await assert.rejects(() => connector.connect(), /reconstructed runtime is unavailable/);
+    assert.throws(() => loaded.module.resolveLocalAdminBox({}, false), /Docker sandbox is unavailable/);
   } finally {
-    if (previous == null) delete process.env.SAND_LOCAL_ADMIN;
-    else process.env.SAND_LOCAL_ADMIN = previous;
-    if (previousBox == null) delete process.env.SAND_LOCAL_ADMIN_BOX;
-    else process.env.SAND_LOCAL_ADMIN_BOX = previousBox;
-    await connectorLoaded.dispose();
-    await settingsLoaded.dispose();
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await loaded.dispose();
   }
 });
 
@@ -869,44 +851,6 @@ test("claude child env resolves the token from env or the 0600 file", async () =
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
-
-test("SAND_LOCAL_ADMIN_TURN=host bypasses the coordinator sendPrompt interception", async () => {  const loaded = await loadModule("source/node-agent-coordinator/inference-router.ts");
-  const root = await mkdtemp(path.join(os.tmpdir(), "grok-host-turn-"));
-  const previousAdmin = process.env.SAND_LOCAL_ADMIN;
-  const previousTurn = process.env.SAND_LOCAL_ADMIN_TURN;
-  try {
-    await writeFile(path.join(root, "settings.json"), JSON.stringify({ version: 1, mcpBoxServers: [], autoUpdateWhenIdleOptIn: false, egressTunnelEnabled: false, webauthnProxyEnabled: true, mcpCustomInstructions: {}, mcpCustomInstructionsByServerId: {}, mcpDisabledToolsByServerId: {}, conciergeConsent: "unset", settingsMigrations: [], inferenceProvider: "claude-code" }));
-    const router = loaded.module.createCoordinatorInferenceRouter({
-      dataDir: root,
-      postEvent: () => {},
-      dispatchRemote: async () => { throw new Error("unexpected remote dispatch"); },
-    });
-
-    process.env.SAND_LOCAL_ADMIN = "1";
-    delete process.env.SAND_LOCAL_ADMIN_TURN;
-    const intercepted = await router.dispatch("sendPrompt", { agentId: "a", prompt: "x" });
-    assert.equal(intercepted.handled, true, "default: the Mac coordinator owns routed turns");
-
-    process.env.SAND_LOCAL_ADMIN_TURN = "host";
-    const bypassed = await router.dispatch("sendPrompt", { agentId: "a", prompt: "x" });
-    assert.equal(bypassed.handled, false, "host-turn mode passes the turn to the host");
-    const fallsThrough = await router.dispatch("reactToMessage", { agentId: "a", entryId: "t0u", emoji: "👍" });
-    assert.equal(fallsThrough.handled, false, "cursor-path methods still fall through");
-  } finally {
-    if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
-    else process.env.SAND_LOCAL_ADMIN = previousAdmin;
-    if (previousTurn == null) delete process.env.SAND_LOCAL_ADMIN_TURN;
-    else process.env.SAND_LOCAL_ADMIN_TURN = previousTurn;
-    await loaded.dispose();
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  }
-});
-
-
-
-
-
-
 
 
 test("exec daemon auth has no default credential and resolves from env in lockstep", async () => {

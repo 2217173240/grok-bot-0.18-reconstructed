@@ -29,10 +29,11 @@ test("publication ignore rules retain reconstructed frontend source", async () =
   assert.equal(matcher.ignores("recovered/generated-output.txt"), true, "root recovery output must remain ignored");
 });
 
-test("default packaging keeps the polished checksum-pinned renderer", async () => {
+test("default packaging keeps the checksum-pinned renderer and verifies the reconstructed app", async () => {
   const source = await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8");
-  assert.match(source, /import \{ buildFidelityReconstructedAsar \} from "\.\/clean-build\.mjs"/);
   assert.match(source, /await buildFidelityReconstructedAsar\(\)/);
+  assert.match(source, /await verifyOfficialMacReference\(\{ runtimeApp \}\)/);
+  assert.match(source, /await verifyReconstructedMacPackage\(\{/);
 });
 
 test("Router settings use the trusted backend and display recorded inference usage", async () => {
@@ -45,7 +46,6 @@ test("Router settings use the trusted backend and display recorded inference usa
   const providers = await readFile(path.join(repoRoot, "source", "host", "extensions", "inference", "provider-session.ts"), "utf8");
   const codexDirect = await readFile(path.join(repoRoot, "source", "host", "extensions", "inference", "codex-direct-responses.ts"), "utf8");
   const turnShell = await readFile(path.join(repoRoot, "source", "host", "runner", "turn-run-shell.ts"), "utf8");
-  const coordinator = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "inference-router.ts"), "utf8");
   const coordinatorMain = await readFile(path.join(repoRoot, "source", "node-agent-coordinator", "main.ts"), "utf8");
   // Both planes reach plugin tools through the same loopback bridge, so it lives
   // in shared code rather than beside one of them.
@@ -117,9 +117,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   // Local tool access set to "Never" must reach the in-box CLI child: the box
   // workspace is bind-mounted from the user's machine, so those tools act there.
   assert.match(providers, /localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS\.has\(toolName\)/);
-  // The in-box CLI child reaches this computer's plugin tools through the same
-  // loopback bridge the Mac coordinator uses, so the tools must be advertised
-  // and the bridge closed with the stream.
+  // The in-box CLI child reaches plugin tools through a loopback bridge, so
+  // the tools must be advertised and the bridge closed with the stream.
   assert.match(providers, /createRoutedMcpBridge\(\{ listTools: \(\) => mcp\.listTools\(\), callTool: tool => mcp\.callTool\(tool\) \}\)/);
   assert.match(providers, /mcpServers: \{ grok_bot_plugins: \{ type: "http" as const, url: mcpServerUrl \} \}/);
   assert.match(providers, /maxTurns: 24/);
@@ -174,32 +173,12 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(rendererPatch, /ANTHROPIC_API_KEY|OPENAI_API_KEY/);
   assert.match(turnShell, /inferenceProvider === "cursor"/);
   assert.match(turnShell, /createProviderPromptSession\(inferenceProvider\)/);
-  assert.match(coordinator, /method !== "sendPrompt" \|\| provider === "cursor"/);
-  assert.match(coordinator, /executeTool: async \(definition, toolArgs, toolCallId\)/);
-  assert.match(coordinatorMain, /command\(commands, "listRoutedMcpTools", args\)/);
-  assert.match(coordinator, /inference-router-transcript\.json/);
+  assert.match(coordinatorMain, /return await gatewayDispatch\(method, args, signal\)/);
   assert.doesNotMatch(mcpBridge, /openWorldHint: !readOnly/);
-  assert.match(coordinator, /schemaVersion: 2/);
-  assert.match(coordinator, /\["getAgentTranscriptTail", "openAgentTail", "getAgentTranscriptWindow"\]/);
-  assert.match(coordinator, /\.map\(projectInferenceRouterTranscriptEntry\)/);
-  assert.match(coordinator, /readonly richText\?: string/);
-  assert.match(coordinator, /richText: entry\.richText/);
-  assert.doesNotMatch(coordinator, /setTimeout\(resolve, 1_200\)/);
-  assert.match(coordinator, /method === "reactToMessage"/);
-  assert.match(coordinator, /reaction\.by === "me"/);
-  assert.match(coordinator, /currentActivity: \{ kind: "thinking" \}/);
-  assert.match(coordinator, /onTextDelta/);
-  assert.match(coordinator, /streaming/);
-  assert.match(coordinator, /postEvent\("agents"/);
-  assert.match(coordinator, /createRoutedMcpBridge/);
-  assert.match(coordinator, /listRoutedMcpTools/);
-  assert.match(coordinator, /executeRoutedMcpTool/);
   assert.match(mcpBridge, /server\.listen\(0, "127\.0\.0\.1"/);
   assert.doesNotMatch(mcpBridge, /readOnlyHint: readOnly/);
   assert.match(mcpBridge, /request\.url !== `\/mcp\/\$\{secret\}`/);
-  assert.match(coordinator, /kind: "send-message"/);
-  assert.match(coordinatorMain, /createCoordinatorInferenceRouter/);
-  assert.match(coordinatorMain, /routed\.handled/);
+  assert.doesNotMatch(coordinatorMain, /createCoordinatorInferenceRouter|routed\.handled/);
   assert.match(inferenceRouter, /routedProviderToolSteps/);
   assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
   assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
@@ -211,14 +190,17 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(secretsIpc, /macSecretsPath/);
   assert.match(secretsIpc, /await persistBoxSecretsSnapshot\([\s\S]*?await deps\.setBoxSecrets/);
   assert.match(secretsIpc, /errorClass: "box_unreachable"/);
-  assert.match(coordinator, /unlink\(temporary\)/);
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin.ts"), "utf8"), /SAND_LOCAL_ADMIN_ENV = "SAND_LOCAL_ADMIN"/);
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/account/cursor-auth.ts"), "utf8"), /if \(this\.localAdminEnabled\)/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
   assert.match(localDocker, /export function resolveDockerHost/);
-  assert.match(localDocker, /ensureLocalAdminHost/);
-  // 默认要求 Docker，宿主机执行由用户显式选择。
+  // Local admin selects Docker before connecting, then returns the container
+  // gateway. A failed Docker connection must propagate instead of switching
+  // to a Mac host process.
+  assert.match(localDocker, /resolveLocalAdminBox\(process\.env, await probeDockerAvailable\(\)\)/);
+  assert.match(localDocker, /const connection = await ensureLocalDockerBox\(settings\.settingsPath, undefined\)/);
+  assert.doesNotMatch(localDocker, /ensureLocalAdminHost\(/);
   assert.match(localDocker, /resolveLocalAdminBox/);
   assert.match(localDocker, /if \(!dockerAvailable\) throw new Error\("Docker sandbox is unavailable/);
   assert.match(localDocker, /refusing to silently fall back to the emulated official image/);
