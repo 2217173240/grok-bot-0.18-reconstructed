@@ -2,6 +2,7 @@ import { Value, type JsonValue } from "@bufbuild/protobuf";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { adaptSdkTransport } from "../shared/node/mcp/sdk-transport.js";
 
 import {
@@ -135,6 +136,7 @@ export class BoxMcpHost {
   private readonly callTimeoutMs: number;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly clients = new Set<Client>();
+  private readonly transports = new Map<Client, Transport>();
   private readonly shutdown = new AbortController();
   private closing: Promise<void> | undefined;
   private disposed = false;
@@ -193,7 +195,9 @@ export class BoxMcpHost {
       const transport = "url" in config
         ? new StreamableHTTPClientTransport(new URL(String(config.url)), config.headers == null ? {} : { requestInit: { headers: config.headers } })
         : new StdioClientTransport({ command: config.command, ...(config.args === undefined ? {} : { args: [...config.args] }), env: serverEnvironment(config), cwd: config.cwd ?? this.options.workspaceRoot });
-      await client.connect(adaptSdkTransport(transport, { waitForClose: !("url" in config) }), { timeout: this.connectTimeoutMs, signal: this.shutdown.signal });
+      const adaptedTransport = adaptSdkTransport(transport, { waitForClose: !("url" in config) });
+      this.transports.set(client, adaptedTransport);
+      await client.connect(adaptedTransport, { timeout: this.connectTimeoutMs, signal: this.shutdown.signal });
       const server = await client.getServerVersion();
       const instructions = client.getInstructions();
       const connected: LoadedServer = {
@@ -212,8 +216,7 @@ export class BoxMcpHost {
       this.log(`mcp server "${name}" connected${server == null ? "" : ` (${server.name} ${server.version})`}`);
       return connected;
     } catch (error) {
-      await client.close().catch(() => undefined);
-      this.clients.delete(client);
+      await this.closeClient(client);
       // A server that will not start is a per-server failure: the operator sees
       // which plugin is down and why, and the others still work.
       const message = error instanceof Error ? error.message : String(error);
@@ -224,12 +227,19 @@ export class BoxMcpHost {
 
   private async closeServer(name: string, server: LoadedServer): Promise<void> {
     try {
-      await server.client.close();
+      await this.closeClient(server.client);
     } catch (error) {
       this.log(`mcp server "${name}" did not close cleanly: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.clients.delete(server.client);
     }
+  }
+
+  private async closeClient(client: Client): Promise<void> {
+    const transport = this.transports.get(client);
+    const results = await Promise.allSettled([client.close(), ...(transport == null ? [] : [transport.close()])]);
+    this.clients.delete(client);
+    this.transports.delete(client);
+    const failures = results.filter(result => result.status === "rejected");
+    if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), "MCP client close failed");
   }
 
   private toolName(name: string, toolName: string): string {
@@ -360,9 +370,11 @@ export class BoxMcpHost {
     this.disposed = true;
     this.shutdown.abort(new Error("The MCP host has been disposed."));
     this.closing = (async () => {
-      const results = await Promise.allSettled([...this.clients].map(client => client.close()));
+      const active = new Set([...this.clients, ...this.transports.keys()]);
+      const results = await Promise.allSettled([...active].map(client => this.closeClient(client)));
       await this.queue;
       this.clients.clear();
+      this.transports.clear();
       this.servers.clear();
       const failures = results.filter(result => result.status === "rejected");
       if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), "MCP host close failed");
