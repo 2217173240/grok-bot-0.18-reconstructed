@@ -42,15 +42,9 @@ import {
   McpMetaToolOptions,
   McpToolDescriptor,
 } from "../../../packages/proto/generated/agent/v1/mcp_pb.js";
-import {
-  createComputerTool,
-  createScreenshotTool,
-  type ComputerToolDependencies,
-} from "./sand-computer-tool.js";
-import {
-  createSandBrowserTools,
-  type BrowserDriverDependencies,
-} from "./sand-browser-tools.js";
+import type { ComputerToolDependencies } from "./sand-computer-tool.js";
+import type { BrowserDriverDependencies } from "./sand-browser-tools.js";
+import { createAgentComputerTool, createAgentBrowserTools } from "./desktop-agent-tool-adapters.js";
 import {
   createFileTransferTools,
   type FileTransferController,
@@ -908,19 +902,19 @@ export function createTurnMcpMetaToolFactory(
 export function createTurnComputerToolFactory(
   input: TurnComputerToolFactoryInput,
 ): () => TurnTool {
-  return () => asTurnTool(createComputerTool(input.dependencies));
+  return () => asTurnTool(createAgentComputerTool(input.dependencies, "computer"));
 }
 
 export function createTurnScreenshotToolFactory(
   input: TurnComputerToolFactoryInput,
 ): () => TurnTool {
-  return () => asTurnTool(createScreenshotTool(input.dependencies));
+  return () => asTurnTool(createAgentComputerTool(input.dependencies, "screenshot"));
 }
 
 export function createTurnBrowserToolFactory(
   input: TurnBrowserToolFactoryInput,
 ): () => readonly TurnTool[] {
-  return () => createSandBrowserTools(input.dependencies).map(asTurnTool);
+  return () => createAgentBrowserTools(input.dependencies).map(asTurnTool);
 }
 
 export function createTurnFileTransferToolFactory(
