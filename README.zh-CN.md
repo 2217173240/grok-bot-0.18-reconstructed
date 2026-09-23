@@ -48,7 +48,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 
 将模型服务的 token 写入 `anthropic-token`，只占一行。启动脚本默认使用 `https://open.bigmodel.cn/api/anthropic` 和 `glm-5.2`；其他兼容服务可设置 `ANTHROPIC_BASE_URL` 与 `SAND_CLAUDE_MODEL`。token 文件保存在本地数据目录，并提供给容器内的模型进程。agent 的共享文件位于 `~/.grokbot-local/box-workspace`。
 
-`./start-local.sh` 还提供 `stop`、`restart` 与 `logs`。显式设置 `GROKBOT_BOX=host` 或 `GROKBOT_TURN=mac` 可以选择 Mac 上的诊断执行路径。默认使用 Docker 并在容器内执行回合。启动前需要准备好镜像与已安装的重建应用。
+`./start-local.sh` 还提供 `stop`、`restart` 与 `logs`。本地管理员模式使用 Docker 并在容器内执行回合。启动前需要准备好镜像与已安装的重建应用。
 
 添加本地 MCP 服务时，在 `~/.grokbot-local/mcp-servers.json` 中写入标准的 `mcpServers` 对象。配置的命令会在容器中运行，并可访问绑定的工作目录；使用前请核对插件命令。[扩展说明](docs/EXTENSIBILITY.md)列出 provider、工具和插件的接入位置。
 

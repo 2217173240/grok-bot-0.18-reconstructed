@@ -48,7 +48,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 
 Put your model provider's token in `anthropic-token` as a single line. The launcher defaults to `https://open.bigmodel.cn/api/anthropic` and model `glm-5.2`; set `ANTHROPIC_BASE_URL` and `SAND_CLAUDE_MODEL` when using another compatible service. The token file stays in the local data directory and is supplied to the container's provider process. The agent's shared files are under `~/.grokbot-local/box-workspace`.
 
-`./start-local.sh` also supports `stop`, `restart`, and `logs`. The explicit `GROKBOT_BOX=host` and `GROKBOT_TURN=mac` settings select diagnostic execution on the Mac. The default uses Docker and executes turns inside the container. A working Docker image and an installed reconstructed app are required before `start` can succeed.
+`./start-local.sh` also supports `stop`, `restart`, and `logs`. Local admin mode uses Docker and executes turns inside the container. A working Docker image and an installed reconstructed app are required before `start` can succeed.
 
 To add a local MCP server, create `~/.grokbot-local/mcp-servers.json` with the standard `mcpServers` object. The configured command runs inside the container with access to its mounted workspace; review plugin commands before using them. The [extension guide](docs/EXTENSIBILITY.md) identifies the provider, tool, and plugin integration points.
 
