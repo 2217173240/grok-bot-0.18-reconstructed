@@ -878,7 +878,7 @@ export function createElectronMainProductionComposition(bindings: ElectronMainPr
         },
         dispose: () => void disposeGraph(),
       };
-    } catch (error) { await disposeGraph(); throw error; }
+    } catch (error) { bindings.reportFailure("startup", "initialize-services", error); await disposeGraph(); throw error; }
   })();
   const beginBeforeQuit = (): "continue" | "prevent" => {
     if (quitState === "settled" || context == null || telemetry == null) return "continue";

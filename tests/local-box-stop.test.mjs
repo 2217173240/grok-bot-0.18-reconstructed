@@ -9,8 +9,7 @@
 // These cases pin the verdict to observed state.
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -20,13 +19,15 @@ import { build } from "esbuild";
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
 async function loadConnector() {
-  const buildRoot = await mkdtemp(path.join(tmpdir(), "grok-box-stop-"));
+  await mkdir(path.join(repositoryRoot, ".cache"), { recursive: true });
+  const buildRoot = await mkdtemp(path.join(repositoryRoot, ".cache", "grok-box-stop-"));
   const outfile = path.join(buildRoot, "connector.mjs");
   await build({
     entryPoints: [path.join(repositoryRoot, "source/electron-main/box/local-docker-host-connector.ts")],
     bundle: true,
     format: "esm",
     platform: "node",
+    packages: "external",
     outfile,
     logLevel: "silent",
   });

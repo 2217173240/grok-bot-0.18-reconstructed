@@ -63,7 +63,7 @@ export interface ProductionCoordinatorMessageChannelConstructor {
 
 export interface ProductionCoordinatorGatewayConnector
   extends CoordinatorGatewayConnector {
-  issueLocalExecDaemonCredential(): unknown | Promise<unknown>;
+  issueLocalExecDaemonCredential?(): unknown | Promise<unknown>;
 }
 
 export type ProductionCoordinatorTelemetryLevel =
@@ -359,10 +359,6 @@ export function createProductionCoordinatorAdapter<
       if (connector == null || typeof connector.connect !== "function") {
         throw new Error("Production coordinator gateway connector did not provide connect().");
       }
-      requiredFunction(
-        connector.issueLocalExecDaemonCredential,
-        "generated local-exec credential issuer",
-      );
       const dataDir = ports.getDataDir(context);
       if (typeof dataDir !== "string" || dataDir.length === 0) {
         throw new Error("Production coordinator data directory is empty.");

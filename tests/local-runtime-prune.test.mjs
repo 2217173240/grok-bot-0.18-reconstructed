@@ -7,7 +7,6 @@
 
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -19,13 +18,15 @@ const repositoryRoot = path.resolve(import.meta.dirname, "..");
 // The connector resolves its siblings through the build's extension mapping, so
 // bundle it before importing rather than relying on Node's TypeScript support.
 async function loadPrune() {
-  const buildRoot = await mkdtemp(path.join(tmpdir(), "grok-runtime-prune-module-"));
+  await mkdir(path.join(repositoryRoot, ".cache"), { recursive: true });
+  const buildRoot = await mkdtemp(path.join(repositoryRoot, ".cache", "grok-runtime-prune-module-"));
   const outfile = path.join(buildRoot, "connector.mjs");
   await build({
     entryPoints: [path.join(repositoryRoot, "source/electron-main/box/local-docker-host-connector.ts")],
     bundle: true,
     format: "esm",
     platform: "node",
+    packages: "external",
     outfile,
     logLevel: "silent",
   });
@@ -47,7 +48,8 @@ async function makeStagedRuntime(root, name, modifiedAtMs) {
 test("staged runtime pruning keeps the newest directories and converges", async () => {
   const { module, buildRoot } = await loadPrune();
   const { LOCAL_HOST_RUNTIME_RETAINED_DIRECTORIES, pruneLocalHostRuntimeStaging } = module;
-  const root = await mkdtemp(path.join(tmpdir(), "grok-runtime-prune-"));
+  await mkdir(path.join(repositoryRoot, ".cache"), { recursive: true });
+  const root = await mkdtemp(path.join(repositoryRoot, ".cache", "grok-runtime-prune-"));
   try {
     const base = Date.parse("2026-09-21T00:00:00Z");
     const names = [
@@ -94,7 +96,7 @@ test("staged runtime pruning keeps the newest directories and converges", async 
     // when it has aged out of the retained window. Recency is not the safety
     // argument: a container whose drift check missed a daemon-only rebuild can
     // still be reading an old directory.
-    const second = await mkdtemp(path.join(tmpdir(), "grok-runtime-prune-protected-"));
+    const second = await mkdtemp(path.join(repositoryRoot, ".cache", "grok-runtime-prune-protected-"));
     try {
       const protectedName = `v3-${"1".repeat(64)}-${DAEMON_SHA}`;
       const protectedPath = await makeStagedRuntime(second, protectedName, base);

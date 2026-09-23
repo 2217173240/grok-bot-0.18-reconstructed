@@ -4,9 +4,11 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { writeFile } from "node:fs/promises";
 
 const startupMarker = process.argv.indexOf("--startup-marker");
+const ignoreTermination = process.argv.includes("--ignore-sigterm");
+if (ignoreTermination) process.on("SIGTERM", () => {});
 if (startupMarker >= 0) {
   await writeFile(process.argv[startupMarker + 1], String(process.pid));
-  await new Promise(resolve => setTimeout(resolve, 2_000));
+  await new Promise(resolve => setTimeout(resolve, ignoreTermination ? 6_000 : 2_000));
 }
 
 const repeat = process.argv.includes("--repeat-cursor");

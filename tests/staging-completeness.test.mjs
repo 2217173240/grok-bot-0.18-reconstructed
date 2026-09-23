@@ -9,7 +9,6 @@
 
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -46,6 +45,7 @@ async function seedBundle(workRoot, options) {
     bundle: true,
     format: "esm",
     platform: "node",
+    packages: "external",
     outfile,
     logLevel: "silent",
   });
@@ -53,7 +53,8 @@ async function seedBundle(workRoot, options) {
 }
 
 test("staging refuses a runtime tree that is missing a worker directory", async () => {
-  const workRoot = await mkdtemp(path.join(tmpdir(), "grok-staging-completeness-"));
+  await mkdir(path.join(repositoryRoot, ".cache"), { recursive: true });
+  const workRoot = await mkdtemp(path.join(repositoryRoot, ".cache", "grok-staging-completeness-"));
   try {
     // Complete tree: staged, and the whole tree (not just the entry file) lands.
     const complete = await seedBundle(path.join(workRoot, "complete"), { withAgentIsolation: true, withExtensions: true });
