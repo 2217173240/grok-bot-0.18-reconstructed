@@ -193,7 +193,7 @@ export class BoxMcpHost {
       const transport = "url" in config
         ? new StreamableHTTPClientTransport(new URL(String(config.url)), config.headers == null ? {} : { requestInit: { headers: config.headers } })
         : new StdioClientTransport({ command: config.command, ...(config.args === undefined ? {} : { args: [...config.args] }), env: serverEnvironment(config), cwd: config.cwd ?? this.options.workspaceRoot });
-      await client.connect(adaptSdkTransport(transport), { timeout: this.connectTimeoutMs, signal: this.shutdown.signal });
+      await client.connect(adaptSdkTransport(transport, { waitForClose: !("url" in config) }), { timeout: this.connectTimeoutMs, signal: this.shutdown.signal });
       const server = await client.getServerVersion();
       const instructions = client.getInstructions();
       const connected: LoadedServer = {

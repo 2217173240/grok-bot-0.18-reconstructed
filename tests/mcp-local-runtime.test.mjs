@@ -67,12 +67,12 @@ test("dispose closes an in-flight failed connection without reviving the host", 
   await rm(dir, { recursive: true, force: true });
 });
 
-test("关闭正在初始化的真实 MCP 子进程", { timeout: 8_000 }, async () => {
+for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真实 MCP 子进程（忽略 SIGTERM：${ignoreTermination}）`, { timeout: 12_000 }, async () => {
   const dir = await mkdtemp(path.join(root, ".tmp-mcp-dispose-active-"));
   const { BoxMcpHost } = await loadHost(dir);
-  const host = new BoxMcpHost({ workspaceRoot: dir, connectTimeoutMs: 5_000 });
+  const host = new BoxMcpHost({ workspaceRoot: dir, connectTimeoutMs: 10_000 });
   const marker = path.join(dir, "started");
-  const loading = host.load(JSON.stringify({ mcpServers: { slow: { command: process.execPath, args: [path.join(root, "tests/fixtures/mcp-paged-server.mjs"), "--startup-marker", marker] } } }));
+  const loading = host.load(JSON.stringify({ mcpServers: { slow: { command: process.execPath, args: [path.join(root, "tests/fixtures/mcp-paged-server.mjs"), "--startup-marker", marker, ...(ignoreTermination ? ["--ignore-sigterm"] : [])] } } }));
   const rejected = assert.rejects(loading, /disposed/);
   try {
     const deadline = Date.now() + 3_000;

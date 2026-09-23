@@ -79,7 +79,7 @@ flowchart TD
 3. 配置的键顺序不改变含义。等价配置保持已经连接的 client；配置移除或替换先释放旧 client。
 4. 连接失败、远端关闭、工具列举失败向调用者报告。恢复由显式重新加载配置触发；工具调用不自动重放。
 5. 工具列举消费全部分页；重复 cursor 明确报错。列举失败与工具不存在分别处理。
-6. dispose 先阻止新操作，取消并关闭已有连接，再等待排队任务结束。并发关闭共享同一个完成 Promise。
+6. dispose 先阻止新操作，取消并关闭已有连接，再等待排队任务结束。并发关闭共享同一个完成 Promise；stdio 等待实际子进程 close 事件，超时明确报错，包含忽略 SIGTERM 后的强制终止路径。
 7. bridge 使用官方 MCP SDK 处理 JSON-RPC。工具名和描述不用于猜测幂等性；非法工具定义不能被静默忽略。
 8. 本地网络拦截在 Electron、host、coordinator 入口安装，多次安装保留同一 fetch 包装器。它是应用层保护，不能代替容器出口防火墙。
 9. 本地配置文件保留 HTTP headers，读取时区分文件缺失和内容损坏。HTTP MCP 使用 Streamable HTTP；显式配置的旧 SSE endpoint 会给出不支持提示。
@@ -138,7 +138,7 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 - `scripts/ui-sandbox-smoke.mjs` 仅在 Linux 容器中运行，通过真实 Electron CDP 输入任务并读取 DOM。隔离网络中创建 Bot、发送任务，收到 Linux、文件 SHA256 和 MCP echo 回复。容器文件独立计算的 SHA256 为 `b9fb3a42d2e8df8f50f0221b7b13e39545416da389fd70f88cdc49a5e7e40876`，与 UI 回复一致；工具记录含对应 `mcp__grok_bot_plugins__echo__echo` 请求及成功结果。该场景使用 Claude SDK 和 GLM 5.2。
 - UI 验收启动前需要通过产品设置或带 `version: 1` 的有效设置文件选择 `inferenceProvider: "claude-code"`。测试数据根、网关和浏览器 profile 均独立于生产。验收脚本输出随机文件名，需另外在 provider 容器核对文件内容和工具执行记录。
 
-- 独立容器 `grok-sandbox-audit` 中执行 `npm run check`：前端与源码类型检查通过，100 项测试通过，零失败、零跳过。`npm run frontend:build` 与启动、镜像构建脚本的 `bash -n` 通过。
+- 独立容器 `grok-sandbox-audit` 中执行 `npm run check`：前端与源码类型检查通过，101 项测试通过，零失败、零跳过。`npm run frontend:build` 与启动、镜像构建脚本的 `bash -n` 通过。
 - 网络策略、sandbox 选择、provider 取消、MCP bridge、配置文件和 HTTP host 的针对性测试通过，含请求 header 传递、分页、重复 cursor、进程退出恢复、初始化阶段关闭与混合缺失服务器。
 - `box-daemon-mcp-host.test.mjs` 与 `box-daemon-mcp-load.test.mjs` 经过真实 Connect RPC 调用 daemon，验证鉴权、配置和工具往返。
 - `scripts/provider-sandbox-smoke.mjs` 在独立容器 `grok-sandbox-provider-audit` 中通过真实 GLM Anthropic-compatible API，使用产品 provider factory。agent 通过 Bash 写入并读取 Linux 与随机标记证据，经产品 bridge 调用 stdio MCP 工具；任务结束后检查容器没有残留 Node/Claude 进程。
