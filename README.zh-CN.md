@@ -57,7 +57,7 @@ Colima 是默认且推荐的 Docker 运行环境；OrbStack 可作为额外的 s
 
 ## 已完成的验证
 
-仓库 CI 对 PR 和 `main` 执行 TypeScript 检查、回归测试、可读前端构建及 Git 归档检查。当前 `main` 的 macOS 包通过了 109 项本地测试、包体校验，以及 arm64 容器的执行和桌面门禁。安装后的本地管理员界面完成真实 GLM 对话、容器文件写入与读取、MCP echo 调用，以及 `Task` → `computerUse` → `Computer` 鼠标移动和 1280×800 PNG 截图。Mac 与容器的拦截记录在这些路径中均没有 Cursor/xAI 外发。
+仓库 CI 对 PR 和 `main` 执行 TypeScript 检查、回归测试、可读前端构建及 Git 归档检查。已验证的 macOS 包通过仓库测试、包体校验，以及 arm64 容器的执行和桌面门禁。安装后的本地管理员界面完成真实 GLM 对话、容器文件写入与读取、MCP echo 调用、图片附件分析，以及 `Task` → `computerUse` → `Computer` 鼠标移动和 1280×800 PNG 截图。Mac 与容器的拦截记录在这些路径中均没有 Cursor/xAI 外发。
 
 Codex 使用隔离容器和只读挂载的现有凭据，已通过真实文本、工具续接、取消和转录验收。OpenRouter 与 Command Code 当前没有本地密钥，因此尚未进行真实账户调用。passkey 与真人接管需要测试账户和用户操作。[本地架构报告](docs/LOCAL-SANDBOX-ARCHITECTURE.md)详细记录了验证范围与需要用户提供的条件。构建继续按当前目标复用固定哈希的原版 renderer。
 
