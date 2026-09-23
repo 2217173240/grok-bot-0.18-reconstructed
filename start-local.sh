@@ -19,6 +19,7 @@ set -euo pipefail
 unset ELECTRON_RUN_AS_NODE
 
 BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
+APP_BUNDLE="${BIN%/Contents/MacOS/Grok Bot}"
 BUNDLE_ID="com.anysphere.sand.reconstructed"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
@@ -91,9 +92,15 @@ do_start() {
   [ -r "$TOKEN_FILE" ] || die "missing $TOKEN_FILE (echo <token> > $TOKEN_FILE; chmod 600)"
 
   if [ "$(app_pid)" ]; then
-    say "already running: app pid $(app_pid)"
-    health_ok && say "gateway: healthy" || say "gateway: not ready (host may still be starting)"
-    exit 0
+    local existing_pid
+    existing_pid="$(app_pid)"
+    if ps eww -p "$existing_pid" -o command= | grep -Eq '(^|[[:space:]])SAND_LOCAL_ADMIN=1([[:space:]]|$)'; then
+      say "already running: app pid $existing_pid"
+      health_ok && say "gateway: healthy" || say "gateway: not ready (host may still be starting)"
+      exit 0
+    fi
+    say "app pid $existing_pid lacks local admin; restarting with the complete launch environment"
+    do_stop
   fi
   # Reap our own orphaned host BEFORE classifying the 1340 holder — the
   # guard cannot tell an orphan host from a foreign process, but host_pid can;
@@ -206,9 +213,35 @@ do_start() {
     say "desktop: on (default; GROKBOT_DESKTOP=0 for headless exec)"
   fi
 
-  # Launch the binary directly — `open` would strip the environment.
-  nohup "$BIN" --user-data-dir="$PROFILE" >"$APP_LOG" 2>&1 </dev/null &
-  local pid=$!
+  # Launch Services 在脚本退出后继续管理进程；显式传入全部非敏感运行参数。
+  local launch_keys=(
+    SAND_LOCAL_ADMIN SAND_LOCAL_ADMIN_EMAIL SAND_DISABLE_SENTRY SAND_DISABLE_TELEMETRY
+    SAND_CLAUDE_MODEL SAND_DATA_ROOT SAND_USER_DATA_DIR SAND_LOCAL_ADMIN_BOX
+    SAND_LOCAL_ADMIN_IMAGE SAND_LOCAL_ADMIN_TURN SAND_LOCAL_ADMIN_DESKTOP
+    SAND_AGENT_WORKSPACE SAND_WORKSPACE_ROOT SAND_COMMANDCODE_MODEL
+    SAND_CODEX_MODEL SAND_CODEX_REASONING_EFFORT SAND_OPENROUTER_MODEL
+    SAND_AWAITING_HUMAN_TIMEOUT_MS
+    SAND_DISABLE_UPDATES ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_MODEL
+    ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
+    ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME
+    ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME
+    ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL_NAME
+    CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_PATH CODEX_HOME CODEX_PATH
+    ENABLE_TOOL_SEARCH DISABLE_AUTOUPDATER DOCKER_HOST PATH
+  )
+  local launch_args=(-n -a "$APP_BUNDLE" --stdout "$APP_LOG" --stderr "$APP_LOG")
+  local key
+  for key in "${launch_keys[@]}"; do
+    if [ "${!key+x}" = x ]; then launch_args+=(--env "$key=${!key}"); fi
+  done
+  open "${launch_args[@]}" --args "--user-data-dir=$PROFILE"
+  local pid=""
+  local launch_waited=0
+  while [ -z "$pid" ] && [ "$launch_waited" -lt 20 ]; do
+    pid="$(app_pid)"
+    if [ -z "$pid" ]; then sleep 0.5; launch_waited=$((launch_waited + 1)); fi
+  done
+  [ -n "$pid" ] || die "Launch Services did not start the app within 10 seconds; see $APP_LOG"
   echo "$pid" > "$PID_FILE"
   say "launched: app pid $pid, log $APP_LOG"
 
