@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 
-test("默认执行要求 Docker 可用，只有显式配置才能使用宿主机", async () => {
+test("local admin requires Docker and rejects Mac host selection", async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   await mkdir(path.join(root, ".cache"), { recursive: true });
   const directory = await mkdtemp(path.join(root, ".cache", "sandbox-selection-"));
@@ -19,7 +19,9 @@ test("默认执行要求 Docker 可用，只有显式配置才能使用宿主机
       assert.throws(() => resolveLocalAdminBox(env, false), /Docker sandbox is unavailable/);
     }
     for (const selection of ["host", "mac", "mac-host"]) {
-      assert.equal(resolveLocalAdminBox({ SAND_LOCAL_ADMIN_BOX: selection }, false), "mac-host");
+      for (const dockerAvailable of [false, true]) {
+        assert.throws(() => resolveLocalAdminBox({ SAND_LOCAL_ADMIN_BOX: selection }, dockerAvailable), /Unsupported SAND_LOCAL_ADMIN_BOX/);
+      }
     }
     assert.throws(() => resolveLocalAdminBox({ SAND_LOCAL_ADMIN_BOX: "dokcer" }, true), /Unsupported/);
     assert.throws(() => decideDockerImage({ SAND_LOCAL_ADMIN: "1", SAND_LOCAL_ADMIN_TURN: "host" }, { present: false }), /not built locally/);

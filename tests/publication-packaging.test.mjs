@@ -29,11 +29,11 @@ test("publication ignore rules retain reconstructed frontend source", async () =
   assert.equal(matcher.ignores("recovered/generated-output.txt"), true, "root recovery output must remain ignored");
 });
 
-test("default packaging builds from source and the installed Electron shell", async () => {
+test("default packaging keeps the checksum-pinned renderer and verifies the reconstructed app", async () => {
   const source = await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8");
-  assert.match(source, /await buildSourceOnlyDistribution\(\)/);
-  assert.match(source, /await verifyInstalledElectronShell\(\)/);
-  assert.doesNotMatch(source, /buildFidelityReconstructedAsar|resolveRuntimeApp|src\/app/);
+  assert.match(source, /await buildFidelityReconstructedAsar\(\)/);
+  assert.match(source, /await verifyOfficialMacReference\(\{ runtimeApp \}\)/);
+  assert.match(source, /await verifyReconstructedMacPackage\(\{/);
 });
 
 test("Router settings use the trusted backend and display recorded inference usage", async () => {
