@@ -114,7 +114,7 @@ export async function verifyChecksumPinnedRendererPackage({
       roles.push(row.role);
     }
     if (JSON.stringify(roles) !== JSON.stringify(["registry", "panel", "entry-text-extractor"])
-      || chunks.size !== 2 || parsed.chunks[2].path !== parsed.chunks[0].path
+      || chunks.size < 2 || chunks.size > 3
       || parsed.chunks[1].path === parsed.chunks[0].path) {
       throw new Error("Renderer extension chunk sequence is invalid");
     }

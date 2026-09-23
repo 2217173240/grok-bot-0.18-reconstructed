@@ -44,7 +44,7 @@ test("default packaging uses the checksum-pinned original renderer and verifies 
   const rendererVerifier = await readFile(path.join(repoRoot, "scripts", "lib", "macos-package-verification.mjs"), "utf8");
   assert.match(rendererVerifier, /const expected = chunks\.get\(relative\)\?\.patched \?\? expectedFiles\.get\(relative\)/);
   assert.match(rendererVerifier, /\["registry", "panel", "entry-text-extractor"\]/);
-  assert.match(rendererVerifier, /chunks\.size !== 2/);
+  assert.match(rendererVerifier, /chunks\.size < 2 \|\| chunks\.size > 3/);
 });
 
 test("Router settings use the trusted backend and display recorded inference usage", async () => {

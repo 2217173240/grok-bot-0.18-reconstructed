@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -23,6 +23,22 @@ function startHttpServer() {
     child.once("exit", code => { if (code !== null && code !== 0) reject(new Error(`fixture exited ${code}`)); });
   });
   return { child, ready };
+}
+
+async function assertProcessStopped(pid) {
+  if (process.platform !== "linux") {
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    return;
+  }
+  let stat;
+  try {
+    stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0];
+  assert.ok(state === "Z" || state === "X", `MCP child ${pid} remains in state ${state}`);
 }
 
 test("BoxMcpHost owns HTTP and stdio MCP servers with retry and canonical idempotency", async () => {
@@ -83,15 +99,7 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
     assert.equal(host.dispose(), closing);
     await closing;
     await rejected;
-    let state = "";
-    try {
-      process.kill(pid, 0);
-      const status = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
-      if (status.status === 0) state = status.stdout.trim();
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
-    assert.ok(state === "" || state.startsWith("Z"), `MCP child remains active: ${state}`);
+    await assertProcessStopped(pid);
   } finally {
     await host.dispose();
     await rm(dir, { recursive: true, force: true });
