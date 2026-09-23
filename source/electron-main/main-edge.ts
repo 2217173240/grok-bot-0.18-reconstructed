@@ -10,7 +10,7 @@ import { COMMAND_CODE_DEFAULT_MODEL, isCommandCodeModelId, isSandInferenceProvid
 import { fetchCommandCodeModels } from "../shared/node/command-code-models.js";
 import { getLocalInferenceCliStatus } from "../shared/node/inference-router-local.js";
 import { isSandBoxRuntime } from "../shared/box-runtime.js";
-import { getLocalDockerStatus, startLocalDockerBox, stopLocalDockerBox } from "./box/local-docker-host-connector.js";
+import { getLocalDockerStatus, refreshLocalDockerBoxForProvider, startLocalDockerBox, stopLocalDockerBox } from "./box/local-docker-host-connector.js";
 
 export const MAIN_EDGE_UNSERVED = "main/unserved-method";
 export const MAIN_EDGE_UPDATE_UNAVAILABLE = "main/update-unavailable";
@@ -114,7 +114,7 @@ export function createMainEdgeHandlers(deps: MainEdgeDeps): HandlerMap {
     setHostSidebarSections: (raw) => echo(deps, "sidebarSections", req(raw).sections, "sidebar sections"),
     getAvailableModels: () => deps.fetchAvailableModels(),
     getInferenceRouter: async () => { const settings = await deps.readHostSettingsFromBox().catch(() => ({} as UnknownRecord)); const provider = invoke(deps.settingsStore, "getInferenceProvider"); return { provider: isSandInferenceProvider(provider) ? provider : "cursor", usage: settings.inferenceRouterUsage ?? invoke(deps.settingsStore, "getInferenceRouterUsage") ?? null, local: getLocalInferenceCliStatus() }; },
-    setInferenceRouter: async (raw) => { const provider = req(raw).provider; invariant(isSandInferenceProvider(provider), "Unknown inference provider."); invoke(deps.settingsStore, "setInferenceProvider", provider); const settings = await deps.syncHostSettingsToBox({ inferenceProvider: provider }).catch(() => null); return { provider, usage: settings?.inferenceRouterUsage ?? invoke(deps.settingsStore, "getInferenceRouterUsage") ?? null, local: getLocalInferenceCliStatus() }; },
+    setInferenceRouter: async (raw) => { const provider = req(raw).provider; invariant(isSandInferenceProvider(provider), "Unknown inference provider."); invoke(deps.settingsStore, "setInferenceProvider", provider); if (invoke(deps.settingsStore, "getBoxRuntime") === "local-docker" && await refreshLocalDockerBoxForProvider(String(Reflect.get(deps.settingsStore, "settingsPath")))) invoke(deps.boxRecovery, "restartCoordinator"); const settings = await deps.syncHostSettingsToBox({ inferenceProvider: provider }).catch(() => null); return { provider, usage: settings?.inferenceRouterUsage ?? invoke(deps.settingsStore, "getInferenceRouterUsage") ?? null, local: getLocalInferenceCliStatus() }; },
     getCommandCodeModels: async () => { const stored = invoke(deps.settingsStore, "getCommandCodeModel"); const selected = isCommandCodeModelId(stored) ? stored : COMMAND_CODE_DEFAULT_MODEL; try { return { models: await fetchCommandCodeModels(), selected, error: null }; } catch (error) { return { models: [], selected, error: error instanceof Error ? error.message : String(error) }; } },
     setCommandCodeModel: async (raw) => { const model = req(raw).model; invariant(isCommandCodeModelId(model), "Unknown Command Code model."); invoke(deps.settingsStore, "setCommandCodeModel", model); await deps.syncHostSettingsToBox({ commandCodeModel: model }).catch(() => null); return { selected: model }; },
     getBoxRuntime: async () => { const mode = invoke(deps.settingsStore, "getBoxRuntime"); invariant(isSandBoxRuntime(mode), "Unknown box runtime."); return { mode, status: await getLocalDockerStatus(String(Reflect.get(deps.settingsStore, "settingsPath"))) }; },

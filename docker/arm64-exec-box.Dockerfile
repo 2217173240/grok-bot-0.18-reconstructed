@@ -7,7 +7,11 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
-LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
+# The script builds FROM a local tag of the verified base (some builders can't
+# resolve a digest reference to a locally loaded image); the label keeps the
+# pinned digest reference.
+ARG BASE_IMAGE_REF=${BASE_IMAGE}
+LABEL org.opencontainers.image.base.name="${BASE_IMAGE_REF}"
 
 # The host bundle requires the node:sqlite builtin (Node >= 22.5); the base
 # image's apt Node is 20. Install the official arm64 binary over it, pinned

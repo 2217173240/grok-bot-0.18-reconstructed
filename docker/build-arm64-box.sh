@@ -20,6 +20,15 @@ ACTUAL_REVISION=$(docker image inspect "$BASE_IMAGE" --format '{{index .Config.L
 ACTUAL_SOURCE=$(docker image inspect "$BASE_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')
 [ "$ACTUAL_SOURCE" = 'https://github.com/2217173240/grok-bot-box-image' ] || { echo "Base image source repository does not match" >&2; exit 1; }
 
+# BuildKit on OrbStack (and the containerd image store generally) looks up a
+# digest reference like grok-box-base@sha256:... in a registry even when the
+# image is already loaded, so FROM fails. Build from a local tag of the image
+# that just passed the checks above instead; the label below still records
+# the pinned digest.
+BASE_DIGEST="${BASE_IMAGE##*@sha256:}"
+BUILD_BASE="grok-box-base:verified-${BASE_DIGEST:0:12}"
+docker tag "$BASE_IMAGE" "$BUILD_BASE"
+
 # Small context: the repo root carries node_modules; only manifests are needed.
 mkdir -p "$REPO/.cache"
 CONTEXT=$(mktemp -d "$REPO/.cache/box-build.XXXXXX")
@@ -39,5 +48,5 @@ cp "$REPO/docker/bin/box-navigate" "$CONTEXT/docker/bin/box-navigate"
 DEPS_PIN=$(node "$REPO/scripts/lib/deps-pin.mjs")
 
 OUTPUT_IMAGE="${GROKBOT_BUILD_IMAGE:-grok-bot-exec-box:arm64}"
-docker build --platform linux/arm64 --build-arg "BASE_IMAGE=$BASE_IMAGE" --label "com.grok-bot.local-vm.deps-pin=$DEPS_PIN" -t "$OUTPUT_IMAGE" "$CONTEXT"
+docker build --platform linux/arm64 --build-arg "BASE_IMAGE=$BUILD_BASE" --build-arg "BASE_IMAGE_REF=$BASE_IMAGE" --label "com.grok-bot.local-vm.deps-pin=$DEPS_PIN" -t "$OUTPUT_IMAGE" "$CONTEXT"
 docker image inspect "$OUTPUT_IMAGE" --format 'built: {{join .RepoTags ","}} deps-pin: {{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}} base: {{index .Config.Labels "org.opencontainers.image.base.name"}}'
