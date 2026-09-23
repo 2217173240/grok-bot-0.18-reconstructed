@@ -22,7 +22,7 @@ RUN set -eux; \
     echo "${NODE_SHA256}  /home/box/.cache/grok-build/node.tar.xz" | sha256sum -c -; \
     tar -xJf /home/box/.cache/grok-build/node.tar.xz -C /usr/local --strip-components=1; \
     rm -f /home/box/.cache/grok-build/node.tar.xz; \
-    chown box:box /home/box/.cache/grok-build; \
+    chown box:box /home/box/.cache /home/box/.cache/grok-build; \
     node --version; node -e "require('node:sqlite'); console.log('node:sqlite available')"
 USER box
 
