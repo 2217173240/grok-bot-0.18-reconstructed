@@ -1,4 +1,5 @@
 import { open, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { extname, join } from "node:path";
 
 import { posixPathFromFileUrl } from "../../shared/node/paths.js";
@@ -60,6 +61,13 @@ export function resizePreviewImage(dataUrl: string, target: { width: number } | 
   return `data:image/${encoding};base64,${encoded.toString("base64")}`;
 }
 
+export async function writeStagedAttachment(dir: string, filename: string, bytes: Uint8Array, now: () => number = Date.now, uuid: () => string = randomUUID): Promise<string> {
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, `${now()}-${uuid()}${extname(filename)}`);
+  await writeFile(path, bytes);
+  return path;
+}
+
 export function createAttachmentEdgePort(deps: AttachmentEdgeDeps) {
   const report = (leg: string, error: unknown): void => deps.onEdgeFailure({ leg, errorClass: errorClassOf(error) });
   const readBoxBytes = async (filePath: string, maxBytes: number): Promise<{ kind: "too-large"; size: number } | { kind: "bytes"; bytes: Uint8Array } | null> => {
@@ -88,7 +96,7 @@ export function createAttachmentEdgePort(deps: AttachmentEdgeDeps) {
       if (!isSafeFilename(filename) || !(bytes instanceof Uint8Array)) return { ok: false as const, reason: "failed" as const };
       if (bytes.byteLength === 0) return { ok: false as const, reason: "empty" as const };
       if (bytes.byteLength > deps.byteLimitForName(filename)) return { ok: false as const, reason: "too-large" as const };
-      try { const dir = deps.getStagingDir(); await mkdir(dir, { recursive: true }); const path = join(dir, `${(deps.now ?? Date.now)()}-${(deps.randomUUID ?? crypto.randomUUID)()}${extname(filename)}`); await writeFile(path, bytes); return { ok: true as const, path }; } catch (error) { report("stage", error); return { ok: false as const, reason: "failed" as const }; }
+      try { const path = await writeStagedAttachment(deps.getStagingDir(), filename, bytes, deps.now, deps.randomUUID); return { ok: true as const, path }; } catch (error) { report("stage", error); return { ok: false as const, reason: "failed" as const }; }
     },
     async commitStaged(rawPaths: unknown, rawFilenames: unknown): Promise<string[] | null> {
       const paths = Array.isArray(rawPaths) ? rawPaths : []; const filenames = Array.isArray(rawFilenames) ? rawFilenames : []; const committed: string[] = [];
