@@ -529,7 +529,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
 
 test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
   const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
-  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate"]);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/base-image.json"]);
   const contents = ["alpha", "beta", "gamma"];
   assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
   // Concatenation order is part of the pin: reordering inputs must change it,
@@ -562,7 +562,9 @@ test("local host connector opens a breaker after repeated failures and resets on
   const settingsLoaded = await loadModule("source/shared/node/settings/sand-settings-store.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-local-breaker-"));
   const previous = process.env.SAND_LOCAL_ADMIN;
+  const previousBox = process.env.SAND_LOCAL_ADMIN_BOX;
   process.env.SAND_LOCAL_ADMIN = "1";
+  process.env.SAND_LOCAL_ADMIN_BOX = "host";
   try {
     const settingsPath = path.join(root, "settings.json");
     await writeFile(settingsPath, `${JSON.stringify({ version: 1, mcpBoxServers: [], autoUpdateWhenIdleOptIn: false, egressTunnelEnabled: false, webauthnProxyEnabled: true, mcpCustomInstructions: {}, mcpCustomInstructionsByServerId: {}, mcpDisabledToolsByServerId: {}, conciergeConsent: "unset", settingsMigrations: [] })}\n`);
@@ -579,6 +581,8 @@ test("local host connector opens a breaker after repeated failures and resets on
   } finally {
     if (previous == null) delete process.env.SAND_LOCAL_ADMIN;
     else process.env.SAND_LOCAL_ADMIN = previous;
+    if (previousBox == null) delete process.env.SAND_LOCAL_ADMIN_BOX;
+    else process.env.SAND_LOCAL_ADMIN_BOX = previousBox;
     await connectorLoaded.dispose();
     await settingsLoaded.dispose();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

@@ -92,14 +92,30 @@ flowchart TD
 | 2 | 高 / 高 | 第三方 API 取消传播；容器 MCP HTTP 直连，释放资源 | 已实现；真实 Claude 回合、HTTP/stdin-out MCP 与 Codex 取消已执行验证 |
 | 3 | 高 / 高 | MCP 配置幂等、断连状态、分页与关闭竞态 | 已实现；用真实进程和 SDK 验证，测试范围见下方 |
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
-| 5 | 高 / 中 | 所有 provider 复用同一个 Grok turn 工具注册和权限来源 | 待实施；Claude 本地工具、Grok turn 工具仍有不同清单；Codex/OpenRouter 盒内 executor 没有完整接入同一工具面 |
+| 5 | 高 / 中 | 所有 provider 复用同一个 Grok turn 工具注册和权限来源 | Codex/OpenRouter 已接入 host 工具定义，由 `SimplePromptToolExecutor` 执行；Schema 与 Codex 调用/结果重放已覆盖测试。Claude CLI 仍有独立本地工具清单，各 provider 全功能实机验收未完成 |
 | 6 | 高 / 中 | Mac 诊断回合取消也贯穿 `runRoutedProviderText` 与 coordinator 活动状态 | 待实施；当前取消修复覆盖盒内 PromptExecutor 路线 |
-| 7 | 高 / 中 | 在封锁 Cursor/xAI 网络返回的隔离环境中验证 UI→回合→工具→transcript→UI | 待实施；本次 provider smoke 不覆盖 Electron UI 和全部网络出口 |
+| 7 | 高 / 中 | 在封锁 Cursor/xAI 网络返回的隔离环境中验证 UI→回合→工具→transcript→UI | 隔离网络下第三方 API→文件操作→MCP 已通过；完整 Electron UI 链路仍在验证 |
 | 8 | 中 / 中 | router/session-sync 故障可被生产健康面识别，保留单一进程持有者 | 待实施；复用 Archive 的 PID 登记与健康探测，恢复采用明确重建动作 |
 | 9 | 中 / 低 | 多显示随机访问凭证、资源配额、完整人工登录接管流程 | 待实施；主屏与 fork 显示的访问模型需一起验证 |
 | 10 | 中 / 低 | 从零构建与完全自有 renderer | 待实施；构建目前仍依赖固定上游应用构件 |
 
 不存在足够证据将普通插件退出判为需要自动重试的 P0。执行带外部副作用的工具后，网络断开并不能证明操作没有发生；恢复连接与重放调用必须分别处理。
+
+## 基础镜像身份
+
+基础镜像身份记录在 `docker/base-image.json`，由构建脚本按 digest 选择，并进入 `readDepsPin`。
+`org.opencontainers.image.base.name` 镜像 label 保存构建使用的父镜像引用。
+
+## 代码保证的准确范围
+
+- host 的远程执行请求使用 `RemoteExecManager`；第三方 provider 路线还会在 host 所在计算机启动 Claude CLI，由 CLI 执行本地工具。工具执行位置需要沿具体路线追踪。
+- 盒内权限仍有约束：`claudeToolPermission` 处理人工接管与 `never` 设置；容器 bind mount 使盒内写入可影响用户文件。凭据可保存在 Mac 数据根，再以只读文件提供给容器。
+- `allowedPurpose` 先允许 SAFE，再允许 `UNSAFE_ALWAYS_ALLOWED`，随后拒绝其他用途下的 CREDENTIALS / UNSPECIFIED。最终值是否经过策略还取决于 enforcement 开关，其默认值为 false。
+- 纯函数与查表都可以配合类型约束、运行时校验和穷尽测试；包装器的字段占位、错误信息和日志可以独立保留。当前实现的选择不能推出查表必然丢失这些保证。
+- 第三方补丁共同校验输入、输出 SHA；connectrpc 文本补丁另检查唯一锚点，tree-sitter 使用 transform 后核对输出 SHA。renderer 补丁采用自己的精确锚点规则与哈希记录。
+- source marker 数量只证明指定产物中存在足量标记，无法单独证明代码未被替换或行为正确。输入身份需要 SHA 证据，真实任务需要沿生产路线执行验证。
+- 重建包使用独立 bundle ID 和 ad-hoc 签名。更新行为由 updater guard、构建与运行环境共同控制，单个 bundle ID 无法证明完整的更新隔离。
+- MCP 参数边界复用 `toJsonArgs` 归一化 JSON 与 protobuf Value，防止对预编码值再次套用 JSON 编码。
 
 ## Archive 的复用范围
 
@@ -117,11 +133,14 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 
 ## 执行证据与边界
 
-- 独立容器 `grok-sandbox-audit` 中执行 `npm run source:typecheck`、`bash -n start-local.sh`，均通过；本次合并运行的 16 项针对性测试全部通过。
+- 独立容器 `grok-sandbox-audit` 中执行 `npm run check`：前端与源码类型检查通过，99 项测试通过，零失败、零跳过。`npm run frontend:build` 与启动、镜像构建脚本的 `bash -n` 通过。
 - 网络策略、sandbox 选择、provider 取消、MCP bridge、配置文件和 HTTP host 的针对性测试通过，含请求 header 传递、分页、重复 cursor、进程退出恢复、初始化阶段关闭与混合缺失服务器。
 - `box-daemon-mcp-host.test.mjs` 与 `box-daemon-mcp-load.test.mjs` 经过真实 Connect RPC 调用 daemon，验证鉴权、配置和工具往返。
 - `scripts/provider-sandbox-smoke.mjs` 在独立容器 `grok-sandbox-provider-audit` 中通过真实 GLM Anthropic-compatible API，使用产品 provider factory。agent 通过 Bash 写入并读取 Linux 与随机标记证据，经产品 bridge 调用 stdio MCP 工具；任务结束后检查容器没有残留 Node/Claude 进程。
-- 测试镜像 Node 为 22.23.2；仓库开发工具声明 Node 26.5。源码类型检查与以上运行测试成功，不等同于 macOS 打包、签名或完整 UI 验收。
+- 开发检查使用经过 Node 官方 SHA-256 清单核对的 Node 26.5.0 Linux arm64；provider 运行镜像使用 Node 22.23.2。检查结果不等同于 macOS 打包、签名或完整 UI 验收。
+- `grok-bot-exec-box:audit-locked-base` 已从锁定的基础镜像完整构建，Node 下载校验与 tree-sitter 原生模块编译成功。候选镜像使用独立标签。
+- 严格源码构建已在 Linux 容器完成，host 与 Electron main 状态均为 `validated-clean-source`；使用原始构件作为 manifest 锚点输入。
+- 网络隔离测试使用 Docker `--internal` 网络。agent 容器仅连接该网络，Squid 代理同时连接外部网络，仅允许 CONNECT 到 `open.bigmodel.cn:443`。`api.x.ai`、`api2.cursor.sh` 返回 403，直接连接外部 IP 失败；真实 GLM 文件操作和 MCP 回合成功，结束后没有 Node/Claude 子进程残留。此结果覆盖所执行的 provider 场景。
 - 未重启生产 `grok-bot-local-vm`，未覆盖正在开发的主工作目录。本分支需要后续按正常打包流程安装才会改变桌面应用。
 
 “零官方依赖”应以实际场景、实际拒绝网络条件和可观察结果表述。拦截日志没有记录出网、源码中存在保护判断，以及 provider smoke 成功，分别提供不同范围的证据；它们不能单独证明所有产品功能已经完整替代官方服务。

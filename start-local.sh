@@ -297,14 +297,12 @@ do_status() {
   local pid hpid token
   pid="$(app_pid)"; hpid="$(host_pid)"
   say "data root:   $DATA_ROOT"
-  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo mac-host) (GROKBOT_BOX=docker to switch)"
-  # QEMU fallback honesty: with no pinned image and the self-built arm64 image
-  # missing, the default path runs the emulated official image. The connector
-  # records the same fact in the intercept ledger when it connects.
+  say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo docker) (GROKBOT_BOX=docker to switch)"
+  # 盒内回合要求自建镜像，状态信息给出对应的构建入口。
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -z "${GROKBOT_IMAGE:-}" ]; then
     if resolve_docker_host && docker info >/dev/null 2>&1 && \
        ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
-      say "image:       WARNING self-built arm64 image missing — default falls back to the emulated official image (QEMU); build with docker/build-arm64-box.sh"
+      say "image:       self-built arm64 image missing — in-box turns require docker/build-arm64-box.sh"
     fi
   fi
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -d "$DATA_ROOT/box-workspace" ]; then

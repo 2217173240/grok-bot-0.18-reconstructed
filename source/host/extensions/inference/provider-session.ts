@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 
 import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
-import { jsonSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { jsonSchema, zodSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { z } from "zod";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
 import type { Context } from "../../../packages/context/core.js";
@@ -85,8 +86,8 @@ export function claudeChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return childEnv;
 }
 
-function response(text: string, id: string, modelId: string) {
-  return { id, modelId, timestamp: new Date(), headers: {}, messages: [{ role: "assistant", content: [{ type: "text", text }] }] };
+function response(text: string, id: string, modelId: string, toolCalls: readonly Loose[] = []) {
+  return { id, modelId, timestamp: new Date(), headers: {}, messages: [{ role: "assistant", content: [{ type: "text", text }, ...toolCalls] }] };
 }
 
 type CodexCredentials = { accessToken: string; refreshToken: string; idToken: string; accountId: string; path: string; document: Loose };
@@ -190,10 +191,30 @@ function configuredCodexReasoningEffort(): "minimal" | "low" | "medium" | "high"
   } catch { return undefined; }
 }
 
+export function routedToolSchema(definition: Loose) {
+  const parameters = definition.inputSchema ?? definition.parameters;
+  if (parameters instanceof z.ZodType) return zodSchema(parameters).jsonSchema;
+  return parameters?.jsonSchema ?? parameters;
+}
+
+export function codexInput(messages: readonly ProviderMessage[]): Loose[] {
+  return messages.flatMap(message => {
+    if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content }];
+    const output: Loose[] = [];
+    for (const part of message.content) {
+      if (part.type === "tool-call") output.push({ type: "function_call", call_id: part.toolCallId, name: part.toolName, arguments: JSON.stringify(part.args) });
+      else if (part.type === "tool-result") output.push({ type: "function_call_output", call_id: part.toolCallId, output: typeof part.result === "string" ? part.result : JSON.stringify(part.result) });
+      else if (part.type === "text") output.push({ role: message.role, content: part.text });
+      else throw new Error(`Unsupported Codex message content: ${part.type}`);
+    }
+    return output;
+  });
+}
+
 function codexTools(definitions: readonly Loose[] | undefined): CodexDirectTool[] | undefined {
   if (definitions == null) return undefined;
   const tools = definitions.flatMap((source): CodexDirectTool[] => {
-    const parameters = source.inputSchema ?? source.parameters;
+    const parameters = routedToolSchema(source);
     return typeof source.name === "string" && source.name.length > 0 && parameters != null ? [{
       name: source.name,
       ...(typeof source.description === "string" ? { description: source.description } : {}),
@@ -214,6 +235,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
   const tools = codexTools(definitions);
   const fullStream = (async function* () {
     let text = "";
+    const toolCalls: Loose[] = [];
     try {
       for await (const event of streamCodexDirectResponses({
         fetch: codexAuthenticatedFetch(credentials),
@@ -221,7 +243,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         model,
         ...(configuredCodexReasoningEffort() == null ? {} : { reasoningEffort: configuredCodexReasoningEffort()! }),
         instructions: GROK_ROUTER_SYSTEM_PROMPT,
-        input: messages.map(message => ({ role: message.role === "assistant" ? "assistant" : "user", content: typeof message.content === "string" ? message.content : JSON.stringify(message.content) })),
+        input: codexInput(messages),
         ...(tools == null ? {} : { tools }),
         ...(executeTool == null ? {} : { executeTool: async (selected, args, toolCallId) => await executeTool(selected.source, args, toolCallId) }),
         maxSteps: tools == null ? 1 : routedProviderToolSteps(executeTool != null),
@@ -229,7 +251,9 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
       })) {
         if (event.type === "text-delta") { text += event.delta; yield { type: "text-delta" as const, textDelta: event.delta }; continue; }
         if (event.type === "tool-call") {
-          yield { type: "tool-call" as const, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args };
+          const call = { type: "tool-call" as const, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args };
+          toolCalls.push(call);
+          yield call;
           continue;
         }
         const basic = { promptTokens: event.usage.inputTokens, completionTokens: event.usage.outputTokens, totalTokens: event.usage.inputTokens + event.usage.outputTokens };
@@ -238,7 +262,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         usage.resolve(basic);
         extendedUsage.resolve(extended);
         metadata.resolve({ openai: { responseId: event.responseId, direct: true } });
-        resultResponse.resolve(response(text, invocationId, model));
+        resultResponse.resolve(response(text, invocationId, model, toolCalls));
       }
     } catch (error) {
       // Reject the deferreds for any late awaiter, then mark each rejection
@@ -518,7 +542,7 @@ function toToolSet(definitions: readonly Loose[] | undefined, executeTool?: Rout
   const tools: ToolSet = {};
   for (const definition of definitions) {
     if (typeof definition.name !== "string" || definition.name.length === 0) continue;
-    const parameters = definition.inputSchema ?? definition.parameters;
+    const parameters = routedToolSchema(definition);
     if (parameters == null) continue;
     const routedTool: any = {
       ...(typeof definition.description === "string" ? { description: definition.description } : {}),
@@ -542,19 +566,17 @@ function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: 
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools) { super(new BasePromptBuilder(initialMessages)); }
-  stream(ctx: unknown, invocationId = crypto.randomUUID(), _definitions?: readonly Loose[]) {
+  stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     const signal = (ctx as Context).signal;
-    // Codex and OpenRouter take tool definitions with a local executor; the
-    // Claude CLI is given an MCP server instead, so it fetches the schemas and
-    // performs the calls itself.
-    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage, signal);
+    // host 统一执行已发现的工具；provider 只返回调用，权限与释放由外层管理。
+    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage, signal);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {
       ...(this.onUsage === undefined ? {} : { onUsage: this.onUsage }),
       ...(this.localToolPermission === undefined ? {} : { localToolPermission: this.localToolPermission }),
       ...(this.mcp === undefined ? {} : { mcp: this.mcp }),
       signal,
     });
-    return openRouterExecutor(this.getMessages(), invocationId, undefined, undefined, this.onUsage, signal);
+    return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage, signal);
   }
 }
 
