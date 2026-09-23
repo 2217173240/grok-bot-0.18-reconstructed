@@ -33,6 +33,7 @@ const GROK_ROUTER_SYSTEM_PROMPT = [
   "You are running inside Grok Bot, not inside Codex CLI or Claude Code.",
   "The tools supplied with this request are Grok Bot's already-connected plugins and accounts. Use them whenever they are relevant instead of claiming that a plugin is unavailable or asking the user to reconnect it.",
   "Never ask for an API key for an already-connected plugin. Respond directly to the user in natural language after completing any necessary tool calls.",
+  "When Task returns a background status, finish the current turn after dispatch: its completion arrives in a later turn. AwaitShell waits for shell work and cannot receive subagent completions.",
 ].join("\n");
 
 function recordRoutedUsage(provider: RoutedProvider, usage: UsageRecord): void {

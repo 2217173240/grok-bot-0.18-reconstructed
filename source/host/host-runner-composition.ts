@@ -262,6 +262,8 @@ export interface ProductionSessionBoundRunner {
     dispatchBackgroundSubagent(input: Parameters<
       TurnLocalResourceProjectionInput["subagentDispatcher"]["dispatch"]
     >[0]): void;
+    dispatchForegroundSubagent: TurnLocalResourceProjectionInput["subagentDispatcher"]["dispatchForeground"];
+    abortSubagent(agentId: string): "ok" | "not-running";
   };
   readonly computerUse: {
     allocateWindow(agentId: string): unknown | null;
@@ -2600,6 +2602,8 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                     computerUse?.freeWindow(agentId);
                   },
                   dispatch: input => runner.subagents.dispatchBackgroundSubagent(input),
+                  dispatchForeground: input => runner.subagents.dispatchForegroundSubagent(input),
+                  abort: id => { runner.subagents.abortSubagent(id); },
                 },
                 requestContext: turnRequestContext,
                 includeTranscripts: !isSharedRoomTurn,
