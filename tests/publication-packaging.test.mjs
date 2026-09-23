@@ -29,16 +29,22 @@ test("publication ignore rules retain reconstructed frontend source", async () =
   assert.equal(matcher.ignores("recovered/generated-output.txt"), true, "root recovery output must remain ignored");
 });
 
-test("default packaging builds source-only runtimes with verified Electron inputs", async () => {
+test("default packaging uses the checksum-pinned original renderer and verifies the signed bundle", async () => {
   const source = await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8");
-  assert.match(source, /await verifyInstalledElectronShell\(\)/);
-  assert.match(source, /await buildElectronTreeSitterRuntime\(\)/);
-  assert.match(source, /await buildSourceOnlyDistribution\(\)/);
-  assert.match(source, /await packSourceOnlyDistribution\(distribution\)/);
+  assert.match(source, /await buildFidelityReconstructedAsar\(\)/);
+  assert.match(source, /await verifyOfficialMacReference\(/);
+  assert.match(source, /await verifyChecksumPinnedRendererPackage\(/);
+  assert.match(source, /await verifyReconstructedMacPackage\(/);
   assert.match(source, /"--verify", "--deep", "--strict"/);
-  assert.doesNotMatch(source, /buildFidelityReconstructedAsar|verifyOfficialMacReference|resolveRuntimeApp/);
+  assert.doesNotMatch(source, /buildSourceOnlyDistribution|packSourceOnlyDistribution/);
   const verifier = await readFile(path.join(repoRoot, "scripts", "verify.mjs"), "utf8");
-  assert.match(verifier, /verifySourceOnlyPackage\(verifiedApp\)/);
+  assert.match(verifier, /await verifyChecksumPinnedRendererPackage\(/);
+  assert.match(verifier, /await verifyReconstructedMacPackage\(/);
+  assert.match(verifier, /experimental source-only renderer/);
+  const rendererVerifier = await readFile(path.join(repoRoot, "scripts", "lib", "macos-package-verification.mjs"), "utf8");
+  assert.match(rendererVerifier, /const expected = chunks\.get\(relative\)\?\.patched \?\? expectedFiles\.get\(relative\)/);
+  assert.match(rendererVerifier, /\["registry", "panel", "entry-text-extractor"\]/);
+  assert.match(rendererVerifier, /chunks\.size !== 2/);
 });
 
 test("Router settings use the trusted backend and display recorded inference usage", async () => {

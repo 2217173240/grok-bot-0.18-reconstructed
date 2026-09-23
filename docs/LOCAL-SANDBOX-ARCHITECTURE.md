@@ -2,7 +2,7 @@
 
 用户在本地 Grok Bot 提交任务，容器里的 agent 调用指定的第三方模型 API 和本地工具，结果回到本地会话与工作目录；登录、付款和需要人工判断的操作由用户接管。
 
-基础修复、容器执行、桌面服务健康检查与 Claude 工具转录已进入 main（PR #41、#44–#47）。本分支继续处理自有 macOS 构建、完整工具能力和取消传播；源码构建目前会因 18 张图片尚未纳入仓库而明确停止。
+基础修复、容器执行、桌面服务健康检查与 Claude 工具转录已进入 main（PR #41、#44–#47）；Docker 运行时命名由 PR #49 更新。本分支继续处理完整工具能力、取消传播和 macOS 发布包。发布包保留哈希固定的原版 0.18 renderer，host 与其余运行模块继续使用本仓库源码。
 
 ## 运行结构
 
@@ -56,7 +56,7 @@ flowchart TD
 
 | 依赖 | 使用位置 | 是否需要 Cursor/xAI 运行期返回 |
 | --- | --- | --- |
-| Electron 与本地打包的 renderer | 桌面界面与 IPC | 源码构建使用 npm Electron 42 与 `frontend/src/main.tsx`；18 张图片的仓库来源尚未确定 |
+| Electron 与本地打包的 renderer | 桌面界面与 IPC | 使用经过 SHA-256 核对的原版 0.18 Electron 外壳与 renderer；不依赖 Cursor/xAI 运行期返回 |
 | Docker / Colima、arm64 自建镜像 | 执行与桌面 | 本地运行；镜像构建需要基础镜像和软件包来源 |
 | `@anthropic-ai/claude-agent-sdk` | 容器内 CLI agent | 通过 `ANTHROPIC_BASE_URL` 使用指定的兼容 API |
 | `ai`、`@ai-sdk/openai` | OpenRouter provider | 使用所选第三方服务；真实账户回合仍待验收 |
@@ -64,9 +64,9 @@ flowchart TD
 | `@connectrpc/connect*`、`@bufbuild/protobuf` | host/daemon RPC | 本地 endpoint；不能仅用全局 fetch 拦截推断所有 Connect 出口已受保护 |
 | Statsig | 开关默认值与本地配置 | local-admin 不拉取官方 bootstrap，不发送 exposure，不启动刷新轮询 |
 | 浏览器目标网站 / 用户配置插件 | 执行用户任务 | 由任务决定；本地部署仍允许用户授权的第三方网络服务 |
-| 官方 0.18 应用构件 | 历史证据与旧版保真诊断 | 当前源码构建禁止从原版解包目录读取界面资源；固定图片纳入仓库后才可完成独立构建 |
+| 官方 0.18 应用构件 | Electron 外壳、renderer、原生依赖与历史证据 | 仍是经过固定哈希核对的构建输入；当前发布目标允许复用 |
 
-自有 renderer 从 `frontend/src/main.tsx` 与 `frontend/src/recovered` 构建。开发服务已经移除 `/upstream` 和原版解包目录读取，要求 `frontend/assets` 提供经过 SHA-256 核对的图片。现有原版应用仍在 `/Applications` 运行；本分支的源码修改尚未安装到该应用。
+默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。现有 `/Applications` 应用仍运行旧版本；本分支尚未安装。
 
 第三方 API 地址、主模型及子模型映射由启动环境配置，启动脚本保留显式值。API token 由 provider 读取本地凭据文件并传入 CLI 子进程，测试和报告不输出凭据。
 
@@ -94,19 +94,19 @@ flowchart TD
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
 | 5 | 高 / 中 | 所有 provider 使用 Grok turn 工具与权限 | Codex/OpenRouter 通过 `SimplePromptToolExecutor`；Claude 的 host 工具经进程内 MCP 回到同一执行器，真实 GLM 工具执行与转录各一次已验证。Codex/OpenRouter 真实账户及附件场景仍待验收 |
 | 6 | 高 / 中 | MCP 取消到达实际执行进程 | 真实延时 stdio 插件和 daemon RPC 取消通过；调用期间取消后未写入完成标记。Mac 回合路径已移除 |
-| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | Linux UI 与 GLM 已通过；源码 macOS 包曾在隔离环境完成这条链路，但固定图片来源与最终提交后的重新打包仍待完成 |
+| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | Linux UI 与 GLM 已通过；隔离 macOS 包曾完成该链路。最终哈希固定 renderer 包已构建、签名、校验；合并最新 Docker 选择后需重新打包并复测 |
 | 8 | 中 / 中 | router/session-sync 故障被健康检查发现并恢复 | 真实进程退出、健康判定与明确重建已通过隔离 Docker 验收 |
 | 9 | 中 / 低 | 多显示随机访问凭证、资源配额、人工登录接管 | 随机凭证、旧凭证撤销、四窗口资源限制与真实 WebSocket 访问已验证；真人登录和交回动作仍需人工完成 |
-| 10 | 高 / 中 | 原版安装包无关的源码构建与原版外观 | Electron 壳、main、host、renderer、原生 tree-sitter、签名和包体校验已通过；18 张界面图片仍缺少获准提交的固定仓库来源，外观逐屏比较尚未执行 |
+| 10 | 高 / 中 | 保留原版外观并核对发布包身份 | 默认包保留原版 renderer 的完整文件清单，精确补丁按顺序验证输入与输出 SHA-256；Electron 外壳、ASAR、原生依赖与重签名包体已在隔离环境核对。可读前端独立发布不再是交付要求 |
 
 普通插件退出不触发自动重放。执行带外部副作用的工具后，网络断开并不能证明操作没有发生；恢复连接与重放调用分别处理。
 
 ## 完成前仍需处理的事项
 
-1. **图片与外观。** onboarding 壁纸、应用图标和 16 个工具图标目前只存在于被 Git 忽略的 `src/app/dist/renderer/assets`。`scripts/build.mjs` 已在该来源处明确报错。若允许把现有 18 张图片的相同字节固定到 `frontend/assets`，构建可脱离原版安装包；随后需要逐屏比较原版与自有 renderer 的布局、字体、图片和交互。`PROVENANCE.md` 要求公开再分发前完成人工权利审查。
-2. **原版专用能力。** `sand-webauthn-signer` 目前仅在原版 `dist/native` 中；自有包不会启动该 passkey 签名流程。`csnaps` 缺席时代码库遥测会显示不可用。需要确定这些功能是否属于本地 agent 的交付范围，若属于，需要分别实现与真实验收。PDF Read 已改为 `pdfjs-dist` 源码实现，并经过真实 PDF 与容器 daemon 测试。
+1. **发布包与运行环境。** 默认包已复用原版 renderer 并完成隔离签名校验。项目专用 `colima-grokbot` VM 的镜像和持久数据卷已复制并核对；旧容器仍运行。合入 Docker 选择补丁后，需要停写、最终同步数据卷、启动新容器，用最新包完成封锁 Cursor/xAI 网络的 macOS UI 回合，再替换 `/Applications` 中的旧应用。`PROVENANCE.md` 对公开再分发仍要求独立权利审查。
+2. **原版专用能力。** 默认包继续带有哈希固定的原版 `dist/native`，其中包括 `sand-webauthn-signer`；需要在新 profile 与新版应用中执行真实 passkey 场景验收。`csnaps` 属于旧版代码库遥测服务，其本地部署替代范围仍需决定。PDF Read 已改为 `pdfjs-dist` 源码实现，并经过真实 PDF 与容器 daemon 测试。
 3. **各 provider 的真实验收。** Claude 的文件、MCP 与 host 工具路径已使用 GLM 在隔离容器测试。Codex 需要获准在隔离容器只读提供现有登录凭据；OpenRouter 需要可用的 API key。两者都需要真实文本、图片、工具、取消和转录场景。当前只有静态检查与针对性协议测试，不能据此宣称全功能等价。
-4. **安装包与人工接管。** 图片来源确定后，需要从干净检出重新构建、校验签名与包体，在不影响当前应用和生产容器的隔离副本完成 macOS UI 回合与逐屏外观检查。最终替换 `/Applications` 中正在运行的应用会重启用户会话；noVNC 登录与交回仍需真人参与。
+4. **人工接管。** 随机 noVNC 凭证与 WebSocket 访问已通过自动验收；真人登录、操作和交回需要用户在新 profile 运行后参与。应用安装会重启当前桌面会话，因此应在新容器健康检查与最终包验收之后进行。
 
 ## 基础镜像身份
 
