@@ -301,5 +301,6 @@ MCP 化名字 `mcp__x__SendMessage` 不被 `hasSendMessageCall` 识别，需要�
 - 桌面 resync 的账号作用域推送不再触发宿主的 `clearAccountScope()`（该函数会删除 `localToolPermission`、
   `computerUseModel` 等设置并清空三张 MCP 表）；真正的账号离开仍走显式清空路径
 - `1339` 路由器与 session-sync 已有桌面 profile 门禁的 D5 存活性探针；两者没有监督者，死亡后需重建容器
-- `docs/LEARNING-PYRAMID.*`、`docs/DEPLOY-HANDBOOK.md` 未跟踪文件归档决定
+- 仓库内的未跟踪文件已清空：`docs/LEARNING-PYRAMID.md` 与 `.html` 已归档为版本化文档（`docs/DEPLOY-HANDBOOK.md`
+  早已在版本控制中）
 - S-9 毕业验收（封锁 golden path，含"盒内全新会话全流程"门禁）、S-10 收尾

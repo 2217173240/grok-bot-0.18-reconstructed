@@ -221,5 +221,6 @@ scripts/zero-remote-live.sh   # 断言账本零 cursor/xai 出网行
 
 - Colima profile 名 `finonelib` 仅为源机命名，新机 `colima start` 默认 profile 即可——发现逻辑按 `~/.colima/*/docker.sock` 通配
 - 源机 Clash fake-IP（198.18/15 段）触发了 egress 门的部署级适配；新机无 Clash 则走默认严格模式，行为更纯
-- `docs/LEARNING-PYRAMID.*` 是未跟踪的旧资产，与本部署无关
+- `docs/LEARNING-PYRAMID.md` 与 `docs/LEARNING-PYRAMID.html` 是分析文档（架构链路与工程取舍的学习材料），随仓库
+  一起版本化；部署与运行都不需要读它们，内容以 `.md` 为准，`.html` 是排版版本
 - 源机工作区曾有未提交实验（已全部随 PR #28 合并）；新机从 git 干净起步，无此负担
