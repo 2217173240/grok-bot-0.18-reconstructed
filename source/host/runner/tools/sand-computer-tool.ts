@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { detectImageMimeType } from "../../../packages/agent/tools/core/read/image-utils.js";
 import { buildHostShellArgs } from "../../box/box-shell-command.js";
 import { navigationProbeCommand } from "../sand-action-audit.js";
 import { SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE } from "../../ports/box.js";
@@ -227,7 +228,10 @@ export async function executeAndPersistComputerUse<Context>(context: Context, de
   if (result.result.case === "success") {
     const success = result.result.value as ComputerUseSuccess;
     if (success.screenshot != null && success.screenshot.length > 0) {
-      const saved = await deps.getPersistImage()?.(Buffer.from(success.screenshot, "base64"), "image/webp");
+      const screenshot = Buffer.from(success.screenshot, "base64");
+      const mime = detectImageMimeType(screenshot);
+      if (mime === undefined) throw new TypeError("Computer returned an unknown screenshot format");
+      const saved = await deps.getPersistImage()?.(screenshot, mime);
       if (saved != null) success.screenshotPath = saved.fileUrl;
     }
   }
