@@ -9,6 +9,7 @@
 #   3. 通用的 /var/run/docker.sock（Docker Desktop 等）
 #   4. 无 profile 的 ~/.colima/docker.sock 与 default profile
 #   5. 其余 Colima profile 按名称排序
+#   6. OrbStack socket（Colima 均不可用时）
 # 第 5 步排序是为了让结果与 readdir 顺序无关；这里不写任何从别的项目借来的
 # profile 名，运行环境由上面两步显式指定。
 
@@ -22,10 +23,10 @@ grokbot_colima_profile() {
 # 找到可用的 Docker socket 后导出 DOCKER_HOST；找不到返回 1。
 resolve_docker_host() {
   [ -n "${DOCKER_HOST:-}" ] && return 0
-  local candidate entry
+  local candidate entry system_socket="${1:-/var/run/docker.sock}"
   for candidate in \
     "$HOME/.colima/$(grokbot_colima_profile)/docker.sock" \
-    /var/run/docker.sock \
+    "$system_socket" \
     "$HOME/.colima/docker.sock" \
     "$HOME/.colima/default/docker.sock"
   do
@@ -38,10 +39,12 @@ resolve_docker_host() {
   done <<EOF
 $(ls -1 "$HOME/.colima" 2>/dev/null | LC_ALL=C sort)
 EOF
+  candidate="$HOME/.orbstack/run/docker.sock"
+  if [ -S "$candidate" ]; then export DOCKER_HOST="unix://$candidate"; return 0; fi
   return 1
 }
 
 # 找不到运行时的统一提示：说清显式选项，而不是让人猜该起哪个 profile。
 docker_unreachable_hint() {
-  printf '%s' "start a Docker runtime: colima start --profile $(grokbot_colima_profile), or export DOCKER_HOST=unix://<socket>"
+  printf '%s' "start a Docker runtime: colima start --profile $(grokbot_colima_profile), start OrbStack, or export DOCKER_HOST=unix://<socket>"
 }

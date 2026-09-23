@@ -54,7 +54,7 @@ pass() { echo "GATE PASS: $1"; }
 fail() { echo "GATE FAIL: $1" >&2; FAILURES=$((FAILURES + 1)); }
 
 if ! docker info >/dev/null 2>&1; then
-  echo "Docker daemon unreachable (start Colima: colima start)" >&2
+  echo "Docker daemon unreachable (start Colima: colima start --profile ${GROKBOT_COLIMA_PROFILE:-grokbot}, or start OrbStack)" >&2
   exit 1
 fi
 if ! docker image inspect grok-bot-exec-box:arm64 >/dev/null 2>&1; then
