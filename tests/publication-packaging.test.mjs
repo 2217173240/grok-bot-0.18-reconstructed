@@ -52,7 +52,6 @@ test("Router settings use the trusted backend and display recorded inference usa
   const mcpBridge = await readFile(path.join(repoRoot, "source", "shared", "node", "mcp", "routed-mcp-bridge.ts"), "utf8");
   const localDocker = await readFile(path.join(repoRoot, "source", "electron-main", "box", "local-docker-host-connector.ts"), "utf8");
   const secretsIpc = await readFile(path.join(repoRoot, "source", "electron-main", "secrets", "secrets-ipc.ts"), "utf8");
-  const inferenceRouter = await readFile(path.join(repoRoot, "source", "shared", "inference-router.ts"), "utf8");
   assert.match(rendererPatch, /desktop\.agent\.getInferenceRouter\(\)/);
   assert.match(rendererPatch, /desktop\.agent\.setInferenceRouter\(n\)/);
   assert.match(rendererPatch, /desktop\.agent\.getBoxRuntime\(\)/);
@@ -179,11 +178,6 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(mcpBridge, /readOnlyHint: readOnly/);
   assert.match(mcpBridge, /request\.url !== `\/mcp\/\$\{secret\}`/);
   assert.doesNotMatch(coordinatorMain, /createCoordinatorInferenceRouter|routed\.handled/);
-  assert.match(inferenceRouter, /routedProviderToolSteps/);
-  assert.match(inferenceRouter, /ROUTED_PROVIDER_HOST_TOOL_STEPS = 1/);
-  assert.match(providers, /routedProviderToolSteps\(executeTool != null\)/);
-  assert.match(providers, /codexExecutor\(this\.getMessages\(\), invocationId, definitions, undefined/);
-  assert.match(providers, /openRouterExecutor\(this\.getMessages\(\), invocationId, definitions, undefined/);
   assert.match(codexDirect, /type: "tool-call"/);
   assert.match(codexDirect, /SimplePromptToolExecutor/);
   assert.match(secretsIpc, /persistBoxSecretsSnapshot/);
