@@ -52,10 +52,10 @@ except Exception:
 PY
 }
 
-# Mirror the connector's Colima discovery so docker CLI works from this shell.
+# Mirror the connector's socket discovery (Colima, OrbStack) so docker CLI works from this shell.
 resolve_docker_host() {
   [ -n "${DOCKER_HOST:-}" ] && return 0
-  for socket in /var/run/docker.sock "$HOME"/.colima/docker.sock "$HOME"/.colima/*/docker.sock; do
+  for socket in /var/run/docker.sock "$HOME"/.colima/docker.sock "$HOME"/.colima/*/docker.sock "$HOME"/.orbstack/run/docker.sock; do
     if [ -S "$socket" ]; then export DOCKER_HOST="unix://$socket"; return 0; fi
   done
   return 1
@@ -186,8 +186,8 @@ do_start() {
   export SAND_USER_DATA_DIR="$PROFILE"
   # 本地管理员模式只在容器执行。
   if [ "${GROKBOT_BOX:-docker}" = "docker" ]; then
-    resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
-    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
+    resolve_docker_host || die "no Docker socket found (start Colima or OrbStack)"
+    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (is Colima or OrbStack running?)"
     export SAND_LOCAL_ADMIN_BOX=docker
     echo docker > "$DATA_ROOT/box-mode"
     say "computer: Docker VM"
@@ -294,7 +294,7 @@ do_status() {
   fi
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
   if ! resolve_docker_host 2>/dev/null || ! docker info >/dev/null 2>&1; then
-    say "computer:    docker unreachable (colima start?) — cannot inspect the container"
+    say "computer:    docker unreachable (Colima/OrbStack running?) — cannot inspect the container"
   elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
     if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
       say "computer:    desktop plane (box-init-exec, opt-in)"

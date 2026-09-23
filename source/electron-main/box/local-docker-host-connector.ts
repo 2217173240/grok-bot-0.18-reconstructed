@@ -326,6 +326,8 @@ export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir 
       sockets.push(join(homeDir, ".colima", profile, "docker.sock"));
     }
   } catch {}
+  // OrbStack keeps its socket here when /var/run/docker.sock is not linked.
+  sockets.push(join(homeDir, ".orbstack", "run", "docker.sock"));
   for (const socket of sockets) {
     if (existsSync(socket)) return `unix://${socket}`;
   }

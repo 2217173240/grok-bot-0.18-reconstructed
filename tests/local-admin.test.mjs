@@ -329,6 +329,22 @@ test("docker CLI uses an existing Colima socket when DOCKER_HOST is unset", asyn
   }
 });
 
+test("docker CLI uses an existing OrbStack socket when DOCKER_HOST is unset", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  try {
+    const home = await mkdtemp(path.join(os.tmpdir(), "grok-orbstack-home-"));
+    const socket = path.join(home, ".orbstack", "run", "docker.sock");
+    await mkdir(path.dirname(socket), { recursive: true });
+    await writeFile(socket, "");
+    const resolved = loaded.module.resolveDockerHost({}, home);
+    if (existsSync("/var/run/docker.sock")) assert.equal(resolved, "unix:///var/run/docker.sock");
+    else assert.equal(resolved, `unix://${socket}`);
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } finally {
+    await loaded.dispose();
+  }
+});
+
 async function loopbackPortBusy(port) {
   const net = await import("node:net");
   return await new Promise((resolve) => {
