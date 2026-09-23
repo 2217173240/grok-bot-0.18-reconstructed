@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { z } from "zod";
 const root = path.resolve(import.meta.dirname, "..");
 
 test("provider 参数保留真实 AI SDK Schema、Zod 与 JSON 的内容", async () => {
+  await mkdir(path.join(root, ".cache"), { recursive: true });
   const directory = await mkdtemp(path.join(root, ".cache/provider-contract-"));
   try {
     const output = path.join(directory, "provider.mjs");

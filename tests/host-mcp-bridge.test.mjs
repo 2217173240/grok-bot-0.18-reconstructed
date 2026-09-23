@@ -9,7 +9,6 @@
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -19,7 +18,7 @@ import { build } from "esbuild";
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
 async function loadBridge() {
-  const buildRoot = await mkdtemp(path.join(tmpdir(), "grok-mcp-bridge-"));
+  const buildRoot = await mkdtemp(path.join(repositoryRoot, ".tmp-mcp-bridge-"));
   const outfile = path.join(buildRoot, "routed-mcp-bridge.mjs");
   await build({
     entryPoints: [path.join(repositoryRoot, "source/shared/node/mcp/routed-mcp-bridge.ts")],
@@ -59,8 +58,7 @@ test("the loopback bridge serves this computer's plugin tools to an MCP client",
     const forecast = listed.tools.find((tool) => tool.name === "weather__forecast");
     assert.equal(forecast.description, "Read the forecast");
     assert.deepEqual(forecast.inputSchema.required, ["city"]);
-    // A reading tool and a writing tool are marked apart, which is what the CLI
-    // child's own approval surface reads.
+    // 描述文本不能证明工具权限或幂等性。
     assert.equal(forecast.annotations, undefined);
     assert.equal(listed.tools.find((tool) => tool.name === "mail__send").annotations, undefined);
 
