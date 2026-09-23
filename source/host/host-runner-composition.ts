@@ -2507,7 +2507,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             conversationId: agentId,
             requestId,
             inference: createTypedInferenceOwner(extensions.api("inference").port),
-            onRequestId: requestIdForwarder(hooks, "agent"),
+            onRequestId: isSubagent ? () => {} : requestIdForwarder(hooks, "agent"),
             isSubagentRunner: isSubagent,
             isSilenceAllowed: runOptions.isSilenceAllowed === true,
             ...(runOptions.ackToken === undefined

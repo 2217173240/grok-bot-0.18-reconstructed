@@ -202,6 +202,7 @@ export function localDockerRunPlan(options: {
     // read-only file mount at the path claudeChildEnv resolves.
     "--env", "SAND_LOCAL_ADMIN=1",
     "--env", "SAND_HOST_IN_BOX=1",
+    "--env", `SAND_LOCAL_ADMIN_DESKTOP=${options.desktop === true ? "1" : "0"}`,
     ...(options.hostTurn !== true ? [] : [
       "--env", "CLAUDE_CODE_PATH=/home/box/deps/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
       ...(process.env.ANTHROPIC_BASE_URL == null ? [] : ["--env", `ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL}`]),
