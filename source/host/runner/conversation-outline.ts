@@ -52,6 +52,11 @@ interface SendMessageToolCall {
   };
 }
 
+interface ClaudeExecutedToolCall {
+  readonly args?: { readonly providerIdentifier?: string; readonly toolName?: string };
+  readonly result?: { readonly result?: { readonly case?: string } };
+}
+
 export interface OutlineToolCall {
   readonly tool: {
     readonly case?: string;
@@ -102,6 +107,10 @@ export function stripHiddenMarker(text: string): string {
 
 export function getOutlineToolCallName(toolCall: OutlineToolCall): string {
   if (toolCall.tool.case === "taskToolCall") return "Task";
+  if (toolCall.tool.case === "mcpToolCall") {
+    const value = toolCall.tool.value as ClaudeExecutedToolCall | undefined;
+    if (value?.args?.providerIdentifier === "claude-code" && value.args.toolName) return value.args.toolName;
+  }
   if (toolCall.tool.case === "computerUseToolCall") {
     const value = toolCall.tool.value as ComputerUseToolCall | undefined;
     const actions = value?.args?.actions;
@@ -160,6 +169,10 @@ export function getOutlineToolCallStatus(
   toolCall: OutlineToolCall,
 ): "pending" | "failed" | "done" {
   if (event !== "toolCallCompleted") return "pending";
+  if (toolCall.tool.case === "mcpToolCall") {
+    const value = toolCall.tool.value as ClaudeExecutedToolCall | undefined;
+    if (value?.args?.providerIdentifier === "claude-code" && value.result?.result?.case === "error") return "failed";
+  }
   return isFailedTaskToolCall(toolCall) ? "failed" : "done";
 }
 

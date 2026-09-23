@@ -30,7 +30,7 @@ import type {
   PromptSnapshotStore,
 } from "./system-prompt-assembly.js";
 import type { SummarizationPromptSession } from "../../packages/agent-summarization/summarization-handler.js";
-import { createProviderPromptSession, type HostMcpTools } from "../extensions/inference/provider-session.js";
+import { createProviderPromptSession, type HostMcpTools, type ProviderToolEvent } from "../extensions/inference/provider-session.js";
 import { getSandRootDir } from "../host-paths.js";
 import { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { AgentProfilePromptSnapshot } from "./sand-agent-profile-prompt.js";
@@ -97,6 +97,7 @@ export interface TurnAgentRunContextInput<ContextValue> {
   /** Plugin tools of this computer, for a CLI child that runs here. */
   readonly mcp?: TurnAgentMcpTurnProvider;
   readonly onRequestId: (requestId: string) => void;
+  readonly onProviderToolEvent?: (event: ProviderToolEvent) => void;
   readonly modelId?: string;
   readonly requestSource?: string;
   readonly isSubagentRunner: boolean;
@@ -203,6 +204,7 @@ export async function createTurnAgentRunContext<ContextValue>(
     : createProviderPromptSession(inferenceProvider, {
       localToolPermission: localSettings.getLocalToolPermission(),
       ...(mcpTools === undefined ? {} : { mcp: mcpTools }),
+      ...(input.onProviderToolEvent === undefined ? {} : { onToolEvent: input.onProviderToolEvent }),
     }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(
     input.onRequestId,
