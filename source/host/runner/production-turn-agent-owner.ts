@@ -162,6 +162,7 @@ export async function createProductionTurnAgentOwner(
     requestId: input.requestId,
     inference: input.inference,
     onRequestId: input.onRequestId,
+    onProviderToolEvent: event => input.emitUpdate({ type: "tool-call", ...event }),
     ...(input.mcp === undefined ? {} : { mcp: input.mcp }),
     ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
     ...(input.requestSource === undefined

@@ -24,16 +24,6 @@ async function loadModule(entry) {
   return { module, dispose: () => rm(temporary, { recursive: true, force: true }) };
 }
 
-test("routed host-owned turns advertise tools for one model step only", async () => {
-  const loaded = await loadModule("source/shared/inference-router.ts");
-  try {
-    assert.equal(loaded.module.routedProviderToolSteps(false), 1);
-    assert.equal(loaded.module.routedProviderToolSteps(true), 8);
-  } finally {
-    await loaded.dispose();
-  }
-});
-
 test("Mac-side box-secrets snapshot round-trips with mode 0600", async () => {
   const loaded = await loadModule("source/shared/node/box-secrets-store.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-mac-secrets-"));

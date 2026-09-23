@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { Value, type JsonValue } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { RE2JS } from "re2js";
-import { InteractionUpdate, AgentMode, ResponseComparisonCompleted, ResponseComparisonDisplayOrder, ResponseComparisonSkipped, ResponseComparisonSkipReason, ResponseComparisonStarted, ResponseComparisonTextDelta, ResponseComparisonUpdate, UserMessage } from "../../../proto/generated/agent/v1/agent_pb.js";
+import { InteractionUpdate, AgentMode, ResponseComparisonCompleted, ResponseComparisonDisplayOrder, ResponseComparisonSkipped, ResponseComparisonSkipReason, ResponseComparisonStarted, ResponseComparisonTextDelta, ResponseComparisonUpdate, ToolCall, UserMessage } from "../../../proto/generated/agent/v1/agent_pb.js";
+import { McpArgs, McpSuccess, McpTextContent, McpToolResultContentItem } from "../../../proto/generated/agent/v1/mcp_exec_pb.js";
+import { McpToolCall, McpToolError, McpToolResult } from "../../../proto/generated/agent/v1/mcp_tool_pb.js";
 import { TodoStatus } from "../../../proto/generated/agent/v1/todo_tool_pb.js";
 import { RequestContext } from "../../../proto/generated/agent/v1/request_context_exec_pb.js";
 import { createRedactedConversationTokenDetails, fromRedactedConversationPlan, fromRedactedToolCall, fromRedactedUserMessage, toRedactedConversationPlan, toRedactedInteractionUpdate, toRedactedToolCall } from "../../../redacted-protos/generated/agent/v1/agent_redacted.js";
@@ -190,6 +193,46 @@ function containsToolCall(responseMessages: readonly CoreMessageLike[]): boolean
         typeof part === "object" && part !== null && "type" in part && part.type === "tool-call"
       )
   );
+}
+
+export function containsPendingToolCall(responseMessages: readonly CoreMessageLike[]): boolean {
+  return containsToolCall(responseMessages.filter(message =>
+    !isClaudeExecutedToolMessage(message),
+  ));
+}
+
+function isClaudeExecutedToolMessage(message: CoreMessageLike): boolean {
+  return (message.providerOptions as { claudeCode?: { toolsExecuted?: boolean } } | undefined)?.claudeCode?.toolsExecuted === true;
+}
+
+export function projectClaudeExecutedToolSteps(messages: readonly CoreMessageLike[]): Array<{ toolCallId: string; toolCall: ToolCall }> {
+  const calls = new Map<string, { name: string; args: Record<string, unknown> }>();
+  const projected: Array<{ toolCallId: string; toolCall: ToolCall }> = [];
+  for (const message of messages) {
+    if (!isClaudeExecutedToolMessage(message) || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (typeof part !== "object" || part === null) continue;
+      if (message.role === "assistant" && part.type === "tool-call") {
+        if (typeof part.toolCallId !== "string" || typeof part.toolName !== "string" || typeof part.args !== "object" || part.args === null || Array.isArray(part.args)) throw new Error("Invalid executed Claude tool call.");
+        calls.set(part.toolCallId, { name: part.toolName, args: part.args as Record<string, unknown> });
+      }
+      if (message.role === "tool" && part.type === "tool-result") {
+        if (typeof part.toolCallId !== "string") throw new Error("Invalid executed Claude tool result.");
+        const call = calls.get(part.toolCallId);
+        if (call == null) throw new Error(`Executed Claude tool result has no call: ${part.toolCallId}.`);
+        calls.delete(part.toolCallId);
+        const args = Object.fromEntries(Object.entries(call.args).map(([key, value]) => [key, Value.fromJson(value as JsonValue)]));
+        const output = typeof part.result === "string" ? part.result : JSON.stringify(part.result);
+        const result = part.isError === true
+          ? new McpToolResult({ result: { case: "error", value: new McpToolError({ error: output }) } })
+          : new McpToolResult({ result: { case: "success", value: new McpSuccess({ content: [new McpToolResultContentItem({ content: { case: "text", value: new McpTextContent({ text: output }) } })] }) } });
+        const toolCall = new ToolCall({ tool: { case: "mcpToolCall", value: new McpToolCall({ args: new McpArgs({ name: call.name, providerIdentifier: "claude-code", serverIdentifier: "claude-code", toolName: call.name, toolCallId: part.toolCallId, args }), result }) } });
+        projected.push({ toolCallId: part.toolCallId, toolCall });
+      }
+    }
+  }
+  if (calls.size > 0) throw new Error("Executed Claude tool call has no result.");
+  return projected;
 }
 
 const FINAL_ASSISTANT_MESSAGE_UX_STAT_NAMES = [
@@ -2135,7 +2178,10 @@ export class AbstractUserMessageActionHandler {
         cacheWriteTokens: extendedUsage.cacheWriteTokens,
         reasoningTokens: extendedUsage.reasoningTokens,
       });
-      const hasToolCall = containsToolCall(response.messages);
+      for (const { toolCallId, toolCall } of projectClaudeExecutedToolSteps(response.messages)) {
+        await turn.upsertToolCall(ctx, toRedactedToolCall(toolCall, stateHandler.getPrivacyMode()), toolCallId);
+      }
+      const hasToolCall = containsPendingToolCall(response.messages);
       if (!hasToolCall && responseComparisonMessages !== undefined && responseComparisonTools !== undefined) {
         try {
           await this.enqueueAgentResponseComparisonIfEligible({

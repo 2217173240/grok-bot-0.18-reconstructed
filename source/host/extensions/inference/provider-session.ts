@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
 import type { Context } from "../../../packages/context/core.js";
-import { routedProviderToolSteps, type SandInferenceProvider } from "../../../shared/inference-router.js";
+import type { SandInferenceProvider } from "../../../shared/inference-router.js";
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
 import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
@@ -26,7 +26,6 @@ type Loose = Record<string, any>;
 interface ProviderMessage extends LabelMessage { role: string; content: string | readonly unknown[] }
 type RoutedProvider = Exclude<SandInferenceProvider, "cursor">;
 type UsageRecord = { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
-type RoutedToolExecutor = (tool: Loose, args: unknown, toolCallId: string) => Promise<unknown>;
 
 const GROK_ROUTER_SYSTEM_PROMPT = [
   "You are Grok Bot, a warm, concise desktop assistant.",
@@ -86,8 +85,8 @@ export function claudeChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
   return childEnv;
 }
 
-function response(text: string, id: string, modelId: string, toolCalls: readonly Loose[] = []) {
-  return { id, modelId, timestamp: new Date(), headers: {}, messages: [{ role: "assistant", content: [{ type: "text", text }, ...toolCalls] }] };
+function response(text: string, id: string, modelId: string, toolCalls: readonly Loose[] = [], messages?: Array<{ role: string; content: Loose[] }>) {
+  return { id, modelId, timestamp: new Date(), headers: {}, messages: messages ?? [{ role: "assistant", content: [{ type: "text", text }, ...toolCalls] }] };
 }
 
 type CodexCredentials = { accessToken: string; refreshToken: string; idToken: string; accountId: string; path: string; document: Loose };
@@ -225,7 +224,7 @@ function codexTools(definitions: readonly Loose[] | undefined): CodexDirectTool[
   return tools.length === 0 ? undefined : tools;
 }
 
-function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], executeTool?: RoutedToolExecutor, onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const credentials = codexCredentials();
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
@@ -245,8 +244,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         instructions: GROK_ROUTER_SYSTEM_PROMPT,
         input: codexInput(messages),
         ...(tools == null ? {} : { tools }),
-        ...(executeTool == null ? {} : { executeTool: async (selected, args, toolCallId) => await executeTool(selected.source, args, toolCallId) }),
-        maxSteps: tools == null ? 1 : routedProviderToolSteps(executeTool != null),
+        maxSteps: 1,
         ...(signal === undefined ? {} : { signal }),
       })) {
         if (event.type === "text-delta") { text += event.delta; yield { type: "text-delta" as const, textDelta: event.delta }; continue; }
@@ -326,7 +324,7 @@ export function resolveAgentWorkspace(): string {
 // handoff. While the ask file exists, only the hand-back itself (removing the
 // ask file) and reads pass; everything else gets the waiting message.
 export function awaitingHumanAskFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
-  const root = process.env.SAND_WORKSPACE_ROOT?.trim() || resolveAgentWorkspace();
+  const root = env.SAND_WORKSPACE_ROOT?.trim() || resolveAgentWorkspace();
   if (root.length === 0) return null;
   return join(root, ".grokbot", "ask-human.json");
 }
@@ -345,7 +343,12 @@ export function claudeToolPermission(toolName: string, input?: unknown, localToo
     const askPath = awaitingHumanAskFilePath();
     if (askPath != null && existsSync(askPath)) {
       const command = typeof (input as { command?: unknown } | undefined)?.command === "string" ? (input as { command: string }).command : "";
-      const isHandBack = /ask-human\.json/.test(command) && /(^|\s)(rm|unlink)\b/.test(command);
+      const isHandBack = toolName === "Bash" && [
+        `rm ${askPath}`,
+        `unlink ${askPath}`,
+        "rm .grokbot/ask-human.json",
+        "unlink .grokbot/ask-human.json",
+      ].includes(command.trim());
       if (isHandBack) {
         appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-handback-allowed", tool: toolName });
         return allowUnchanged(input);
@@ -457,12 +460,49 @@ export function claudeLocalToolsPrompt(env: NodeJS.ProcessEnv = process.env): st
 
 interface ClaudeExecutorOptions {
   readonly onUsage?: (usage: UsageRecord) => void;
-  /** A bridge the caller already runs; this executor does not close it. */
-  readonly mcpServerUrl?: string;
   /** Plugin tools this executor exposes through its own bridge, closed with the stream. */
   readonly mcp?: HostMcpTools;
   readonly localToolPermission?: SandLocalToolPermission;
   readonly signal?: AbortSignal;
+  readonly onToolEvent?: (event: ProviderToolEvent) => void;
+}
+
+export interface ProviderToolEvent {
+  readonly id: string;
+  readonly name: string;
+  readonly status: "pending" | "done" | "failed";
+  readonly args?: string;
+}
+
+function claudeRecordedMessage(
+  message: SDKMessage,
+  pendingTools: Map<string, string>,
+  onToolEvent?: ClaudeExecutorOptions["onToolEvent"],
+): { role: string; content: Loose[]; providerOptions: { claudeCode: { toolsExecuted: true } } } | undefined {
+  if (message.type === "assistant") {
+    const content: Loose[] = [];
+    for (const block of message.message.content) {
+      if (block.type === "text") content.push({ type: "text", text: block.text });
+      if (block.type === "tool_use") {
+        pendingTools.set(block.id, block.name);
+        content.push({ type: "tool-call", toolCallId: block.id, toolName: block.name, args: block.input });
+        onToolEvent?.({ id: block.id, name: block.name, status: "pending", args: redactTypedDesktopInput(JSON.stringify(block.input ?? {})) });
+      }
+    }
+    return content.length === 0 ? undefined : { role: "assistant", content, providerOptions: { claudeCode: { toolsExecuted: true } } };
+  }
+  if (message.type !== "user" || ("isReplay" in message && message.isReplay === true) || !Array.isArray(message.message.content)) return undefined;
+  const content: Loose[] = [];
+  for (const block of message.message.content) {
+    if (block.type !== "tool_result") continue;
+    const name = pendingTools.get(block.tool_use_id);
+    if (name == null) throw new Error(`Claude returned a result for unknown tool call ${block.tool_use_id}.`);
+    pendingTools.delete(block.tool_use_id);
+    const result = { type: "tool-result", toolCallId: block.tool_use_id, toolName: name, result: block.content ?? "", ...(block.is_error === true ? { isError: true } : {}) };
+    content.push(result);
+    onToolEvent?.({ id: block.tool_use_id, name, status: block.is_error === true ? "failed" : "done" });
+  }
+  return content.length === 0 ? undefined : { role: "tool", content, providerOptions: { claudeCode: { toolsExecuted: true } } };
 }
 
 function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, options?: ClaudeExecutorOptions) {
@@ -478,15 +518,18 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     // is closed with the stream, which keeps a crashed turn from leaving a
     // listener behind or holding a tool call open.
     let bridge: { url: string; close(): Promise<void> } | undefined;
+    const pendingTools = new Map<string, string>();
+    const recordedMessages: Array<{ role: string; content: Loose[] }> = [];
     try {
       const mcp = options?.mcp;
       if (mcp != null) bridge = await createRoutedMcpBridge({ listTools: () => mcp.listTools(), callTool: tool => mcp.callTool(tool) });
-      const mcpServerUrl = bridge?.url ?? options?.mcpServerUrl;
+      const mcpServerUrl = bridge?.url;
       const abortController = new AbortController();
       const abort = () => abortController.abort(options?.signal?.reason);
       if (options?.signal?.aborted === true) abort();
       else options?.signal?.addEventListener("abort", abort, { once: true });
       let final: SDKResultMessage | undefined;
+      let streamedText = "";
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
       try { for await (const message of queryClaude({ prompt: providerPrompt(messages, claudeLocalToolsPrompt()), options: {
         pathToClaudeCodeExecutable: executable,
@@ -500,25 +543,39 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
           return decision;
         },
         maxTurns: 24,
+        includePartialMessages: true,
         persistSession: false,
         abortController,
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
         if (message.type === "result") { final = message; continue; }
+        if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
+          const delta = message.event.delta.text;
+          streamedText += delta;
+          yield { type: "text-delta" as const, textDelta: delta };
+          continue;
+        }
         recordClaudeToolTraffic(message);
+        const recorded = claudeRecordedMessage(message, pendingTools, options?.onToolEvent);
+        if (recorded != null) recordedMessages.push(recorded);
       } } finally { options?.signal?.removeEventListener("abort", abort); }
       if (final == null) throw new Error("Claude Code ended without a result.");
       if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `Claude Code failed (${final.subtype}).`);
-      const text = final.result;
+      if (pendingTools.size > 0) throw new Error("Claude Code ended before returning its tool results.");
+      const text = streamedText || final.result;
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
       options?.onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
       extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
       metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
-      resultResponse.resolve(response(text, invocationId, "claude-code"));
-      if (text.length > 0) yield { type: "text-delta" as const, textDelta: text };
+      if (recordedMessages.length === 0 || !recordedMessages.some(message => message.role === "assistant" && message.content.some((part: Loose) => part.type === "text"))) {
+        recordedMessages.push({ role: "assistant", content: [{ type: "text", text }] });
+      }
+      resultResponse.resolve(response(text, invocationId, "claude-code", [], recordedMessages));
+      if (streamedText.length === 0 && text.length > 0) yield { type: "text-delta" as const, textDelta: text };
     } catch (error) {
+      for (const [id, name] of pendingTools) options?.onToolEvent?.({ id, name, status: "failed" });
       // Reject the deferreds for any late awaiter, then mark each rejection
       // handled: the error already propagates through fullStream, and an
       // unawaited rejected promise here crashes the coordinator as an
@@ -537,7 +594,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
-function toToolSet(definitions: readonly Loose[] | undefined, executeTool?: RoutedToolExecutor): ToolSet | undefined {
+function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefined {
   if (definitions == null || definitions.length === 0) return undefined;
   const tools: ToolSet = {};
   for (const definition of definitions) {
@@ -548,63 +605,39 @@ function toToolSet(definitions: readonly Loose[] | undefined, executeTool?: Rout
       ...(typeof definition.description === "string" ? { description: definition.description } : {}),
       parameters: jsonSchema(parameters),
     };
-    if (executeTool != null) routedTool.execute = async (args: unknown, options: { toolCallId: string }) => await executeTool(definition, args, options.toolCallId);
     tools[definition.name] = tool(routedTool);
   }
   return Object.keys(tools).length === 0 ? undefined : tools;
 }
 
-function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], executeTool?: RoutedToolExecutor, onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const id = process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   const model: LanguageModelV1 = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", compatibility: "compatible", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id as any);
-  const tools = toToolSet(definitions, executeTool);
-  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: tools === undefined ? 1 : routedProviderToolSteps(executeTool != null), ...(signal === undefined ? {} : { abortSignal: signal }) });
+  const tools = toToolSet(definitions);
+  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const extendedUsage = result.usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
   if (onUsage != null) void extendedUsage.then(onUsage).catch(error => appendLocalIntercept({ kind: "inference-usage", provider: "openrouter", error: error instanceof Error ? error.message : String(error) }));
   return { fullStream: result.fullStream, response: result.response, usage: result.usage, extendedUsage, providerMetadata: result.providerMetadata, invocationId: Promise.resolve(invocationId) };
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools, readonly onToolEvent?: (event: ProviderToolEvent) => void) { super(new BasePromptBuilder(initialMessages)); }
   stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
     const signal = (ctx as Context).signal;
     // host 统一执行已发现的工具；provider 只返回调用，权限与释放由外层管理。
-    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage, signal);
+    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {
       ...(this.onUsage === undefined ? {} : { onUsage: this.onUsage }),
       ...(this.localToolPermission === undefined ? {} : { localToolPermission: this.localToolPermission }),
       ...(this.mcp === undefined ? {} : { mcp: this.mcp }),
+      ...(this.onToolEvent === undefined ? {} : { onToolEvent: this.onToolEvent }),
       signal,
     });
-    return openRouterExecutor(this.getMessages(), invocationId, definitions, undefined, this.onUsage, signal);
+    return openRouterExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
   }
 }
 
-export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools; readonly onToolEvent?: (event: ProviderToolEvent) => void }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.mcp) };
-}
-
-export async function runRoutedProviderText(provider: RoutedProvider, messages: readonly ProviderMessage[], options?: {
-  readonly mcpServerUrl?: string;
-  readonly tools?: readonly Loose[];
-  readonly executeTool?: RoutedToolExecutor;
-  readonly onTextDelta?: (delta: string, accumulated: string) => void;
-}): Promise<string> {
-  const invocationId = crypto.randomUUID();
-  const onUsage = (usage: UsageRecord) => recordRoutedUsage(provider, usage);
-  const result = provider === "codex"
-    ? codexExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage)
-    : provider === "claude-code"
-      ? claudeExecutor(messages, invocationId, { onUsage, ...(options?.mcpServerUrl === undefined ? {} : { mcpServerUrl: options.mcpServerUrl }) })
-      : openRouterExecutor(messages, invocationId, options?.tools, options?.executeTool, onUsage);
-  let text = "";
-  for await (const event of result.fullStream) {
-    if (event.type === "text-delta" && typeof event.textDelta === "string") {
-      text += event.textDelta;
-      options?.onTextDelta?.(event.textDelta, text);
-    }
-  }
-  await result.response;
-  return text;
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.mcp, options?.onToolEvent) };
 }
