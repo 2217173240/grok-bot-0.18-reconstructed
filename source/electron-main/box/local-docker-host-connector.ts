@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, type Dirent } from "node:fs";
+import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -325,26 +325,32 @@ export function colimaProfileName(env: NodeJS.ProcessEnv = process.env): string 
   return named != null && named.length > 0 ? named : DEFAULT_DOCKER_PROFILE;
 }
 
-// Order is a decision, not an accident: an explicit DOCKER_HOST wins, then the
-// profile this project owns, then the generic socket, then the profile-less
-// Colima paths, then the remaining profiles sorted by name so the result does
-// not depend on directory order. The shell twin is scripts/lib/docker-socket.sh.
+// 候选顺序与 scripts/lib/docker-socket.sh 一致，独立于主机上的 socket 状态。
+export function dockerSocketCandidates(env: NodeJS.ProcessEnv, homeDir: string, profiles: readonly string[]): string[] {
+  return [
+    join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
+    "/var/run/docker.sock",
+    join(homeDir, ".colima", "docker.sock"),
+    join(homeDir, ".colima", "default", "docker.sock"),
+    ...[...profiles].sort().map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
+  ];
+}
+
 export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
   const configured = env.DOCKER_HOST?.trim();
   if (configured != null && configured.length > 0) return configured;
   let profiles: string[] = [];
   try {
-    profiles = readdirSync(join(homeDir, ".colima")).sort();
+    profiles = readdirSync(join(homeDir, ".colima"));
   } catch {}
-  const sockets = [
-    join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
-    "/var/run/docker.sock",
-    join(homeDir, ".colima", "docker.sock"),
-    join(homeDir, ".colima", "default", "docker.sock"),
-    ...profiles.map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
-  ];
-  for (const socket of sockets) {
-    if (existsSync(socket)) return `unix://${socket}`;
+  for (const socket of dockerSocketCandidates(env, homeDir, profiles)) {
+    try {
+      if (statSync(socket).isSocket()) return `unix://${socket}`;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM" || code === "ELOOP") continue;
+      throw error;
+    }
   }
   return undefined;
 }

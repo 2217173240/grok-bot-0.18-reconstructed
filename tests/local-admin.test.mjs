@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -311,41 +312,52 @@ test("local admin intercept blocks Cursor production fetches and records them", 
 
 test("docker CLI finds the project's own Colima profile instead of whichever one exists", async () => {
   const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
+  const home = await mkdtemp(path.join(repoRoot, ".cache", "c-"));
+  const servers = [];
+  async function listen(socket) {
+    await mkdir(path.dirname(socket), { recursive: true });
+    const server = createServer();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socket, resolve);
+    });
+    servers.push(server);
+  }
   try {
-    const home = await mkdtemp(path.join(os.tmpdir(), "grok-colima-home-"));
-    // A profile this project owns wins over the generic socket, so the choice
-    // is the same on every machine and does not depend on whatever profile
-    // another project left behind or on directory order.
     const own = path.join(home, ".colima", "grokbot", "docker.sock");
-    await mkdir(path.dirname(own), { recursive: true });
-    await writeFile(own, "");
+    await listen(own);
     assert.equal(loaded.module.resolveDockerHost({}, home), `unix://${own}`);
     assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "grokbot" }, home), `unix://${own}`);
 
-    // A named profile other than the default is honoured.
     const named = path.join(home, ".colima", "custom-runtime", "docker.sock");
-    await mkdir(path.dirname(named), { recursive: true });
-    await writeFile(named, "");
+    await listen(named);
     assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home), `unix://${named}`);
 
-    // Remaining profiles are visited in name order, not readdir order.
-    const ordered = await mkdtemp(path.join(os.tmpdir(), "grok-colima-order-"));
-    for (const profile of ["zzz", "aaa"]) {
-      const socket = path.join(ordered, ".colima", profile, "docker.sock");
-      await mkdir(path.dirname(socket), { recursive: true });
-      await writeFile(socket, "");
-    }
-    assert.equal(
-      loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "absent" }, ordered),
-      `unix://${path.join(ordered, ".colima", "aaa", "docker.sock")}`,
-    );
-    await rm(ordered, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    const file = path.join(home, ".colima", "file", "docker.sock");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "");
+    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "file" }, home), `unix://${file}`);
 
-    // An explicit DOCKER_HOST beats every discovered socket.
-    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///tmp/explicit.sock" }, home);
-    assert.equal(explicit, "unix:///tmp/explicit.sock");
-    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    const blocked = path.join(home, ".colima", "blocked");
+    await writeFile(blocked, "");
+    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "blocked" }, home), `unix://${path.join(blocked, "docker.sock")}`);
+
+    // 候选顺序不依赖测试主机上的 /var/run/docker.sock。
+    assert.deepEqual(loaded.module.dockerSocketCandidates({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home, ["zzz", "aaa"]), [
+      named,
+      "/var/run/docker.sock",
+      path.join(home, ".colima", "docker.sock"),
+      path.join(home, ".colima", "default", "docker.sock"),
+      path.join(home, ".colima", "aaa", "docker.sock"),
+      path.join(home, ".colima", "zzz", "docker.sock"),
+    ]);
+
+    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///explicit.sock" }, home);
+    assert.equal(explicit, "unix:///explicit.sock");
   } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
+    await rm(home, { recursive: true, force: true });
     await loaded.dispose();
   }
 });
