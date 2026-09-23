@@ -1,22 +1,37 @@
 import react from "@vitejs/plugin-react";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sirv from "sirv";
 import { defineConfig } from "vite";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const upstreamRenderer = path.resolve(here, "../src/app/dist/renderer");
+const rendererAssetRoot = path.join(here, "assets");
 const controlPort = process.env.SAND_DEV_CONTROL_PORT ?? "62150";
 let rendererHealth: unknown = null;
 
-function readUpstreamManifest() {
-  const html = readFileSync(path.join(upstreamRenderer, "index.html"), "utf8");
-  const entry = html.match(/<script[^>]+type=["']module["'][^>]+src=["']([^"']+)["']/i)?.[1];
-  const styles = [...html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)["']/gi)].map((match) => match[1]);
-  if (entry == null) throw new Error("Bootstrapped renderer index.html has no module entry.");
-  const toDevUrl = (assetPath: string) => `/upstream/${assetPath.replace(/^\.\//, "").replace(/^\//, "")}`;
-  return { entry: toDevUrl(entry), styles: styles.map(toDevUrl) };
+function verifyRendererAssets() {
+  const manifest = JSON.parse(readFileSync(path.join(here, "manifests", "renderer-runtime-assets.json"), "utf8")) as {
+    schemaVersion?: number;
+    artifactRoot?: string;
+    assets?: { file: string; sha256: string }[];
+  };
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.assets) || manifest.assets.length === 0) {
+    throw new Error("Renderer development asset manifest is invalid.");
+  }
+  const missing = manifest.assets.filter(({ file }) => !existsSync(path.join(rendererAssetRoot, file))).map(({ file }) => file);
+  if (missing.length > 0) {
+    throw new Error(`Renderer development requires tracked frontend/assets files: ${missing.join(", ")}`);
+  }
+  if (manifest.artifactRoot !== "frontend/assets") {
+    throw new Error(`Renderer development asset manifest must use frontend/assets, found ${manifest.artifactRoot ?? "missing root"}`);
+  }
+  for (const { file, sha256 } of manifest.assets) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(file) || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error(`Invalid renderer development asset entry: ${file}`);
+    const digest = createHash("sha256").update(readFileSync(path.join(rendererAssetRoot, file))).digest("hex");
+    if (digest !== sha256) throw new Error(`Renderer development asset hash drifted: ${file}`);
+  }
 }
 
 export default defineConfig({
@@ -30,13 +45,13 @@ export default defineConfig({
   plugins: [
     react(),
     {
-      name: "serve-bootstrapped-upstream",
+      name: "serve-source-renderer-assets",
       configureServer(server) {
-        const upstreamManifest = readUpstreamManifest();
+        verifyRendererAssets();
         server.middlewares.use((request, response, next) => {
           if (request.url === "/__reconstructed_manifest" && request.method === "GET") {
             response.writeHead(200, { "content-type": "application/json" });
-            response.end(JSON.stringify(upstreamManifest));
+            response.end(JSON.stringify({ entry: "/src/main.tsx", styles: [] }));
             return;
           }
           if (request.url !== "/__reconstructed_health") return next();
@@ -63,7 +78,7 @@ export default defineConfig({
             }
           });
         });
-        server.middlewares.use("/upstream", sirv(upstreamRenderer, { dev: true, etag: true }));
+        server.middlewares.use("/renderer-assets", sirv(rendererAssetRoot, { dev: true, etag: true }));
       }
     }
   ],

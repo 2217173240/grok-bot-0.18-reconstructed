@@ -22,7 +22,11 @@ export function createKey<T>(name: symbol, defaultValue: T): ContextKey<T> { ret
 function createChildController(parentSignal: AbortSignal): AbortController {
   const controller = new AbortController();
   if (parentSignal.aborted) controller.abort(parentSignal.reason);
-  else parentSignal.addEventListener("abort", () => controller.abort(parentSignal.reason), { once: true });
+  else {
+    const abort = () => controller.abort(parentSignal.reason);
+    parentSignal.addEventListener("abort", abort, { once: true });
+    controller.signal.addEventListener("abort", () => parentSignal.removeEventListener("abort", abort), { once: true });
+  }
   return controller;
 }
 

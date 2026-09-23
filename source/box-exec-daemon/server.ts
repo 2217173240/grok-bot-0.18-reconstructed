@@ -26,6 +26,7 @@ import {
 } from "../packages/proto/generated/agent/v1/exec_pb.js";
 import { ExecStreamElement } from "../packages/proto/generated/agent/v1/exec_service_pb.js";
 import { BoxMcpHost } from "./mcp-host.js";
+import { isPdfBinary } from "../packages/agent/tools/core/read/pdf-utils.js";
 import {
   BackgroundShellSpawnError,
   BackgroundShellSpawnResult,
@@ -255,9 +256,9 @@ class BoxExecRuntime {
           // Tool listing and tool calls go through the same serial queue the
           // config push uses, so a call cannot race a reconnect.
           if (request.message.case === "mcpStateExecArgs") {
-            yield client(request.id, request.execId, { case: "mcpStateExecResult", value: await mcpHost.listState(request.message.value) });
+            yield client(request.id, request.execId, { case: "mcpStateExecResult", value: await mcpHost.listState(request.message.value, signal) });
           } else {
-            yield client(request.id, request.execId, { case: "mcpResult", value: await mcpHost.callTool(request.message.value) });
+            yield client(request.id, request.execId, { case: "mcpResult", value: await mcpHost.callTool(request.message.value, signal) });
           }
           break;
         }
@@ -284,6 +285,13 @@ class BoxExecRuntime {
         return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: `Unsupported encoding hint: ${args.encodingHint}` }) } });
       }
       const data = await readFile(canonical);
+      if (isPdfBinary(data, args.path)) {
+        return new ReadResult({ result: { case: "success", value: new ReadSuccess({
+          path: args.path,
+          output: { case: "data", value: data },
+          fileSize: BigInt(data.byteLength),
+        }) } });
+      }
       const text = data.toString(args.encodingHint === "latin1" ? "latin1" : "utf8");
       const lines = text.split("\n");
       const offset = Math.max(0, args.offset ?? 0);

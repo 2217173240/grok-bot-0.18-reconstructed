@@ -100,20 +100,24 @@ export async function verifyChecksumPinnedRendererPackage({
     const allowedKeys = ["schemaVersion", "mode", "chunks", "features", "transformations"];
     if (Object.keys(parsed).sort().join("\0") !== allowedKeys.sort().join("\0")) throw new Error("Renderer extension provenance has unknown fields");
     const chunks = new Map();
-    const roles = new Set();
+    const roles = [];
     for (const row of parsed.chunks) {
       const relative = typeof row?.path === "string" && row.path.startsWith("dist/renderer/") ? row.path.slice("dist/renderer/".length) : null;
-      if (relative == null || !expectedFiles.has(relative) || roles.has(row.role) || !["registry", "panel", "entry-text-extractor"].includes(row.role)
+      if (relative == null || !expectedFiles.has(relative) || !["registry", "panel", "entry-text-extractor"].includes(row.role)
         || !Number.isInteger(row.original?.bytes) || !/^[0-9a-f]{64}$/.test(row.original?.sha256)
         || !Number.isInteger(row.patched?.bytes) || !/^[0-9a-f]{64}$/.test(row.patched?.sha256)) {
         throw new Error("Renderer extension chunk provenance is invalid");
       }
-      const previous = chunks.get(relative) ?? expectedFiles.get(relative);
-      if (row.original.bytes !== previous.bytes || row.original.sha256 !== previous.sha256) throw new Error(`Renderer extension source identity drift at ${relative}`);
-      roles.add(row.role);
-      chunks.set(relative, row.patched);
+      const expected = chunks.get(relative)?.patched ?? expectedFiles.get(relative);
+      if (row.original.bytes !== expected.bytes || row.original.sha256 !== expected.sha256) throw new Error(`Renderer extension source identity drift at ${relative}`);
+      chunks.set(relative, row);
+      roles.push(row.role);
     }
-    if (roles.size !== 3) throw new Error("Renderer extension chunk cardinality is invalid");
+    if (JSON.stringify(roles) !== JSON.stringify(["registry", "panel", "entry-text-extractor"])
+      || chunks.size < 2 || chunks.size > 3
+      || parsed.chunks[1].path === parsed.chunks[0].path) {
+      throw new Error("Renderer extension chunk sequence is invalid");
+    }
     rendererExtension = { bytes, parsed, chunks };
   } catch (error) {
     if (!(error instanceof Error) || !/not found in archive|Cannot find/.test(error.message)) throw error;
@@ -136,7 +140,7 @@ export async function verifyChecksumPinnedRendererPackage({
   for (const [relative, expected] of expectedFiles) {
     const packaged = extractFile(archivePath, `dist/renderer/${relative}`);
     const extension = rendererExtension?.chunks.get(relative);
-    const wanted = extension ?? expected;
+    const wanted = extension?.patched ?? expected;
     if (packaged.byteLength !== wanted.bytes || sha256(packaged) !== wanted.sha256) {
       throw new Error(`Packaged renderer drift at ${relative}`);
     }

@@ -91,6 +91,7 @@ import {
   type RemoteBoxResourceHost,
 } from "./runner/remote-box-resources.js";
 import { createStreamAttempt } from "./runner/stream-attempt.js";
+import { extractPdfText } from "./runner/pdf-text-extractor.js";
 import {
   createTurnAgentRunStreamInput,
   createTurnAgentStreamStart,
@@ -2081,10 +2082,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
           toolName: SAND_EXTERNAL_READ_TOOL_NAME,
           toolIdentifier: "EXTERNAL_READ",
           toolDescription: SAND_EXTERNAL_READ_TOOL_DESCRIPTION,
-          // The immutable Mac and Windows carriers contain the lazy Piscina
-          // producer but omit pdf-worker.{js,ts}. Leaving the extractor absent
-          // preserves ordinary Read while making the unrecoverable PDF branch
-          // fail closed in createReadTool.
+          pdfTextExtractor: extractPdfText,
         },
       }),
       createBoxReadToolInputs: (turn, _props): TurnReadToolFactoryInput => {
@@ -2099,6 +2097,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
             toolName: SAND_BOX_READ_TOOL_NAME,
             toolIdentifier: "READ",
             toolDescription: SAND_BOX_READ_TOOL_DESCRIPTION,
+            pdfTextExtractor: extractPdfText,
           },
         };
       },

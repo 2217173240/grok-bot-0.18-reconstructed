@@ -76,8 +76,9 @@ test("dispose closes an in-flight failed connection without reviving the host", 
   const { BoxMcpHost } = await loadHost(dir);
   const host = new BoxMcpHost({ workspaceRoot: dir, connectTimeoutMs: 300, callTimeoutMs: 500 });
   const loading = host.load(JSON.stringify({ mcpServers: { unavailable: { url: "http://127.0.0.1:1/mcp" } } }));
+  const rejected = assert.rejects(loading, /disposed/);
   await host.dispose();
-  await assert.rejects(loading, /disposed/);
+  await rejected;
   const state = await host.listState({ serverIdentifiers: [], kickOnly: true });
   assert.equal(state.result.case, "error");
   await rm(dir, { recursive: true, force: true });

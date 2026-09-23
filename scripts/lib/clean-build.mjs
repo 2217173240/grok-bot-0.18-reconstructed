@@ -21,6 +21,9 @@ import { packStagedAppWithIntegrity, verifyStagedPackageIntegrity } from "./asar
 import { officialMacReleaseAsarHash } from "./macos-shell-invariant.mjs";
 import { stageNodeTreeSitterRuntime } from "../build-tree-sitter-node.mjs";
 import { run } from "./process.mjs";
+import { electronShell } from "./source-only-package.mjs";
+import { buildProductionElectronMainIfSupplied } from "../electron-main-production-activation.mjs";
+import { buildProductionHostIfSupplied } from "../host-production-activation.mjs";
 
 export { packStagedAppWithIntegrity, verifyStagedPackageIntegrity } from "./asar-integrity.mjs";
 
@@ -82,6 +85,17 @@ export const fidelityRuntimeComposition = Object.freeze(runtimeComposition.map(r
     reason: "The exact shipped 0.18 Mac renderer bundle is preserved byte-for-byte and accepted only against its complete embedded SHA-256 inventory.",
   }) : runtime
 )));
+
+// A source-only build records these two entrypoints as blocked until their
+// production bindings are available from source. The recovered library bundles
+// below are useful build evidence, but they do not start either process.
+export const sourceOnlyRuntimeComposition = Object.freeze(runtimeComposition
+  .filter(runtime => !["electron-runtime-resolution-closure", "native-runtime-tools", "electron-shell"].includes(runtime.runtime))
+  .map(runtime => ["electron-main", "host"].includes(runtime.runtime)
+    ? Object.freeze({ runtime: runtime.runtime, path: runtime.path, mode: "blocked-source-entrypoint", sourceBundle: runtime.sourceBundle, reason: "The source library builds, but mandatory production bindings and a runnable process entrypoint have not been established without shipped artifacts." })
+    : runtime.runtime === "electron-runtime-dependencies"
+      ? Object.freeze({ runtime: runtime.runtime, path: runtime.path, mode: "blocked-native-build", reason: "Packaged Electron shell command analysis loads tree-sitter and tree-sitter-bash from dist/deps; Electron 42 ABI builds must be staged from installed packages." })
+    : runtime));
 
 function nodeBuildOptions(outfile) {
   return {
@@ -161,6 +175,24 @@ async function sha256(target) {
   return createHash("sha256").update(await readFile(target)).digest("hex");
 }
 
+export async function stageSourceOnlyElectronTreeSitterRuntime(outputRoot) {
+  const depsRoot = path.join(path.resolve(outputRoot), "dist/deps");
+  await mkdir(depsRoot, { recursive: true });
+  for (const name of ["tree-sitter", "tree-sitter-bash", "node-gyp-build"]) {
+    await cp(path.join(repoRoot, "node_modules", name), path.join(depsRoot, name), { recursive: true, dereference: true });
+  }
+  await mkdir(path.join(depsRoot, "node_modules"), { recursive: true });
+  await cp(path.join(depsRoot, "node-gyp-build"), path.join(depsRoot, "node_modules/node-gyp-build"), { recursive: true, dereference: true });
+  const electronBinary = path.join(electronShell, "Contents/MacOS/Electron");
+  const check = "const Parser=require(process.argv[1]+'/tree-sitter');const bash=require(process.argv[1]+'/tree-sitter-bash');const parser=new Parser();parser.setLanguage(bash);if(parser.parse('echo ok').rootNode.type!=='program')process.exit(2);if(process.versions.modules!=='146')process.exit(3)";
+  try {
+    await run(electronBinary, ["-e", check, depsRoot], { cwd: repoRoot, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  } catch (error) {
+    throw new Error(`Source-only Electron native runtime is not loadable with Electron 42 ABI 146: ${String(error)}`);
+  }
+  return depsRoot;
+}
+
 export async function createRendererArtifactProvenance({
   artifactRoot = path.join(repoRoot, "src", "app", "dist", "renderer"),
 } = {}) {
@@ -196,7 +228,7 @@ export function packagedArtifactFallbacks(composition = runtimeComposition) {
     .map(({ sourceBundle }) => sourceBundle);
 }
 
-async function buildRuntimeDistribution({ outputRoot, composition, rendererMode }) {
+async function buildRuntimeDistribution({ outputRoot, composition, rendererMode, sourceOnly = false }) {
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
   for (const [entry, output] of sourceLibraries) await bundleSource(entry, path.join(outputRoot, output));
@@ -215,6 +247,12 @@ async function buildRuntimeDistribution({ outputRoot, composition, rendererMode 
   ], { cwd: repoRoot });
   await bundleVirtual("local-exec-daemon", localExecDaemonEntry, path.join(outputRoot, "dist/local-exec-daemon/main.cjs"));
   await stageNodeTreeSitterRuntime(outputRoot);
+  if (sourceOnly && process.platform === "darwin") {
+    await stageSourceOnlyElectronTreeSitterRuntime(outputRoot);
+    composition = composition.map(runtime => runtime.runtime === "electron-runtime-dependencies"
+      ? { runtime: runtime.runtime, path: runtime.path, mode: "generated-runtime", source: "node_modules/tree-sitter + node_modules/tree-sitter-bash", verifiedElectronAbi: 146 }
+      : runtime);
+  }
   await bundleVirtual("node-agent-coordinator", coordinatorEntry, path.join(outputRoot, "dist/node-agent-coordinator/main.cjs"));
   let renderer;
   if (rendererMode === "clean-source") {
@@ -234,7 +272,7 @@ async function buildRuntimeDistribution({ outputRoot, composition, rendererMode 
   const buildManifest = {
     schemaVersion: 1,
     upstreamVersion: "0.18.0",
-    buildKind: rendererMode === "clean-source" ? "source-aware-reconstruction" : "fidelity-hybrid-reconstruction",
+    buildKind: sourceOnly ? "source-only-components" : rendererMode === "clean-source" ? "source-aware-reconstruction" : "fidelity-hybrid-reconstruction",
     deterministicInputs: [
       "source",
       ...(rendererMode === "clean-source" ? [
@@ -255,6 +293,33 @@ async function buildRuntimeDistribution({ outputRoot, composition, rendererMode 
 
 export async function buildCleanDistribution({ outputRoot = cleanBuildDir } = {}) {
   return buildRuntimeDistribution({ outputRoot, composition: runtimeComposition, rendererMode: "clean-source" });
+}
+
+export async function buildSourceOnlyDistribution({ outputRoot = path.join(buildDir, "source-only-components") } = {}) {
+  const base = await buildRuntimeDistribution({ outputRoot, composition: sourceOnlyRuntimeComposition, rendererMode: "clean-source", sourceOnly: true });
+  const [electronMain, host] = await Promise.all([
+    buildProductionElectronMainIfSupplied({ outputRoot, manifestPath: null, reconstructedPackage: true, sourceOnly: true }),
+    buildProductionHostIfSupplied({ outputRoot, manifestPath: null, sourceOnly: true }),
+  ]);
+  if (!electronMain.clean || !host.clean) {
+    throw new Error(`Source-only production activation is incomplete: electron-main=${electronMain.blocker ?? electronMain.status}; host=${host.blocker ?? host.status}`);
+  }
+  const composition = base.buildManifest.runtimeComposition.map(runtime => runtime.runtime === "electron-main" || runtime.runtime === "host"
+    ? { runtime: runtime.runtime, path: runtime.path, mode: "clean-source", source: `source/${runtime.runtime === "host" ? "host" : "electron-main"}/main.ts` }
+    : runtime);
+  const outputs = [];
+  for (const relative of await walkFiles(outputRoot)) {
+    if (relative === "dist/reconstruction-build.json") continue;
+    outputs.push({ path: relative, bytes: (await stat(path.join(outputRoot, relative))).size, sha256: await sha256(path.join(outputRoot, relative)) });
+  }
+  const buildManifest = {
+    ...base.buildManifest,
+    deterministicInputs: [...base.buildManifest.deterministicInputs, "package.json", "package-lock.json", "scripts/electron-main-production-activation.mjs", "scripts/host-production-activation.mjs", "node_modules/electron"],
+    runtimeComposition: composition,
+    outputs,
+  };
+  await writeFile(base.manifestPath, `${JSON.stringify(buildManifest, null, 2)}\n`);
+  return { ...base, buildManifest, electronMainActivation: electronMain, hostActivation: host };
 }
 
 export async function buildFidelityDistribution({ outputRoot = fidelityCleanBuildDir } = {}) {

@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync, type St
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
 import { jsonSchema, zodSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
 import { z } from "zod";
@@ -20,6 +20,7 @@ import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-s
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
 import { createRoutedMcpBridge } from "../../../shared/node/mcp/routed-mcp-bridge.js";
+import { createHostToolsMcpBridge, type HostToolExecution, type HostToolDefinition } from "./host-tools-mcp-bridge.js";
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 
 type Loose = Record<string, any>;
@@ -73,6 +74,51 @@ function providerPrompt(messages: readonly ProviderMessage[], extraGuidance?: st
     return `${message.role.toUpperCase()}: ${content}`;
   }).join("\n\n");
   return `${GROK_ROUTER_SYSTEM_PROMPT}${extraGuidance == null || extraGuidance.length === 0 ? "" : `\n\n${extraGuidance}`}\n\nContinue this Grok Bot conversation.\n\n${rendered}`;
+}
+
+type ProviderImage = { readonly type: "image"; readonly image: Uint8Array | string | URL; readonly mimeType?: string };
+
+function providerImage(part: unknown): ProviderImage {
+  if (typeof part !== "object" || part === null || (part as Loose).type !== "image") throw new Error("Invalid provider image content.");
+  const image = (part as Loose).image;
+  if (!(image instanceof Uint8Array) && !(image instanceof URL) && typeof image !== "string") throw new Error("Unsupported provider image data.");
+  return { type: "image", image, mimeType: (part as Loose).mimeType };
+}
+
+function imageUrl(part: ProviderImage): string {
+  if (part.image instanceof URL) {
+    if (part.image.protocol !== "http:" && part.image.protocol !== "https:") throw new Error("Provider images require an HTTP(S) URL or inline data.");
+    return part.image.toString();
+  }
+  if (typeof part.image === "string" && /^https?:\/\//i.test(part.image)) return part.image;
+  if (typeof part.image === "string" && part.image.startsWith("data:")) {
+    if (!/^data:image\/[^;,]+;base64,[A-Za-z0-9+/]*={0,2}$/i.test(part.image)) throw new Error("Invalid image data URL.");
+    return part.image;
+  }
+  if (typeof part.mimeType !== "string" || !part.mimeType.startsWith("image/")) throw new Error("An image MIME type is required for inline image data.");
+  const base64 = typeof part.image === "string" ? part.image : Buffer.from(part.image).toString("base64");
+  return `data:${part.mimeType};base64,${base64}`;
+}
+
+export function claudePrompt(messages: readonly ProviderMessage[], extraGuidance?: string): string | AsyncIterable<SDKUserMessage> {
+  if (!messages.some(message => Array.isArray(message.content) && message.content.some((part: Loose) => part?.type === "image"))) return providerPrompt(messages, extraGuidance);
+  const blocks: Loose[] = [{ type: "text", text: `${GROK_ROUTER_SYSTEM_PROMPT}${extraGuidance == null || extraGuidance.length === 0 ? "" : `\n\n${extraGuidance}`}\n\nContinue this Grok Bot conversation.\n\n` }];
+  for (const message of messages) {
+    blocks.push({ type: "text", text: `${message.role.toUpperCase()}: ` });
+    if (typeof message.content === "string") blocks.push({ type: "text", text: message.content });
+    else for (const part of message.content) {
+      if ((part as Loose)?.type === "image") {
+        const url = imageUrl(providerImage(part));
+        const match = /^data:(image\/[^;,]+);base64,(.*)$/is.exec(url);
+        blocks.push({ type: "image", source: match == null ? { type: "url", url } : { type: "base64", media_type: match[1], data: match[2] } });
+      } else if ((part as Loose)?.type === "text") blocks.push({ type: "text", text: (part as Loose).text });
+      else blocks.push({ type: "text", text: JSON.stringify(part) });
+    }
+    blocks.push({ type: "text", text: "\n\n" });
+  }
+  return (async function* (): AsyncIterable<SDKUserMessage> {
+    yield { type: "user", message: { role: "user", content: blocks }, parent_tool_use_id: null, session_id: "" } as SDKUserMessage;
+  })();
 }
 
 function deferred<T>() { return Promise.withResolvers<T>(); }
@@ -217,12 +263,24 @@ export function codexInput(messages: readonly ProviderMessage[]): Loose[] {
   return messages.flatMap(message => {
     if (!Array.isArray(message.content)) return [{ role: message.role, content: message.content }];
     const output: Loose[] = [];
+    let content: Loose[] = [];
+    const flush = () => {
+      if (content.length > 0) {
+        output.push({ role: message.role, content: content.length === 1 && content[0]?.type !== "input_image" ? content[0]!.text : content });
+        content = [];
+      }
+    };
     for (const part of message.content) {
-      if (part.type === "tool-call") output.push({ type: "function_call", call_id: part.toolCallId, name: part.toolName, arguments: JSON.stringify(part.args) });
-      else if (part.type === "tool-result") output.push({ type: "function_call_output", call_id: part.toolCallId, output: typeof part.result === "string" ? part.result : JSON.stringify(part.result) });
-      else if (part.type === "text") output.push({ role: message.role, content: part.text });
+      if (part.type === "tool-call") { flush(); output.push({ type: "function_call", call_id: part.toolCallId, name: part.toolName, arguments: JSON.stringify(part.args) }); }
+      else if (part.type === "tool-result") { flush(); output.push({ type: "function_call_output", call_id: part.toolCallId, output: typeof part.result === "string" ? part.result : JSON.stringify(part.result) }); }
+      else if (part.type === "text") content.push({ type: message.role === "user" ? "input_text" : "output_text", text: part.text });
+      else if (part.type === "image") {
+        if (message.role !== "user") throw new Error("Codex images are supported only in user messages.");
+        content.push({ type: "input_image", image_url: imageUrl(providerImage(part)) });
+      }
       else throw new Error(`Unsupported Codex message content: ${part.type}`);
     }
+    flush();
     return output;
   });
 }
@@ -314,8 +372,8 @@ const CLAUDE_BOX_READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch",
 // the definitions it may call and a way to perform each call. The daemon owns
 // the MCP servers; these two functions are the host's half of that path.
 export interface HostMcpTools {
-  listTools(): Promise<unknown>;
-  callTool(tool: { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly args: unknown; readonly toolCallId: string }): Promise<unknown>;
+  listTools(signal: AbortSignal): Promise<unknown>;
+  callTool(tool: { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly args: unknown; readonly toolCallId: string; readonly signal: AbortSignal }): Promise<unknown>;
 }
 
 export function resolveAgentWorkspace(): string {
@@ -482,6 +540,7 @@ interface ClaudeExecutorOptions {
   readonly localToolPermission?: SandLocalToolPermission;
   readonly signal?: AbortSignal;
   readonly onToolEvent?: (event: ProviderToolEvent) => void;
+  readonly hostTools?: { readonly definitions: readonly HostToolDefinition[]; readonly execution: HostToolExecution };
 }
 
 export interface ProviderToolEvent {
@@ -535,27 +594,45 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     // is closed with the stream, which keeps a crashed turn from leaving a
     // listener behind or holding a tool call open.
     let bridge: { url: string; close(): Promise<void> } | undefined;
+    let hostBridge: ReturnType<typeof createHostToolsMcpBridge> | undefined;
     const pendingTools = new Map<string, string>();
     const recordedMessages: Array<{ role: string; content: Loose[] }> = [];
+    const abortController = new AbortController();
+    const abort = () => abortController.abort(options?.signal?.reason);
+    if (options?.signal?.aborted === true) abort();
+    else options?.signal?.addEventListener("abort", abort, { once: true });
     try {
       const mcp = options?.mcp;
-      if (mcp != null) bridge = await createRoutedMcpBridge({ listTools: () => mcp.listTools(), callTool: tool => mcp.callTool(tool) });
+      if (mcp != null) bridge = await createRoutedMcpBridge({ listTools: signal => mcp.listTools(signal), callTool: tool => mcp.callTool(tool) });
       const mcpServerUrl = bridge?.url;
-      const abortController = new AbortController();
-      const abort = () => abortController.abort(options?.signal?.reason);
-      if (options?.signal?.aborted === true) abort();
-      else options?.signal?.addEventListener("abort", abort, { once: true });
+      const hostTools = options?.hostTools;
+      const hostToolNames = new Set(hostTools?.definitions.map(definition => `mcp__grok_bot_host_tools__${definition.name}`) ?? []);
+      const hostPermission = (toolName: string, input: unknown): PermissionResult => {
+        if (!hostToolNames.has(toolName)) return { behavior: "deny", message: `Host tool is not visible in this turn: ${toolName}` };
+        if (abortController.signal.aborted) return { behavior: "deny", message: "Host tool turn was canceled." };
+        return claudeToolPermission(toolName, input, options?.localToolPermission);
+      };
+      if (hostTools != null && hostTools.definitions.length > 0) hostBridge = createHostToolsMcpBridge(hostTools.definitions, {
+        execute: call => {
+          const decision = hostPermission(`mcp__grok_bot_host_tools__${call.name}`, call.args);
+          if (decision.behavior !== "allow") throw new Error(decision.message);
+          return hostTools.execution.execute({ ...call, args: decision.updatedInput });
+        },
+      }, abortController.signal);
       let final: SDKResultMessage | undefined;
       let streamedText = "";
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
-      try { for await (const message of queryClaude({ prompt: providerPrompt(messages, claudeLocalToolsPrompt()), options: {
+      try { for await (const message of queryClaude({ prompt: claudePrompt(messages, claudeLocalToolsPrompt()), options: {
         pathToClaudeCodeExecutable: executable,
         cwd: resolveAgentWorkspace(),
-        tools: [...CLAUDE_LOCAL_TOOLS, ...(mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"])],
-        ...(mcpServerUrl == null ? {} : { mcpServers: { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }, strictMcpConfig: true }),
+        tools: [...CLAUDE_LOCAL_TOOLS, ...(mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"]), ...(hostBridge == null ? [] : ["mcp__grok_bot_host_tools__*"])],
+        ...((mcpServerUrl == null && hostBridge == null) ? {} : { mcpServers: { ...(mcpServerUrl == null ? {} : { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }), ...(hostBridge == null ? {} : { grok_bot_host_tools: hostBridge.config }) }, strictMcpConfig: true }),
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
-          const decision = claudeToolPermission(toolName, input, options?.localToolPermission);
+          // 桥接层只暴露当前回合可见工具，执行前会再次按名称检查。
+          const decision = hostToolNames.has(toolName)
+            ? hostPermission(toolName, input)
+            : claudeToolPermission(toolName, input, options?.localToolPermission);
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },
@@ -606,6 +683,8 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       // Closed with the stream: a crashed turn must not leave the loopback
       // listener behind or hold a tool call open.
       await bridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "mcp-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
+      await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
+      options?.signal?.removeEventListener("abort", abort);
     }
   })();
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
@@ -648,20 +727,30 @@ function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools, readonly onToolEvent?: (event: ProviderToolEvent) => void) { super(new BasePromptBuilder(initialMessages)); }
-  stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[]) {
+  stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[], streamOptions?: { readonly hostToolExecution?: HostToolExecution }) {
     const signal = (ctx as Context).signal;
-    // host 统一执行已发现的工具；provider 只返回调用，权限与释放由外层管理。
+    // Claude 通过当前回合的 MCP 桥接执行主机工具；其余 provider 将调用交给外层。
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {
       ...(this.onUsage === undefined ? {} : { onUsage: this.onUsage }),
       ...(this.localToolPermission === undefined ? {} : { localToolPermission: this.localToolPermission }),
       ...(this.mcp === undefined ? {} : { mcp: this.mcp }),
       ...(this.onToolEvent === undefined ? {} : { onToolEvent: this.onToolEvent }),
+      ...(streamOptions?.hostToolExecution === undefined ? {} : { hostTools: { definitions: hostToolDefinitions(definitions), execution: streamOptions.hostToolExecution } }),
       signal,
     });
     if (this.provider === "command-code") return commandCodeExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
     return openRouterExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
   }
+}
+
+function hostToolDefinitions(definitions: readonly Loose[] | undefined): HostToolDefinition[] {
+  return (definitions ?? []).flatMap(definition => {
+    if (typeof definition.name !== "string" || definition.name.length === 0) return [];
+    const schema = routedToolSchema(definition);
+    if (schema != null && (typeof schema !== "object" || Array.isArray(schema))) return [];
+    return [{ name: definition.name, ...(typeof definition.description === "string" ? { description: definition.description } : {}), inputSchema: schema == null ? { type: "object", additionalProperties: false } : schema as Record<string, unknown> }];
+  });
 }
 
 export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools; readonly onToolEvent?: (event: ProviderToolEvent) => void }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {

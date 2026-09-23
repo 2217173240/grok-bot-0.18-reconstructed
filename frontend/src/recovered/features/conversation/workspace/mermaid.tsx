@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-export const MERMAID_CORE_ASSET = "/upstream/assets/mermaid.core-CYC_FcEu.js";
 const MERMAID_CACHE_LIMIT = 64;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
@@ -26,15 +25,13 @@ interface MermaidDiagramResult {
 }
 
 interface MermaidRuntimeModule {
-  bp?: MermaidRuntime;
   default?: MermaidRuntime;
 }
 
 export async function loadShippedMermaidRuntime(): Promise<MermaidRuntime> {
-  const module = await import(/* @vite-ignore */ MERMAID_CORE_ASSET) as MermaidRuntimeModule;
-  const runtime = module.bp ?? module.default;
-  if (runtime == null) throw new Error("Shipped Mermaid runtime is unavailable.");
-  return runtime;
+  const module = await import("mermaid") as MermaidRuntimeModule;
+  if (module.default == null) throw new Error("Mermaid runtime is unavailable.");
+  return module.default;
 }
 
 const renderCache = new Map<string, Promise<MermaidDiagramResult>>();

@@ -2,7 +2,7 @@
 
 用户在本地 Grok Bot 提交任务，容器里的 agent 调用指定的第三方模型 API 和本地工具，结果回到本地会话与工作目录；登录、付款和需要人工判断的操作由用户接管。
 
-基础修复已经由 PR #41 合并为 `37a3502`；UI 验收与 gateway 修复位于 `local-admin/ui-gateway-validation`。以下区分已经实现的行为、经过执行验证的链路，以及仍需完成的功能。
+基础修复、容器执行、桌面服务健康检查与 Claude 工具转录已进入 main（PR #41、#44–#47）；Docker 运行时命名由 PR #49 更新。本分支继续处理完整工具能力、取消传播和 macOS 发布包。发布包保留哈希固定的原版 0.18 renderer，host 与其余运行模块继续使用本仓库源码。
 
 ## 运行结构
 
@@ -28,7 +28,7 @@ flowchart TD
   Store --> UI
 ```
 
-`start-local.sh` 默认选择 Docker 和盒内回合。Docker 不可用直接报错；盒内回合需要本地自建镜像。`GROKBOT_BOX=host` 与 `GROKBOT_TURN=mac` 是显式诊断选择。两者改变不同部分：前者选择计算机，后者选择回合协调位置。
+`start-local.sh` 仅选择 Docker 和盒内回合。Docker 不可用直接报错；盒内回合需要本地自建镜像。`GROKBOT_BOX=host` 与 `GROKBOT_TURN=mac` 在启动副作用发生前报错。
 
 ## 模块、输入与下游
 
@@ -38,7 +38,7 @@ flowchart TD
 | --- | --- | --- |
 | `source/electron-main` | 窗口、账号本地化、设置、容器启动与健康探测 | preload、coordinator、Docker、gateway 描述 |
 | `source/electron-preload` | 受控 IPC 和界面命令 | coordinator / host command dispatch |
-| `source/node-agent-coordinator` | 本地命令路由、host 连接、事件传递 | `gateway/host-supervisor.ts`、host gateway；显式 Mac 回合另有 `inference-router.ts` |
+| `source/node-agent-coordinator` | 本地命令路由、host 连接、事件传递 | `gateway/host-supervisor.ts`、容器 host gateway |
 | `source/host/main.ts`、`host-runner-composition.ts` | 容器服务装配、扩展注入、daemon 生命周期 | gateway、runner、extensions |
 | `source/host/runner` | 会话上下文、回合预算、工具集、投递、取消与结算 | `turn-run-shell.ts`、`turn-toolset.ts`、`turn-settle.ts` |
 | `source/host/extensions/inference` | 模型选择、SDK 调用、用量记录 | Claude SDK、AI SDK/OpenRouter、Codex direct transport |
@@ -56,17 +56,17 @@ flowchart TD
 
 | 依赖 | 使用位置 | 是否需要 Cursor/xAI 运行期返回 |
 | --- | --- | --- |
-| Electron 与本地打包的 renderer | 桌面界面与 IPC | 本地构件；renderer 仍由固定的上游基线加补丁生成 |
+| Electron 与本地打包的 renderer | 桌面界面与 IPC | 使用经过 SHA-256 核对的原版 0.18 Electron 外壳与 renderer；不依赖 Cursor/xAI 运行期返回 |
 | Docker / Colima、arm64 自建镜像 | 执行与桌面 | 本地运行；镜像构建需要基础镜像和软件包来源 |
 | `@anthropic-ai/claude-agent-sdk` | 容器内 CLI agent | 通过 `ANTHROPIC_BASE_URL` 使用指定的兼容 API |
-| `ai`、`@ai-sdk/openai` | OpenRouter provider | 使用所选第三方服务；其盒内工具能力尚未与 Claude 路线完全一致 |
+| `ai`、`@ai-sdk/openai` | OpenRouter provider | 使用所选第三方服务；真实账户回合仍待验收 |
 | `@modelcontextprotocol/sdk` | HTTP/stdin-out MCP 两端 | 本地 stdio 或用户配置的 HTTP endpoint |
 | `@connectrpc/connect*`、`@bufbuild/protobuf` | host/daemon RPC | 本地 endpoint；不能仅用全局 fetch 拦截推断所有 Connect 出口已受保护 |
 | Statsig | 开关默认值与本地配置 | local-admin 不拉取官方 bootstrap，不发送 exposure，不启动刷新轮询 |
 | 浏览器目标网站 / 用户配置插件 | 执行用户任务 | 由任务决定；本地部署仍允许用户授权的第三方网络服务 |
-| 官方 0.18 应用构件 | bootstrap / renderer 基线 | 构建输入；运行期依赖与从零构建依赖需要分别评估 |
+| 官方 0.18 应用构件 | Electron 外壳、renderer、原生依赖与历史证据 | 仍是经过固定哈希核对的构建输入；当前发布目标允许复用 |
 
-`frontend/src/recovered` 用于理解界面。实际发布的 renderer 来自 `.build/fidelity/app/dist/renderer`；界面行为修改需进入 `scripts/lib/router-renderer-patch.mjs` 等打包补丁。只修改 recovered 文件不会改变已安装应用。
+默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。现有 `/Applications` 应用仍运行旧版本；本分支尚未安装。
 
 第三方 API 地址、主模型及子模型映射由启动环境配置，启动脚本保留显式值。API token 由 provider 读取本地凭据文件并传入 CLI 子进程，测试和报告不输出凭据。
 
@@ -74,7 +74,7 @@ flowchart TD
 
 ## 生命周期和幂等规则
 
-1. 回合拥有自己的 Context 和 MCP bridge。取消信号传到 Claude abortController、AI SDK abortSignal、Codex fetch；bridge 随流关闭。
+1. 回合拥有自己的 Context 和 MCP bridge。取消信号传到 Claude abortController、AI SDK abortSignal、Codex fetch、MCP HTTP 请求、盒内 Connect RPC 与 stdio MCP 客户端；bridge 随流关闭。已经发生的外部副作用不会因取消而撤销。
 2. daemon 拥有 MCP client 与 stdio 子进程。回合结束关闭代理 bridge，插件生命周期由 daemon 配置与关闭操作决定。
 3. 配置的键顺序不改变含义。等价配置保持已经连接的 client；配置移除或替换先释放旧 client。
 4. 连接失败、远端关闭、工具列举失败向调用者报告。恢复由显式重新加载配置触发；工具调用不自动重放。
@@ -92,14 +92,21 @@ flowchart TD
 | 2 | 高 / 高 | 第三方 API 取消传播；容器 MCP HTTP 直连，释放资源 | 已实现；真实 Claude 回合、HTTP/stdin-out MCP 与 Codex 取消已执行验证 |
 | 3 | 高 / 高 | MCP 配置幂等、断连状态、分页与关闭竞态 | 已实现；用真实进程和 SDK 验证，测试范围见下方 |
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
-| 5 | 高 / 中 | 所有 provider 复用同一个 Grok turn 工具注册和权限来源 | Codex/OpenRouter 已接入 host 工具定义，由 `SimplePromptToolExecutor` 执行；Schema 与 Codex 调用/结果重放已覆盖测试。Claude CLI 仍有独立本地工具清单，各 provider 全功能实机验收未完成 |
-| 6 | 高 / 中 | Mac 诊断回合取消也贯穿 `runRoutedProviderText` 与 coordinator 活动状态 | 待实施；当前取消修复覆盖盒内 PromptExecutor 路线 |
-| 7 | 高 / 中 | 在封锁 Cursor/xAI 网络返回的隔离环境中验证 UI→回合→工具→transcript→UI | Linux Electron 真实 UI→容器 host→GLM→文件与 MCP→UI 回复已通过；macOS 安装包与全部 provider 场景仍需分别验收 |
-| 8 | 中 / 中 | router/session-sync 故障可被生产健康面识别，保留单一进程持有者 | 待实施；复用 Archive 的 PID 登记与健康探测，恢复采用明确重建动作 |
-| 9 | 中 / 低 | 多显示随机访问凭证、资源配额、完整人工登录接管流程 | 待实施；主屏与 fork 显示的访问模型需一起验证 |
-| 10 | 中 / 低 | 从零构建与完全自有 renderer | 待实施；构建目前仍依赖固定上游应用构件 |
+| 5 | 高 / 中 | 所有 provider 使用 Grok turn 工具与权限 | Codex/OpenRouter 通过 `SimplePromptToolExecutor`；Claude 的 host 工具经进程内 MCP 回到同一执行器，真实 GLM 工具执行与转录各一次已验证。Codex/OpenRouter 真实账户及附件场景仍待验收 |
+| 6 | 高 / 中 | MCP 取消到达实际执行进程 | 真实延时 stdio 插件和 daemon RPC 取消通过；调用期间取消后未写入完成标记。Mac 回合路径已移除 |
+| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | Linux UI 与 GLM 已通过；隔离 macOS 包曾完成该链路。最终哈希固定 renderer 包已构建、签名、校验；合并最新 Docker 选择后需重新打包并复测 |
+| 8 | 中 / 中 | router/session-sync 故障被健康检查发现并恢复 | 真实进程退出、健康判定与明确重建已通过隔离 Docker 验收 |
+| 9 | 中 / 低 | 多显示随机访问凭证、资源配额、人工登录接管 | 随机凭证、旧凭证撤销、四窗口资源限制与真实 WebSocket 访问已验证；真人登录和交回动作仍需人工完成 |
+| 10 | 高 / 中 | 保留原版外观并核对发布包身份 | 默认包保留原版 renderer 的完整文件清单，精确补丁按顺序验证输入与输出 SHA-256；Electron 外壳、ASAR、原生依赖与重签名包体已在隔离环境核对。可读前端独立发布不再是交付要求 |
 
-不存在足够证据将普通插件退出判为需要自动重试的 P0。执行带外部副作用的工具后，网络断开并不能证明操作没有发生；恢复连接与重放调用必须分别处理。
+普通插件退出不触发自动重放。执行带外部副作用的工具后，网络断开并不能证明操作没有发生；恢复连接与重放调用分别处理。
+
+## 完成前仍需处理的事项
+
+1. **发布包与运行环境。** 默认包已复用原版 renderer 并完成隔离签名校验。项目专用 `colima-grokbot` VM 的镜像和持久数据卷已复制并核对；旧容器仍运行。合入 Docker 选择补丁后，需要停写、最终同步数据卷、启动新容器，用最新包完成封锁 Cursor/xAI 网络的 macOS UI 回合，再替换 `/Applications` 中的旧应用。`PROVENANCE.md` 对公开再分发仍要求独立权利审查。
+2. **原版专用能力。** 默认包继续带有哈希固定的原版 `dist/native`，其中包括 `sand-webauthn-signer`；需要在新 profile 与新版应用中执行真实 passkey 场景验收。`csnaps` 属于旧版代码库遥测服务，其本地部署替代范围仍需决定。PDF Read 已改为 `pdfjs-dist` 源码实现，并经过真实 PDF 与容器 daemon 测试。
+3. **各 provider 的真实验收。** Claude 的文件、MCP 与 host 工具路径已使用 GLM 在隔离容器测试。Codex 需要获准在隔离容器只读提供现有登录凭据；OpenRouter 需要可用的 API key。两者都需要真实文本、图片、工具、取消和转录场景。当前只有静态检查与针对性协议测试，不能据此宣称全功能等价。
+4. **人工接管。** 随机 noVNC 凭证与 WebSocket 访问已通过自动验收；真人登录、操作和交回需要用户在新 profile 运行后参与。应用安装会重启当前桌面会话，因此应在新容器健康检查与最终包验收之后进行。
 
 ## 基础镜像身份
 

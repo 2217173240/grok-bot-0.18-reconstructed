@@ -150,6 +150,10 @@ export class BoxMcpHost {
     this.options.log?.(message);
   }
 
+  private requestSignal(signal?: AbortSignal): AbortSignal {
+    return signal == null ? this.shutdown.signal : AbortSignal.any([signal, this.shutdown.signal]);
+  }
+
   // Serialised so a config push and a tool call cannot interleave connection
   // bookkeeping: the host pushes on change and calls on demand.
   private takeTurn<T>(operation: () => Promise<T>): Promise<T> {
@@ -248,7 +252,7 @@ export class BoxMcpHost {
     return `${name}__${toolName}`;
   }
 
-  private async refreshTools(name: string, server: LoadedServer): Promise<void> {
+  private async refreshTools(name: string, server: LoadedServer, signal: AbortSignal): Promise<void> {
     if (server.status !== "connected") return;
     try {
       const listedTools = [];
@@ -259,7 +263,7 @@ export class BoxMcpHost {
           if (seenCursors.has(cursor)) throw new Error(`MCP server "${name}" repeated pagination cursor "${cursor}"`);
           seenCursors.add(cursor);
         }
-        const listed = await server.client.listTools(cursor == null ? undefined : { cursor }, { timeout: this.connectTimeoutMs });
+        const listed = await server.client.listTools(cursor == null ? undefined : { cursor }, { timeout: this.connectTimeoutMs, signal });
         listedTools.push(...listed.tools);
         cursor = listed.nextCursor;
       } while (cursor != null && cursor.length > 0);
@@ -273,15 +277,18 @@ export class BoxMcpHost {
       server.errorMessage = undefined;
       server.status = "connected";
     } catch (error) {
+      if (signal.aborted) throw error;
       server.status = "error";
       server.errorMessage = `Tool listing failed: ${error instanceof Error ? error.message : String(error)}`;
       this.log(`mcp server "${name}" could not list tools: ${server.errorMessage}`);
     }
   }
 
-  listState(args: McpStateExecArgs): Promise<McpStateExecResult> {
+  listState(args: McpStateExecArgs, requestSignal?: AbortSignal): Promise<McpStateExecResult> {
+    const signal = this.requestSignal(requestSignal);
     return this.takeTurn(async () => {
       if (this.disposed) return new McpStateExecResult({ result: { case: "error", value: new McpStateError({ error: "The MCP host has been disposed." }) } });
+      if (signal.aborted) throw signal.reason ?? new Error("MCP tool listing canceled.");
       const requested = args.serverIdentifiers.length === 0 ? [...this.servers.keys()] : [...args.serverIdentifiers];
       const missing = requested.filter((name) => !this.servers.has(name));
       if (missing.length > 0 && missing.length === requested.length) {
@@ -294,7 +301,7 @@ export class BoxMcpHost {
         // it answers from the tool list the last real listing produced.
         if (args.kickOnly !== true) for (const name of requested) {
           const loaded = this.servers.get(name);
-          if (loaded != null) await this.refreshTools(name, loaded);
+          if (loaded != null) await this.refreshTools(name, loaded, signal);
         }
         const servers = requested.map((name) => {
           const loaded = this.servers.get(name);
@@ -317,9 +324,11 @@ export class BoxMcpHost {
     });
   }
 
-  callTool(args: McpArgs): Promise<McpResult> {
+  callTool(args: McpArgs, requestSignal?: AbortSignal): Promise<McpResult> {
+    const signal = this.requestSignal(requestSignal);
     return this.takeTurn(async () => {
       if (this.disposed) return new McpResult({ result: { case: "error", value: new McpError({ error: "The MCP host has been disposed." }) } });
+      if (signal.aborted) throw signal.reason ?? new Error("MCP tool call canceled.");
       // At this boundary `name` is the server's own tool and `toolName` is the
       // label the caller used: the gateway swaps them on the way here, and the
       // HTTP execution path reads the server's tool from `name` the same way.
@@ -338,7 +347,7 @@ export class BoxMcpHost {
       // enumerated, never from the wording of a server's error: a tool added
       // since the last listing is found by re-listing before refusing.
       const knows = (): boolean => loaded.tools.some((tool) => tool.toolName === toolName);
-      if (!knows()) await this.refreshTools(args.providerIdentifier, loaded);
+      if (!knows()) await this.refreshTools(args.providerIdentifier, loaded, signal);
       if (!knows() && loaded.status === "connected") {
         return new McpResult({ result: { case: "toolNotFound", value: new McpToolNotFound({ name: displayName, availableTools: loaded.tools.map((tool) => tool.toolName) }) } });
       }
@@ -349,7 +358,7 @@ export class BoxMcpHost {
         // Key names only: an operator needs to see which call arrived, and the
         // values belong to the user's plugin arguments.
         this.log(`mcp tool "${toolName}" on "${args.providerIdentifier}" called with [${Object.keys(args.args).join(", ")}]`);
-        const result = await loaded.client.callTool({ name: toolName, arguments: plainToolArguments(args.args) }, undefined, { timeout: this.callTimeoutMs });
+        const result = await loaded.client.callTool({ name: toolName, arguments: plainToolArguments(args.args) }, undefined, { timeout: this.callTimeoutMs, signal });
         const content = (Array.isArray(result.content) ? result.content : []).flatMap((item): McpToolResultContentItem[] => {
           if (item.type === "text") return [new McpToolResultContentItem({ content: { case: "text", value: new McpTextContent({ text: item.text }) } })];
           if (item.type === "image") return [new McpToolResultContentItem({ content: { case: "image", value: new McpImageContent({ data: Buffer.from(item.data, "base64"), mimeType: item.mimeType }) } })];

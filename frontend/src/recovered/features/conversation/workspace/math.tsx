@@ -2,8 +2,6 @@
 // @evidence src/app/dist/renderer/assets/katex-DHMw6HUq.js
 import { useEffect, useState } from "react";
 
-export const KATEX_ASSET = "/upstream/assets/katex-DHMw6HUq.js";
-
 export interface KatexRuntime {
   renderToString(expression: string, options: { displayMode: boolean; throwOnError: boolean; strict?: "ignore" }): string;
 }
@@ -16,7 +14,7 @@ interface KatexRuntimeModule {
 export type KatexRuntimeLoader = () => Promise<KatexRuntime>;
 
 export async function loadShippedKatexRuntime(): Promise<KatexRuntime> {
-  const module = await import(/* @vite-ignore */ KATEX_ASSET) as KatexRuntimeModule;
+  const module = await import("katex") as KatexRuntimeModule;
   if (module.default != null) return module.default;
   if (module.renderToString != null) return { renderToString: module.renderToString };
   throw new Error("Shipped KaTeX runtime is unavailable.");

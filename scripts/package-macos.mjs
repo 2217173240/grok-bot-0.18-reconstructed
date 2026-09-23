@@ -1,36 +1,34 @@
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  outputApp,
-  outputDir,
-  reconstructedBundleId,
-  reconstructedName
-} from "./lib/config.mjs";
+
 import { buildFidelityReconstructedAsar } from "./clean-build.mjs";
+import { outputApp, outputDir, reconstructedBundleId, reconstructedName, repoRoot, sourceAppDir } from "./lib/config.mjs";
 import { signAppBundleAdHoc } from "./lib/codesign.mjs";
-import { verifyOfficialMacReference, verifyReconstructedMacPackage } from "./lib/macos-package-verification.mjs";
+import { readDepsPin } from "./lib/deps-pin.mjs";
+import { verifyChecksumPinnedRendererPackage, verifyOfficialMacReference, verifyReconstructedMacPackage } from "./lib/macos-package-verification.mjs";
 import { run } from "./lib/process.mjs";
 import { SYSTEM_TOOLS } from "./lib/system-tools.mjs";
 
-if (process.platform !== "darwin") {
-  throw new Error("The reconstructed macOS application can only be packaged on macOS.");
-}
+if (process.platform !== "darwin") throw new Error("macOS packaging requires macOS");
 
-// Keep the checksum-pinned shipped renderer as the polished UI authority. Small
-// reconstructed UI extensions are installed by the clean preload, leaving the
-// original renderer chunks byte-for-byte intact.
-const { builtAsar, builtAsarUnpacked, runtimeApp } = await buildFidelityReconstructedAsar();
-// Keep the signed release audit separate from the reconstructed package audit:
-// the official app is reference-only and is never used as the runtime payload.
-await verifyOfficialMacReference({ runtimeApp });
+const packageTempDir = path.join(repoRoot, ".cache", "mac-package-tmp");
+await mkdir(packageTempDir, { recursive: true });
+process.env.TMPDIR = packageTempDir;
+process.env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`;
+
+const built = await buildFidelityReconstructedAsar();
+const official = await verifyOfficialMacReference({ runtimeApp: built.runtimeApp });
+await verifyChecksumPinnedRendererPackage({
+  archivePath: built.builtAsar,
+  sourceRendererRoot: path.join(sourceAppDir, "dist", "renderer"),
+  officialArchivePath: official.asarPath,
+});
+
 await mkdir(outputDir, { recursive: true });
 await rm(outputApp, { recursive: true, force: true });
-await run(SYSTEM_TOOLS.ditto, [runtimeApp, outputApp]);
-// The source DMG's quarantine/provenance applies to Anysphere's signed artifact,
-// not to this differently identified local reconstruction. Leaving it attached
-// makes Gatekeeper reject the otherwise valid ad-hoc signature before launch.
+await run(SYSTEM_TOOLS.ditto, [built.runtimeApp, outputApp]);
 await run(SYSTEM_TOOLS.xattr, ["-cr", outputApp]);
 
 const resources = path.join(outputApp, "Contents", "Resources");
@@ -38,54 +36,33 @@ const packagedAsar = path.join(resources, "app.asar");
 const packagedUnpacked = `${packagedAsar}.unpacked`;
 await rm(packagedAsar, { force: true });
 await rm(packagedUnpacked, { recursive: true, force: true });
-await cp(builtAsar, packagedAsar);
-await cp(builtAsarUnpacked, packagedUnpacked, {
-  recursive: true,
-  dereference: false,
-  preserveTimestamps: true
-});
+await cp(built.builtAsar, packagedAsar);
+await cp(built.builtAsarUnpacked, packagedUnpacked, { recursive: true, dereference: false, preserveTimestamps: true });
 
 const infoPlist = path.join(outputApp, "Contents", "Info.plist");
 await run(SYSTEM_TOOLS.plutil, ["-remove", "ElectronAsarIntegrity", infoPlist]);
 await run(SYSTEM_TOOLS.plutil, ["-replace", "CFBundleIdentifier", "-string", reconstructedBundleId, infoPlist]);
 await run(SYSTEM_TOOLS.plutil, ["-replace", "CFBundleDisplayName", "-string", reconstructedName, infoPlist]);
-// The backend currently emits only the `sand` auth/deep-link target. Make the
-// reconstructed bundle's claim explicit and remove inherited aliases such as
-// `grokbot`; the original bundle remains untouched and remains reference-only.
-await run(SYSTEM_TOOLS.plutil, ["-remove", "CFBundleURLTypes", infoPlist]);
-await run(SYSTEM_TOOLS.plutil, ["-insert", "CFBundleURLTypes", "-xml", "<array><dict><key>CFBundleTypeRole</key><string>Viewer</string><key>CFBundleURLName</key><string>Grok Bot reconstructed auth callback</string><key>CFBundleURLSchemes</key><array><string>sand</string></array></dict></array>", infoPlist]);
-// Keep CFBundleName/CFBundleExecutable as "Grok Bot": Electron derives the
-// expected nested helper names from it, and this build intentionally reuses the
-// exact ABI-matched 0.18 runtime. CFBundleDisplayName provides the fork's name.
-
-// 版本信息必须包含在签名覆盖的资源中。
-const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
-  cwd: path.dirname(fileURLToPath(import.meta.url)),
-  encoding: "utf8",
-}).trim();
-const { readDepsPin } = await import("./lib/deps-pin.mjs");
-const depsPin = await readDepsPin(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const buildStamp = `${JSON.stringify({ sourceRevision, builtAt: new Date().toISOString(), bundleId: reconstructedBundleId, depsPin }, null, 2)}\n`;
+const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+const depsPin = await readDepsPin(repoRoot);
+const buildStamp = `${JSON.stringify({
+  sourceRevision,
+  builtAt: new Date().toISOString(),
+  bundleId: reconstructedBundleId,
+  depsPin,
+  officialShellSha256: official.shellHash,
+  officialAsarSha256: official.asarHash,
+  packagedAsarSha256: createHash("sha256").update(await readFile(packagedAsar)).digest("hex"),
+  inputs: ["source", "src/app/dist/renderer", "src/app/dist/deps", "src/app/dist/native", "official Grok Bot 0.18.0 macOS app"],
+}, null, 2)}\n`;
 await writeFile(path.join(resources, "build-stamp.json"), buildStamp);
-
-await rm(path.join(outputApp, "Contents", "_CodeSignature"), { recursive: true, force: true });
-try {
-  await signAppBundleAdHoc(outputApp);
-} catch (error) {
-  // macOS can transiently deny replacement of a nested framework signature
-  // immediately after the copied runtime was in use. A second idempotent pass
-  // succeeds once the kernel releases that code object.
-  console.warn(`Initial ad-hoc signing pass failed; retrying once: ${String(error)}`);
-  await signAppBundleAdHoc(outputApp);
-}
+await signAppBundleAdHoc(outputApp);
 await run(SYSTEM_TOOLS.codesign, ["--verify", "--deep", "--strict", outputApp]);
-const verification = await verifyReconstructedMacPackage({
-  officialApp: runtimeApp,
+await verifyReconstructedMacPackage({
+  officialApp: built.runtimeApp,
   reconstructedApp: outputApp,
-  sourceUnpackedRoot: builtAsarUnpacked,
+  sourceUnpackedRoot: built.builtAsarUnpacked,
   packagedUnpackedRoot: packagedUnpacked,
 });
-
 await writeFile(path.join(outputDir, "build-stamp.json"), buildStamp);
-
-console.log(`Packaged application: ${outputApp} (${verification.runtime.nodeFileCount} native manifest entries, ${verification.runtime.runtimeFileCount} unpacked runtime files)`);
+console.log(`Packaged checksum-pinned renderer application: ${outputApp}`);

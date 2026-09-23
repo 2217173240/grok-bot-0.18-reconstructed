@@ -38,14 +38,7 @@ const toolLocalSemanticMismatches = Object.freeze([
   { module: "source/host/runner/tools/tool-input-error.ts", reason: "tool-local invalid-input error identity is not yet exact" },
 ]);
 
-const unavailableAgentCapabilities = Object.freeze([
-  {
-    key: "pdfTextExtraction",
-    tool: "externalRead",
-    status: "fail-closed",
-    reason: "the immutable Piscina producer is present, but pdf-worker.{js,ts} is absent from both shipped host carriers",
-  },
-]);
+const unavailableAgentCapabilities = Object.freeze([]);
 
 export const mandatoryLocalExecRuntimeBlockers = Object.freeze([
   {
@@ -259,7 +252,7 @@ async function validateRecoveredCandidate(slotPath, candidate) {
   return { ...candidate, sourceAnchor };
 }
 
-async function validateBinding(binding, baseManifestPath, artifactText, runtimePackages) {
+async function validateBinding(binding, baseManifestPath, artifactText, runtimePackages, sourceOnly = false) {
   if (!requiredHostProductionBindings.includes(binding?.path)) {
     throw new Error(`Unknown host production binding path: ${binding?.path}`);
   }
@@ -273,7 +266,7 @@ async function validateBinding(binding, baseManifestPath, artifactText, runtimeP
     throw new Error(`Host binding ${binding.path} requires one or more artifactAnchors`);
   }
   const artifactAnchors = [];
-  for (const anchor of rawAnchors) artifactAnchors.push(await validateArtifactAnchor(anchor, artifactText));
+  if (!sourceOnly) for (const anchor of rawAnchors) artifactAnchors.push(await validateArtifactAnchor(anchor, artifactText));
 
   let resolvedModule;
   let sourceAnchor;
@@ -315,33 +308,12 @@ async function pathExists(target) {
   }
 }
 
-async function assembleExternalReadProductionEvidence() {
-  const artifactText = await readFile(path.join(repoRoot, hostArtifact), "utf8");
-  const producerAnchors = [];
-  for (const anchor of [
-    { line: 578037, needle: 'resolveWorkerLocation(__import_meta_url, "pdf-worker")' },
-    { line: 578042, needle: "_pdfWorkerPool = new Piscina({" },
-    { line: 578052, needle: "const params = { bytes };" },
-    { line: 578054, needle: "`./pdf-worker.${extension2}`" },
-    { line: 578056, needle: "return result.text;" },
-    { line: 663309, needle: 'createReadTool(props.resourceAccessor, SAND_READ_FORMATTING_OPTIONS, "latest", {' },
-  ]) producerAnchors.push(await validateArtifactAnchor(anchor, artifactText));
-
+async function assembleExternalReadProductionEvidence(sourceOnly = false) {
   const manifest = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
   const lock = JSON.parse(await readFile(path.join(repoRoot, "package-lock.json"), "utf8"));
-  const lockedPiscina = lock.packages?.["node_modules/piscina"];
-  if (manifest.dependencies?.piscina !== "4.9.0" || lockedPiscina?.version !== "4.9.0") {
-    throw new Error("ExternalRead Piscina package identity drifted from immutable producer version 4.9.0");
-  }
-  const workerCandidates = ["js", "ts", "cjs", "mjs"].map(extension =>
-    normalize(path.join("src/app/dist/host", `pdf-worker.${extension}`))
-  );
-  const presentWorkers = [];
-  for (const candidate of workerCandidates) {
-    if (await pathExists(path.join(repoRoot, candidate))) presentWorkers.push(candidate);
-  }
-  if (presentWorkers.length > 0) {
-    throw new Error(`Unexpected backend PDF worker carrier requires contract review: ${presentWorkers.join(", ")}`);
+  const lockedPdfjs = lock.packages?.["node_modules/pdfjs-dist"];
+  if (manifest.dependencies?.["pdfjs-dist"] !== "5.4.296" || lockedPdfjs?.version !== "5.4.296") {
+    throw new Error("PDF text extraction requires pdfjs-dist 5.4.296");
   }
 
   return {
@@ -357,27 +329,14 @@ async function assembleExternalReadProductionEvidence() {
       ),
     },
     pdfTextExtraction: {
-      status: "blocked-missing-shipped-worker",
-      failure: await sourceNeedleAnchor(
-        "source/packages/agent/tools/core/read/read.ts",
-        'if (extractor === undefined) throw new TypeError("Read PDF worker is not bound");',
-      ),
-      producer: {
-        artifact: hostArtifact,
-        anchors: producerAnchors,
-        input: "{ bytes: Uint8Array }",
-        output: "{ text: string }",
-        workerBasename: "pdf-worker",
-        resolvedExtensions: ["ts", "js"],
-      },
+      status: "supported",
+      daemonRead: await sourceNeedleAnchor("source/box-exec-daemon/server.ts", "if (isPdfBinary(data, args.path)) {"),
+      boxRead: await sourceNeedleAnchor("source/host/host-runner-composition.ts", "pdfTextExtractor: extractPdfText,"),
+      extractor: await sourceNeedleAnchor("source/host/runner/pdf-text-extractor.ts", "export async function extractPdfText(bytes: Uint8Array): Promise<string> {"),
       package: {
-        name: "piscina",
-        version: "4.9.0",
-        lockIntegrity: lockedPiscina.integrity,
-      },
-      workerPayload: {
-        status: "absent",
-        searched: workerCandidates,
+        name: "pdfjs-dist",
+        version: "5.4.296",
+        lockIntegrity: lockedPdfjs.integrity,
       },
     },
   };
@@ -390,7 +349,7 @@ async function sourceNeedleAnchor(source, needle) {
   return { source, line: text.slice(0, offset).split("\n").length, needle };
 }
 
-async function assembleRunnerActivationEvidence(inventory) {
+async function assembleRunnerActivationEvidence(inventory, sourceOnly = false) {
   const auditBytes = await readFile(path.join(repoRoot, runnerAuditPath));
   const audit = JSON.parse(auditBytes.toString("utf8"));
   if (!Array.isArray(audit.modules) || audit.modules.length !== audit.summary?.modulesAudited) {
@@ -449,7 +408,7 @@ async function assembleRunnerActivationEvidence(inventory) {
       "if (this.options.runStep == null) return undefined;",
     ),
   };
-  const externalReadProduction = await assembleExternalReadProductionEvidence();
+  const externalReadProduction = await assembleExternalReadProductionEvidence(sourceOnly);
   const supported = blockingBindings.length === 0
     && semanticGaps.length === 0
     && recoveredProvidersReachable
@@ -498,9 +457,9 @@ async function assembleRunnerActivationEvidence(inventory) {
 }
 
 /** Assembles built-in recovered providers with an optional residual manifest. */
-export async function assembleHostProductionBindingManifest(manifestPath = null) {
-  const artifactText = await readFile(path.join(repoRoot, hostArtifact), "utf8");
-  const runtimePackages = await runtimeBindingPackages();
+export async function assembleHostProductionBindingManifest(manifestPath = null, { sourceOnly = false } = {}) {
+  const artifactText = sourceOnly ? "" : await readFile(path.join(repoRoot, hostArtifact), "utf8");
+  const runtimePackages = sourceOnly ? { copied: new Set(), native: new Set() } : await runtimeBindingPackages();
   const catalogPath = path.join(repoRoot, "host-production-bindings.catalog.json");
   const supplied = [];
   let suppliedManifestPath = null;
@@ -514,19 +473,19 @@ export async function assembleHostProductionBindingManifest(manifestPath = null)
     }
     suppliedManifestPath = normalize(path.relative(repoRoot, absoluteManifest));
     suppliedManifestSha256 = sha256(manifestBytes);
-    for (const binding of manifest.bindings) supplied.push(await validateBinding(binding, absoluteManifest, artifactText, runtimePackages));
+    for (const binding of manifest.bindings) supplied.push(await validateBinding(binding, absoluteManifest, artifactText, runtimePackages, sourceOnly));
   }
 
   const builtIn = [];
   const inventory = [];
   for (const spec of hostProductionBindingInventorySpecs) {
     const artifactAnchors = [];
-    for (const anchor of spec.artifactAnchors) artifactAnchors.push(await validateArtifactAnchor(anchor, artifactText));
+    if (!sourceOnly) for (const anchor of spec.artifactAnchors) artifactAnchors.push(await validateArtifactAnchor(anchor, artifactText));
     const recoveredCandidate = spec.recoveredCandidate == null
       ? null
       : await validateRecoveredCandidate(spec.path, spec.recoveredCandidate);
     if (spec.binding != null) {
-      builtIn.push(await validateBinding({ path: spec.path, ...spec.binding, artifactAnchors }, catalogPath, artifactText, runtimePackages));
+      builtIn.push(await validateBinding({ path: spec.path, ...spec.binding, artifactAnchors: sourceOnly ? spec.artifactAnchors : artifactAnchors }, catalogPath, artifactText, runtimePackages, sourceOnly));
     }
     inventory.push({
       path: spec.path,
@@ -551,7 +510,7 @@ export async function assembleHostProductionBindingManifest(manifestPath = null)
   });
   const boundBindings = detailedInventory.filter(item => item.status === "bound").map(item => item.path);
   const unboundBindings = detailedInventory.filter(item => item.status === "unbound").map(item => item.path);
-  const activationEvidence = await assembleRunnerActivationEvidence(detailedInventory);
+  const activationEvidence = await assembleRunnerActivationEvidence(detailedInventory, sourceOnly);
   activationEvidence.localExecProduction = await assembleLocalExecProductionEvidence();
   const assemblyBytes = Buffer.from(JSON.stringify({ inventory: detailedInventory, activationEvidence }));
   return {
@@ -572,8 +531,8 @@ export async function validateHostProductionBindingManifest(manifestPath) {
   return assembleHostProductionBindingManifest(manifestPath);
 }
 
-export async function buildProductionHostIfSupplied({ outputRoot, manifestPath = process.env.GROK_BOT_HOST_BINDINGS_MANIFEST?.trim() || null } = {}) {
-  const validated = await assembleHostProductionBindingManifest(manifestPath);
+export async function buildProductionHostIfSupplied({ outputRoot, manifestPath = process.env.GROK_BOT_HOST_BINDINGS_MANIFEST?.trim() || null, sourceOnly = false } = {}) {
+  const validated = await assembleHostProductionBindingManifest(manifestPath, { sourceOnly });
   if (validated.unboundBindings.length > 0) {
     return {
       status: "incomplete-evidence-derived-manifest",
@@ -643,6 +602,7 @@ export async function buildProductionHostIfSupplied({ outputRoot, manifestPath =
   const provenance = {
     schemaVersion: 2,
     status: "validated-clean-source",
+    sourceOnly,
     manifestPath: validated.manifestPath,
     manifestSha256: validated.manifestSha256,
     suppliedManifestSha256: validated.suppliedManifestSha256,

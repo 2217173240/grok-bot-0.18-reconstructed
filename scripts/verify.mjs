@@ -6,6 +6,7 @@ import { extractFile, listPackage } from "@electron/asar";
 
 import {
   outputApp,
+  fidelityBuiltAsarUnpacked,
   reconstructedBundleId,
   reconstructedName,
   repoRoot,
@@ -16,6 +17,8 @@ import { prepareReconstructedElectronMainArtifactFallback } from "./lib/build-as
 import { resolvePackagedAppArtifacts } from "./lib/packaged-app.mjs";
 import { capture, run } from "./lib/process.mjs";
 import { SYSTEM_TOOLS } from "./lib/system-tools.mjs";
+import { verifyChecksumPinnedRendererPackage, verifyOfficialMacReference, verifyReconstructedMacPackage } from "./lib/macos-package-verification.mjs";
+import { resolveRuntimeApp } from "./lib/runtime.mjs";
 
 function readAppArgument(argv) {
   const index = argv.indexOf("--app");
@@ -47,6 +50,25 @@ async function walkFiles(root, current = root) {
   }
   return files.sort();
 }
+
+await requirePath(builtAsar);
+const packageKind = JSON.parse(extractFile(builtAsar, "dist/reconstruction-build.json").toString("utf8")).buildKind;
+if (packageKind === "source-only-components") {
+  throw new Error("The selected app uses the experimental source-only renderer, not the checksum-pinned release renderer.");
+}
+const officialApp = await resolveRuntimeApp();
+const official = await verifyOfficialMacReference({ runtimeApp: officialApp });
+await verifyChecksumPinnedRendererPackage({
+  archivePath: builtAsar,
+  sourceRendererRoot: path.join(sourceAppDir, "dist", "renderer"),
+  officialArchivePath: official.asarPath,
+});
+await verifyReconstructedMacPackage({
+  officialApp,
+  reconstructedApp: verifiedApp,
+  sourceUnpackedRoot: fidelityBuiltAsarUnpacked,
+  packagedUnpackedRoot: builtAsarUnpacked,
+});
 
 const electronMain = await readFile(path.join(sourceAppDir, "dist", "electron-main", "main.cjs"), "utf8");
 const hostMain = await readFile(path.join(sourceAppDir, "dist", "host", "host-main.cjs"), "utf8");
@@ -181,8 +203,6 @@ if (rendererComposition?.mode === "clean-source") {
   for (const file of rendererProvenance.files) {
     if (typeof file.path !== "string" || declaredPaths.has(file.path)) throw new Error("Packaged artifact renderer provenance contains a missing or duplicate path.");
     declaredPaths.add(file.path);
-    const bytes = extractFile(builtAsar, `dist/renderer/${file.path}`);
-    if (bytes.byteLength !== file.bytes || sha256(bytes) !== file.sha256) throw new Error(`Packaged artifact renderer differs from its checksum inventory: ${file.path}`);
   }
   const packagedPaths = rendererListing.filter(entry => entry.startsWith("dist/renderer/")).map(entry => entry.slice("dist/renderer/".length)).filter(Boolean);
   const undeclaredFiles = packagedPaths.filter(candidate => !declaredPaths.has(candidate) && ![...declaredPaths].some(file => file.startsWith(`${candidate}/`)));
