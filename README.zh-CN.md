@@ -10,7 +10,7 @@
 ## 本仓库的主要能力
 
 - **在自己的计算机上运行 agent。** 本地管理员模式默认通过 Docker 容器运行 host、执行 daemon、桌面、浏览器和回合。Docker 或所需镜像不可用时会明确报错。任务文件位于绑定的工作目录，设置与会话保存在本地。
-- **选择模型服务。** Settings → Router 提供 Cursor、Claude Code、Codex 和 OpenRouter。默认本地启动脚本选择 Claude Code 和 Anthropic 兼容 API；可以通过环境变量配置模型及地址。各 provider 的工具能力尚有差异，出现在 Router 中不代表具有相同的工具支持。
+- **选择模型服务。** Settings → Router 提供 Claude Code、Codex、OpenRouter、Command Code，并保留 Cursor 设置。默认本地启动脚本选择 Claude Code 和 Anthropic 兼容 API；可以通过环境变量配置模型及地址。使用其他 provider 前需准备相应凭据并选择账号支持的模型。
 - **连接本地工具与插件。** 容器可执行文件及 shell 工具，并托管 `mcp-servers.json` 配置的 MCP 服务，包括 stdio 进程和 Streamable HTTP 地址。工具发现、分页、取消与进程关闭均有对应检查。
 - **从可读源码构建桌面运行时。** `source/` 包含 Electron 主进程、coordinator、host、执行与协议代码。打包时保留通过校验的 0.18.0 renderer，并加入范围明确的设置页面补丁。`frontend/` 是供开发使用的部分可读重建。
 - **核对构建输入与产物。** bootstrap 校验原始发布构件；原生补丁和 renderer 修改核对预期哈希。生成的 macOS 应用使用独立的 bundle 标识和临时签名。
@@ -37,6 +37,8 @@ npm run package
 还需要运行中的 Docker 兼容服务，以及 [docker/base-image.json](docker/base-image.json) 指定的 `linux/arm64` 基础镜像。基础镜像是单独审查的构建输入；`docker/build-arm64-box.sh` 会先核对不可变 digest，再构建 `grok-bot-exec-box:arm64`。[架构与部署说明](docs/LOCAL-SANDBOX-ARCHITECTURE.md)记录了镜像边界和数据目录。
 
 ```sh
+colima start --profile grokbot
+export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
 docker/build-arm64-box.sh
 ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Reconstructed.app"
 install -d -m 700 "$HOME/.grokbot-local"
@@ -49,14 +51,15 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 将模型服务的 token 写入 `anthropic-token`，只占一行。启动脚本默认使用 `https://open.bigmodel.cn/api/anthropic` 和 `glm-5.2`；其他兼容服务可设置 `ANTHROPIC_BASE_URL` 与 `SAND_CLAUDE_MODEL`。token 文件保存在本地数据目录，并提供给容器内的模型进程。agent 的共享文件位于 `~/.grokbot-local/box-workspace`。
 
 `./start-local.sh` 还提供 `stop`、`restart` 与 `logs`。本地管理员模式使用 Docker 并在容器内执行回合。启动前需要准备好镜像与已安装的重建应用。
+Colima 是默认且推荐的 Docker 运行环境；OrbStack 可作为额外的 socket 来源。
 
 添加本地 MCP 服务时，在 `~/.grokbot-local/mcp-servers.json` 中写入标准的 `mcpServers` 对象。配置的命令会在容器中运行，并可访问绑定的工作目录；使用前请核对插件命令。[扩展说明](docs/EXTENSIBILITY.md)列出 provider、工具和插件的接入位置。
 
 ## 已完成的验证
 
-仓库 CI 对 PR 和 `main` 执行 TypeScript 检查、回归测试、可读前端构建及 Git 归档检查。本地还使用真实的 Linux Electron 界面连接隔离容器：经 GLM 提供模型响应的 Claude SDK 回合写入并读取文件、计算 SHA-256、调用 stdio MCP echo 工具，最终把结果返回到会话。在该测试网络中，Cursor 和 xAI 地址被封锁，配置的模型地址仍可访问。
+仓库 CI 对 PR 和 `main` 执行 TypeScript 检查、回归测试、可读前端构建及 Git 归档检查。当前 `main` 的 macOS 包通过了 109 项本地测试、包体校验，以及 arm64 容器的执行和桌面门禁。安装后的本地管理员界面完成真实 GLM 对话、容器文件写入与读取、MCP echo 调用，以及 `Task` → `computerUse` → `Computer` 鼠标移动和 1280×800 PNG 截图。Mac 与容器的拦截记录在这些路径中均没有 Cursor/xAI 外发。
 
-验证结果覆盖所测试的 Claude SDK 路线。所有 provider 的完整工具能力、macOS 安装包的各项端到端功能，以及不依赖固定原版 renderer 的构建仍需完成。[本地架构报告](docs/LOCAL-SANDBOX-ARCHITECTURE.md)记录了验证范围和后续事项。
+Codex 使用隔离容器和只读挂载的现有凭据，已通过真实文本、工具续接、取消和转录验收。OpenRouter 与 Command Code 当前没有本地密钥，因此尚未进行真实账户调用。passkey 与真人接管需要测试账户和用户操作。[本地架构报告](docs/LOCAL-SANDBOX-ARCHITECTURE.md)详细记录了验证范围与需要用户提供的条件。构建继续按当前目标复用固定哈希的原版 renderer。
 
 ## 仓库导航
 
