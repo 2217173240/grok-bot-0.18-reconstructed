@@ -61,8 +61,8 @@ test("the loopback bridge serves this computer's plugin tools to an MCP client",
     assert.deepEqual(forecast.inputSchema.required, ["city"]);
     // A reading tool and a writing tool are marked apart, which is what the CLI
     // child's own approval surface reads.
-    assert.equal(forecast.annotations.readOnlyHint, true);
-    assert.equal(listed.tools.find((tool) => tool.name === "mail__send").annotations.readOnlyHint, false);
+    assert.equal(forecast.annotations, undefined);
+    assert.equal(listed.tools.find((tool) => tool.name === "mail__send").annotations, undefined);
 
     const called = await client.callTool({ name: "weather__forecast", arguments: { city: "Berlin" } });
     assert.equal(called.isError, false);
@@ -73,9 +73,10 @@ test("the loopback bridge serves this computer's plugin tools to an MCP client",
     assert.ok(calls[0].toolCallId.length > 0, "the bridge stamps each call so the host can audit it");
 
     // A name the bridge never listed is refused without reaching the host.
-    const unknown = await client.callTool({ name: "absent__tool", arguments: {} });
-    assert.equal(unknown.isError, true);
-    assert.match(unknown.content[0].text, /Unknown Grok Bot plugin tool/);
+    await assert.rejects(
+      client.callTool({ name: "absent__tool", arguments: {} }),
+      (error) => error?.code === -32602 && /Unknown Grok Bot plugin tool/.test(error.message),
+    );
     assert.equal(calls.length, 1);
 
     // A host-side failure comes back as a failed call, never as a silent success.
@@ -87,9 +88,10 @@ test("the loopback bridge serves this computer's plugin tools to an MCP client",
     try {
       await failingClient.connect(new StreamableHTTPClientTransport(new URL(failing.url)));
       await failingClient.listTools();
-      const failed = await failingClient.callTool({ name: "mail__send", arguments: { to: "someone" } });
-      assert.equal(failed.isError, true);
-      assert.match(failed.content[0].text, /refused the call/);
+      await assert.rejects(
+        failingClient.callTool({ name: "mail__send", arguments: { to: "someone" } }),
+        (error) => error?.code === -32603 && /refused the call/.test(error.message),
+      );
     } finally {
       await failingClient.close();
       await failing.close();

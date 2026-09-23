@@ -47,6 +47,10 @@ export type DockerImageChoice =
 
 export function decideDockerImage(env: NodeJS.ProcessEnv, probe: SelfBuiltImageProbe, expectedDepsPin?: string): DockerImageChoice {
   const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
+  if (isLocalAdminEnabled(env) && env.SAND_LOCAL_ADMIN_TURN === "host") {
+    if (explicit === LOCAL_DOCKER_BOX_IMAGE) throw new Error("The official image does not support local in-box turns. Build docker/build-arm64-box.sh and select the local image.");
+    if (!explicit && !probe.present) throw new Error("The sandbox image is not built locally. Run docker/build-arm64-box.sh before starting local in-box turns.");
+  }
   if (explicit != null && explicit.length > 0) return { selection: "explicit", image: explicit };
   if (!probe.present) return { selection: "official-fallback", image: LOCAL_DOCKER_BOX_IMAGE, reason: "self-built-image-missing" };
   // Stale is not missing: pin mismatch selects the stale error even though a
@@ -112,14 +116,13 @@ async function readExpectedDepsPin(): Promise<string | undefined> {
   return expectedDepsPinValue;
 }
 
-// Where the local-admin computer executes. Docker is the default when its
-// daemon is reachable (isolation + GNU semantics + the native lab); the
-// Mac-side host process is the fallback when it is not.
+// 默认要求容器；宿主机执行必须由用户显式选择。
 export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" | "mac-host" {
   const explicit = env.SAND_LOCAL_ADMIN_BOX?.trim().toLowerCase();
   if (explicit === "host" || explicit === "mac" || explicit === "mac-host") return "mac-host";
-  if (explicit === "docker") return "docker";
-  return dockerAvailable ? "docker" : "mac-host";
+  if (explicit && explicit !== "docker") throw new Error(`Unsupported SAND_LOCAL_ADMIN_BOX: ${explicit}`);
+  if (!dockerAvailable) throw new Error("Docker sandbox is unavailable. Start Docker or Colima before connecting.");
+  return "docker";
 }
 
 export interface LocalDockerRunPlan {
@@ -798,9 +801,7 @@ export function createSettingsRoutedHostConnector(
   const localConnect = (): Promise<GatewayConnection> => {
     if (ensureInFlight == null) ensureInFlight = (async () => {
       if (isLocalAdminEnabled()) {
-        // Docker is the default computer (isolation + GNU semantics + the
-        // native lab); the Mac-side host process is the no-Docker fallback.
-        // One breaker governs whichever local computer is in play.
+        // 容器连接失败时保留执行边界，由用户恢复 Docker。
         if (Date.now() < localHostBreakerOpenUntilMs) {
           const message = `Local computer circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
           appendLocalIntercept({ kind: "local-computer", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });

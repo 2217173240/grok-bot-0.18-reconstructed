@@ -23,6 +23,7 @@ import { SandMcpListingSummaries } from "./mcp-listing-summaries.js";
 import { validateMcpServerId } from "./mcp-server-id.js";
 import { parseServerConfig, validateServerName } from "./mcp-validation.js";
 import { reportMcpHostEdgeFailure } from "./mcp-diagnostics.js";
+import { isLocalAdminEnabled } from "../local-admin.js";
 const EMPTY_SETTINGS: any = {
   scopeToAccount() {},
   migrateMcpCustomInstructionToServerId() {},
@@ -230,9 +231,9 @@ export class SandMcpManager {
         (server: any) =>
           server.serverIdentifier != null &&
           !server.disabledByTeamAdminPolicy &&
-          "command" in server.config,
+          ("command" in server.config || isLocalAdminEnabled()),
       ),
-      backend = http.length
+      backend = http.length && !isLocalAdminEnabled()
         ? await this.backendMcpExec.listTools(
             http.map((server: any) => server.serverIdentifier),
           )
@@ -266,7 +267,7 @@ export class SandMcpManager {
     for (const server of visible) {
       if (server.disabledByTeamAdminPolicy)
         servers.push(this.summaries.createAdminDisabledServerSummary(server));
-      else if (!("url" in server.config))
+      else if (isLocalAdminEnabled() || !("url" in server.config))
         servers.push(
           this.summaries.createBoxServerSummary(
             server,

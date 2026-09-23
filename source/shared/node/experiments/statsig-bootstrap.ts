@@ -7,13 +7,14 @@ import { errorLogTag } from "../../errors.js";
 import { getSandBackendClientHeaders } from "../sand-client-metadata.js";
 import { parseRetryAfterHeaderMs } from "../../retry-after.js";
 import { reportExperimentsDiagnostic } from "./experiments-diagnostics.js";
+import { isLocalAdminEnabled } from "../local-admin.js";
 
 export const STATSIG_CLIENT_KEY = "client-Bm4HJ0aDjXHQVsoACMREyLNxm5p6zzuzhO50MgtoT5D";
 export const STATSIG_LOG_EVENT_PROXY_URL = "https://api3.cursor.sh/tev1/v1";
 export const BOOTSTRAP_CACHE_FILENAME = "sand-statsig-bootstrap.json";
 
 export function sandStatsigNetworkUrlAllowed(url: string): boolean { return url.includes("/rgstr"); }
-export function sandStatsigNetworkOverride(url: string, args: RequestInit, fetchImpl: typeof fetch = fetch): Promise<Response> { return sandStatsigNetworkUrlAllowed(url) ? fetchImpl(url, args) : Promise.resolve(new Response(null, { status: 204 })); }
+export function sandStatsigNetworkOverride(url: string, args: RequestInit, fetchImpl: typeof fetch = fetch, env: NodeJS.ProcessEnv = process.env): Promise<Response> { return isLocalAdminEnabled(env) || !sandStatsigNetworkUrlAllowed(url) ? Promise.resolve(new Response(null, { status: 204 })) : fetchImpl(url, args); }
 export function extractStatsigUser(config: string): Record<string, unknown> { const parsed = JSON.parse(config) as { user?: unknown }; return typeof parsed.user === "object" && parsed.user != null && !Array.isArray(parsed.user) ? parsed.user as Record<string, unknown> : {}; }
 export function readStatsigBootstrapUserId(config: string): string | null { try { const user = extractStatsigUser(config); return typeof user.userID === "string" ? user.userID : null; } catch (error) { reportExperimentsDiagnostic({ kind: "bootstrap_config_unparseable", errorClass: errorLogTag(error) }); return null; } }
 
@@ -30,6 +31,7 @@ export async function fetchStatsigBootstrap(options: {
   readonly getAccessToken: (options: { backendUrl: string }) => Promise<string>;
   readonly getMachineId: () => Promise<string>; readonly fetchImpl?: typeof fetch; readonly env?: NodeJS.ProcessEnv | undefined;
 }): Promise<{ config?: string; retryAfterMs?: number }> {
+  if (isLocalAdminEnabled(options.env ?? process.env)) return {};
   const accessToken = await options.getAccessToken({ backendUrl: options.backendUrl }).catch((error) => { reportExperimentsDiagnostic({ kind: "bootstrap_anonymous", errorClass: errorLogTag(error) }); return undefined; });
   const machineId = await options.getMachineId();
   const headers = new Headers({ "content-type": "application/json", "x-cursor-checksum": createCursorChecksum(machineId), ...getSandBackendClientHeaders(options.env), "x-ghost-mode": "true", "x-request-id": randomUUID() });

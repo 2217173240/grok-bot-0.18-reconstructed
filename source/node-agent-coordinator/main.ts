@@ -20,6 +20,7 @@ import { createWebAuthnProvider } from "./webauthn/provider.js";
 import { createSpawnedWebAuthnSigner, resolveWebAuthnSignerPath } from "./webauthn/signer.js";
 import { ClientSideToolV2Relay } from "./client-side-tool-v2-relay.js";
 import { createCoordinatorInferenceRouter } from "./inference-router.js";
+import { installLocalAdminNetworkIntercept } from "../shared/node/local-admin-intercept.js";
 
 export interface McpOAuthPending {
   readonly serverName: string;
@@ -64,6 +65,7 @@ export interface ComposeCoordinatorDependencies {
 }
 
 export async function composeCoordinator(dependencies: ComposeCoordinatorDependencies = {}): Promise<void> {
+  installLocalAdminNetworkIntercept();
   const carrierIntake = await (dependencies.adoptCarrier ?? adoptCarrier)();
   if (!carrierIntake.adopted) {
     process.stderr.write(`node-agent-coordinator: ${carrierIntake.rejection.detail}\n`);
