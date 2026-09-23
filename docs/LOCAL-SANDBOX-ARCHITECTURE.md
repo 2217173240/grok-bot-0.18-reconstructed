@@ -92,7 +92,7 @@ flowchart TD
 | 2 | 高 / 高 | 第三方 API 取消传播；容器 MCP HTTP 直连，释放资源 | 已实现；真实 Claude 回合、HTTP/stdin-out MCP 与 Codex 取消已执行验证 |
 | 3 | 高 / 高 | MCP 配置幂等、断连状态、分页与关闭竞态 | 已实现；用真实进程和 SDK 验证，测试范围见下方 |
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
-| 5 | 高 / 中 | provider 使用 Grok turn 工具与权限 | Claude 已通过 macOS UI 的真实文件、MCP、图片附件与 Computer 子代理回合。Codex 在隔离容器用真实账号通过文本、工具续接、取消与转录验收。OpenRouter、Command Code 的本地 key 为空，按当前验收范围未调用真实账号。 |
+| 5 | 高 / 中 | provider 使用 Grok turn 工具与权限 | Claude 已通过 macOS UI 的真实文件、MCP、图片附件与 Computer 子代理回合。Codex 在隔离容器用真实账号通过文本、工具续接、取消与转录验收。Command Code 的无效密钥在隔离容器调用真实接口，HTTP 401 使流及结果及时失败。OpenRouter、Command Code 的本地 key 为空，按当前验收范围未调用真实账号。 |
 | 6 | 高 / 中 | MCP 取消到达实际执行进程 | 真实延时 stdio 插件和 daemon RPC 取消通过；调用期间取消后未写入完成标记。Mac 回合路径已移除 |
 | 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | 当前 main 的 macOS 包已安装并完成 GLM 文本、文件、MCP 与 Computer 回合。Mac 与容器拦截记录均为零 Cursor/xAI 外发；本次实际调用路径成立。 |
 | 8 | 中 / 中 | router/session-sync 故障被健康检查发现并恢复 | 真实进程退出、健康判定与明确重建已通过隔离 Docker 验收 |
@@ -103,7 +103,7 @@ flowchart TD
 
 ## 需要用户提供条件才能继续验收的能力
 
-1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空，本轮遵循“仅验收已配置项”，所以没有真实账户调用结果。提供者可在应用 Settings → Router 保存各自密钥，再执行文本、图片、工具调用、取消和转录回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，生产容器也不绑定 `~/.codex`；因此 Codex 图片附件与桌面应用 Settings 切换后的真实回合没有验收结论。
+1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空，本轮遵循“仅验收已配置项”，所以没有真实账户调用结果。Command Code 已用固定无效密钥从隔离容器调用真实接口，HTTP 401 的错误传播与提示已验证；该结果不覆盖有效账号的文本、图片、工具调用、取消和转录回合。提供者可在应用 Settings → Router 保存各自密钥，再执行这些回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，生产容器也不绑定 `~/.codex`；因此 Codex 图片附件与桌面应用 Settings 切换后的真实回合没有验收结论。
 2. **passkey 与人工接管。** `sand-webauthn-signer` 已随固定哈希的原生依赖进入安装包，尚未在用户的 passkey 服务完成真实注册或登录。noVNC 的正确 token 与错误 token 已经通过真实 WebSocket 握手核对，Computer 也已操作桌面。用户决定本轮只验收自动化路径；真人输入凭据、交还控制权和会话恢复需要以后提供测试站点并亲自完成。
 3. **公开分发与原版专用服务。** 当前本地安装已经完成；公开再分发仍需按 `PROVENANCE.md` 对原版 Electron、renderer、18 张图片和原生文件执行权利审查。发布包明确不包含 `csnaps` carrier，代码库遥测接口提供无操作实现。若交付目标包括复现该原版服务，需要单独确定其数据范围和用途。
 
@@ -149,6 +149,7 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 - `/Applications` 中的新包启动后，local admin 直接显示会话输入，不显示登录按钮。真实 GLM 回合完成容器内文件写入与读取、SHA-256、stdio MCP echo；独立读取的文件与界面回复一致。
 - 真实 UI 请求经 `Task` 派发 `computerUse` 子代理，子代理用 `Computer` 完成鼠标移动和截图；独立检查持久化文件为 1280×800 PNG。截图 MIME、扩展名与文件内容一致。
 - 真实 UI 上传仓库自带的 Router 设置页 PNG，发送后的用户转录含 `[Image]`；配置的 GLM 服务完成图像分析并识别 Router 页面。附件暂存使用 `node:crypto` 的 `randomUUID` 独立导出，避免未绑定方法在 Electron 主进程产生 `ERR_INVALID_THIS`。
+- `scripts/command-code-invalid-key-smoke.mjs` 在只读隔离容器中调用 Command Code 的真实 `/chat/completions` 接口。固定无效密钥收到 HTTP 401；流、响应、用量和元数据五项均在超时前返回清晰的鉴权错误。该检查不使用生产凭据，也不验证有效账号的功能。
 - Mac 拦截记录扫描 4171 行，包含 2114 次受阻的 Cursor/xAI 请求，零外发记录；容器记录扫描 961 行，零 Cursor/xAI 外发记录。这个证据覆盖已执行的回合与记录范围。早期网络隔离测试还在 Docker `--internal` 网络中只允许 GLM endpoint，并拒绝 Cursor/xAI 目标。
 - 旧 `finonelib` profile 中与 Grok Bot 相关的容器、卷和镜像已清理，profile 本身因属于其他项目而保留并停止。运行中的项目专用 `grokbot` profile 只保留生产容器、生产数据卷、当前执行镜像和构建所需的基础镜像。
 
