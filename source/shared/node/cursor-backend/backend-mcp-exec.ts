@@ -11,7 +11,7 @@ export interface NamedBackendTool { readonly name: string; readonly providerIden
 export interface McpExecResult { readonly result: { readonly case: string; readonly value: unknown } }
 export interface DashboardMcpExecClient {
   listSandMcpTools(request: { serverIdentifiers: string[] }, options: { timeoutMs: number }): Promise<{ servers: readonly { serverIdentifier: string; status: unknown; tools: readonly BackendToolWire[]; accountLabel?: string; rowServerIdentifier?: string }[] }>;
-  executeSandMcpTool(request: { serverIdentifier: string; toolName: string; args: unknown; toolCallId: string; agentId: string }, options: { timeoutMs: number }): Promise<{ result?: McpExecResult }>;
+  executeSandMcpTool(request: { serverIdentifier: string; toolName: string; args: unknown; toolCallId: string; agentId: string }, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ result?: McpExecResult }>;
   checkHttpMcpStatus(request: { serverIds: string[]; oauthRedirectUri: string; forceReauth: boolean; accountKey: string }, options: { timeoutMs: number }): Promise<{ statuses: readonly { id: string; isAvailable: boolean; requiresAuth: boolean; hasValidToken: boolean; authUrl: string; error: string }[] }>;
   completeMcpOAuth(request: { stateId: string; authorizationCode: string }, options: { timeoutMs: number }): Promise<unknown>;
   validateMcpOAuthTokens(request: { targets: readonly { serverUrl: string; accountKey: string }[] }, options: { timeoutMs: number }): Promise<{ results: readonly { serverUrl: string; accountKey?: string; hasValidToken: boolean }[] }>;
@@ -44,8 +44,9 @@ export function createDashboardSandBackendMcpExec(deps: DashboardMcpExecDependen
         return response.servers.map((server) => ({ serverIdentifier: server.serverIdentifier, status: server.status, tools: server.tools.map(backendToolToNamed), accountLabel: normalizeAccountLabel(server.accountLabel), rowServerIdentifier: server.rowServerIdentifier != null && server.rowServerIdentifier.length > 0 ? server.rowServerIdentifier : server.serverIdentifier }));
       } catch (error) { deps.reportFailure?.("backend-list-tools", error); throw new SandBackendMcpExecError(`Backend MCP tool discovery failed: ${errorLabel(error)}`, { cause: error }); }
     },
-    async executeTool(args: { serverIdentifier: string; toolName: string; args: unknown; toolCallId: string; agentId?: string }): Promise<McpExecResult> {
+    async executeTool(args: { serverIdentifier: string; toolName: string; args: unknown; toolCallId: string; agentId?: string }, context?: { readonly signal: AbortSignal }): Promise<McpExecResult> {
       try {
+        if (context?.signal.aborted) throw context.signal.reason ?? new Error("MCP tool call canceled.");
         // Connect accepts a structural request object here, but nested message fields
         // still need to be real protobuf messages. Cursor's native inference path
         // already supplies generated values; routed providers supply ordinary JSON.
@@ -54,7 +55,7 @@ export function createDashboardSandBackendMcpExec(deps: DashboardMcpExecDependen
         const requestArgs = args.args instanceof Struct
           ? args.args
           : Struct.fromJson((args.args ?? {}) as JsonValue);
-        const response = await client.executeSandMcpTool({ serverIdentifier: args.serverIdentifier, toolName: args.toolName, args: requestArgs, toolCallId: args.toolCallId, agentId: args.agentId ?? "" }, { timeoutMs: EXECUTE_TOOL_DIAL_DISCOVER_CALL_TIMEOUT_MS });
+        const response = await client.executeSandMcpTool({ serverIdentifier: args.serverIdentifier, toolName: args.toolName, args: requestArgs, toolCallId: args.toolCallId, agentId: args.agentId ?? "" }, { timeoutMs: EXECUTE_TOOL_DIAL_DISCOVER_CALL_TIMEOUT_MS, ...(context == null ? {} : { signal: context.signal }) });
         return response.result ?? errorResult(`Backend MCP execution returned no result for "${args.toolName}".`);
       }
       catch (error) { deps.recordExecError?.(args.toolCallId, error); if (deps.connectErrorCode?.(error)?.deadlineExceeded === true) return errorResult(`Backend MCP execution for "${args.toolName}" timed out after ${EXECUTE_TOOL_DIAL_DISCOVER_CALL_TIMEOUT_MS / 1_000}s. The connector may still have applied it, so retry only if repeating the call is safe.`); return errorResult(`Backend MCP execution failed for "${args.toolName}": ${errorLabel(error)}`); }

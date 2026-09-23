@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -60,8 +60,9 @@ test("dispose closes an in-flight failed connection without reviving the host", 
   const { BoxMcpHost } = await loadHost(dir);
   const host = new BoxMcpHost({ workspaceRoot: dir, connectTimeoutMs: 300, callTimeoutMs: 500 });
   const loading = host.load(JSON.stringify({ mcpServers: { unavailable: { url: "http://127.0.0.1:1/mcp" } } }));
+  const rejected = assert.rejects(loading, /disposed/);
   await host.dispose();
-  await assert.rejects(loading, /disposed/);
+  await rejected;
   const state = await host.listState({ serverIdentifiers: [], kickOnly: true });
   assert.equal(state.result.case, "error");
   await rm(dir, { recursive: true, force: true });
@@ -82,7 +83,15 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
     assert.equal(host.dispose(), closing);
     await closing;
     await rejected;
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    let state = "";
+    try {
+      process.kill(pid, 0);
+      const status = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+      if (status.status === 0) state = status.stdout.trim();
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+    assert.ok(state === "" || state.startsWith("Z"), `MCP child remains active: ${state}`);
   } finally {
     await host.dispose();
     await rm(dir, { recursive: true, force: true });

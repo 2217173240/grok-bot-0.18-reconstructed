@@ -127,7 +127,6 @@ interface ReadInteractionHandler {
 const UNSUPPORTED_BINARY_EXTENSIONS = /\.(zip|tar|gz|exe|dll|so|dylib|bin|mp4|webm|mov|avi|mkv|wmv|flv|m4v)$/i;
 const READ_LINE_NUMBER_INTERVAL = 10;
 const MAX_CONVERSATION_ID_LENGTH = 200;
-const pdfTextCache = new Map<string, string>();
 const relatedSkillsBySuccess = new WeakMap<object, readonly ReadSkill[]>();
 
 const readErrorsDistribution = createHistogram("agent.tools.read.errors", {
@@ -372,9 +371,7 @@ export function createReadTool(
         if (isPdfBinary(output.value, resolvedPath)) {
           const extractor = options.pdfTextExtractor;
           if (extractor === undefined) throw new TypeError("Read PDF worker is not bound");
-          const cached = pdfTextCache.get(resolvedPath);
-          pdfContentOverride = cached ?? normalizeLineEndings(await extractor(output.value));
-          if (cached === undefined) pdfTextCache.set(resolvedPath, pdfContentOverride);
+          pdfContentOverride = normalizeLineEndings(await extractor(output.value));
         } else {
           const blobStore = meta.stateHandler?.getBlobStore?.();
           if (blobStore !== undefined) {

@@ -192,13 +192,13 @@ async function validateGeneratedSourceExport(binding, resolved) {
   });
 }
 
-async function validateAnchor(bindingPath, anchor, artifactLines) {
+async function validateAnchor(bindingPath, anchor, artifactLines, sourceOnly = false) {
   if (anchor == null || anchor.artifact !== "src/app/dist/electron-main/main.cjs" || !Number.isInteger(anchor.line) || anchor.line < 1 || typeof anchor.needle !== "string" || anchor.needle.length === 0) {
     throw new Error("Every Electron-main production binding requires an exact immutable main artifact anchor");
   }
   const expectedNeedle = electronMainProductionBindingEvidence[bindingPath];
   if (anchor.needle !== expectedNeedle) throw new Error(`Electron-main binding ${bindingPath} must use its exact evidence needle: ${expectedNeedle}`);
-  if (!(artifactLines[anchor.line - 1] ?? "").includes(anchor.needle)) throw new Error(`Electron-main binding artifact anchor drifted at ${anchor.artifact}:${anchor.line}: ${anchor.needle}`);
+  if (!sourceOnly && !(artifactLines[anchor.line - 1] ?? "").includes(anchor.needle)) throw new Error(`Electron-main binding artifact anchor drifted at ${anchor.artifact}:${anchor.line}: ${anchor.needle}`);
 }
 
 function expression(bindings, key) {
@@ -272,7 +272,7 @@ export async function validateElectronMainProductionBindingManifest(manifestPath
   return { manifestPath: normalize(path.relative(repoRoot, absoluteManifest)), manifestSha256: sha256(manifestBytes), bindings };
 }
 
-async function validateElectronMainBindingEntries(entries, baseManifestPath, artifactLines, { copiedPackages, nativePackages }) {
+async function validateElectronMainBindingEntries(entries, baseManifestPath, artifactLines, { copiedPackages, nativePackages }, sourceOnly = false) {
   const bindings = [];
   const paths = new Set();
   for (const binding of entries) {
@@ -282,7 +282,7 @@ async function validateElectronMainBindingEntries(entries, baseManifestPath, art
     if (!classifications.has(binding.classification)) throw new Error(`Invalid Electron-main binding classification for ${binding.path}: ${binding.classification}`);
     if (!accessKinds.has(binding.access)) throw new Error(`Invalid Electron-main binding access for ${binding.path}: ${binding.access}`);
     if (typeof binding.module !== "string" || typeof binding.export !== "string" || !/^(?:default|[A-Za-z_$][\w$]*)$/.test(binding.export)) throw new Error(`Invalid Electron-main binding module/export for ${binding.path}`);
-    await validateAnchor(binding.path, binding.artifactAnchor, artifactLines);
+    await validateAnchor(binding.path, binding.artifactAnchor, artifactLines, sourceOnly);
     let resolvedModule;
     if (binding.classification === "generated-source") {
       const resolved = resolveGeneratedModule(baseManifestPath, binding.module);
@@ -308,12 +308,12 @@ async function electronMainRuntimePackages() {
   };
 }
 
-async function reviewedElectronMainBindings(artifactLines) {
+async function reviewedElectronMainBindings(artifactLines, sourceOnly = false) {
   const bindings = [];
   for (const spec of electronMainProductionBindingInventorySpecs) {
     const resolved = resolveReviewedSourceModule(spec.module);
     await validateGeneratedSourceExport(spec, resolved);
-    await validateAnchor(spec.path, spec.artifactAnchor, artifactLines);
+    await validateAnchor(spec.path, spec.artifactAnchor, artifactLines, sourceOnly);
     bindings.push({ ...spec, resolvedModule: resolved.absolute });
   }
   return bindings;
@@ -339,9 +339,9 @@ async function readElectronMainBindingManifest(manifestPath) {
  * while a partial manifest may only bind any future residual slots; it cannot
  * override a reviewed source provider.
  */
-export async function assembleElectronMainProductionBindingManifest(manifestPath = null) {
-  const artifactLines = (await readFile(path.join(sourceAppDir, "dist/electron-main/main.cjs"), "utf8")).split("\n");
-  const builtins = await reviewedElectronMainBindings(artifactLines);
+export async function assembleElectronMainProductionBindingManifest(manifestPath = null, { sourceOnly = false } = {}) {
+  const artifactLines = sourceOnly ? [] : (await readFile(path.join(sourceAppDir, "dist/electron-main/main.cjs"), "utf8")).split("\n");
+  const builtins = await reviewedElectronMainBindings(artifactLines, sourceOnly);
   const orderBindings = bindings => requiredElectronMainProductionBindings.flatMap(bindingPath => bindings.filter(binding => binding.path === bindingPath));
   if (manifestPath == null) {
     const orderedBuiltins = orderBindings(builtins);
@@ -365,8 +365,8 @@ export async function assembleElectronMainProductionBindingManifest(manifestPath
   const builtinPathSet = new Set(electronMainProductionBindingInventoryPaths);
   const overlap = suppliedPaths.filter(bindingPath => builtinPathSet.has(bindingPath));
   if (overlap.length > 0) throw new Error(`Electron-main residual manifest overlaps evidence-derived bindings: ${[...new Set(overlap)].join(",")}`);
-  const runtimePackages = await electronMainRuntimePackages();
-  const residual = await validateElectronMainBindingEntries(supplied.manifest.bindings, supplied.absoluteManifest, artifactLines, runtimePackages);
+  const runtimePackages = sourceOnly ? { copiedPackages: new Set(), nativePackages: new Set() } : await electronMainRuntimePackages();
+  const residual = await validateElectronMainBindingEntries(supplied.manifest.bindings, supplied.absoluteManifest, artifactLines, runtimePackages, sourceOnly);
   const bound = orderBindings([...builtins, ...residual]);
   const boundPaths = new Set(bound.map(binding => binding.path));
   const unbound = requiredElectronMainProductionBindings.filter(bindingPath => !boundPaths.has(bindingPath));
@@ -389,8 +389,8 @@ export function resolveElectronMainBindingManifestPath({ argv = process.argv, en
   return environmentPath.length > 0 ? environmentPath : null;
 }
 
-export async function buildProductionElectronMainIfSupplied({ outputRoot, manifestPath = resolveElectronMainBindingManifestPath(), reconstructedPackage = false } = {}) {
-  const assembled = await assembleElectronMainProductionBindingManifest(manifestPath);
+export async function buildProductionElectronMainIfSupplied({ outputRoot, manifestPath = resolveElectronMainBindingManifestPath(), reconstructedPackage = false, sourceOnly = false } = {}) {
+  const assembled = await assembleElectronMainProductionBindingManifest(manifestPath, { sourceOnly });
   if (assembled.unboundBindings.length > 0) return {
     status: "incomplete-evidence-derived-manifest",
     clean: false,
@@ -441,11 +441,12 @@ export async function buildProductionElectronMainIfSupplied({ outputRoot, manife
   const provenance = {
     schemaVersion: 1,
     status: "validated-clean-source",
+    sourceOnly,
     manifestPath: validated.manifestPath,
     manifestSha256: validated.manifestSha256,
     requiredBindings: requiredElectronMainProductionBindings,
     electronAbi: ["app", "BrowserWindow", "Menu", "shell", "screen"],
-    bindings: validated.bindings.map(({ resolvedModule: _resolvedModule, ...binding }) => binding),
+    bindings: validated.bindings.map(({ resolvedModule: _resolvedModule, artifactAnchor: _artifactAnchor, ...binding }) => sourceOnly ? binding : { ...binding, artifactAnchor: _artifactAnchor }),
     boundBindings: validated.boundBindings,
     unboundBindings: validated.unboundBindings,
     executableGraph: { target: electronMainNodeTarget, inputs, externalImports, forbiddenInputs, forbiddenOutputReferences: [], runtimePackages },

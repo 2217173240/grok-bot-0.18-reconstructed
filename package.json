@@ -110,6 +110,7 @@
     "jschardet": "3.1.4",
     "jsonc-parser": "3.3.1",
     "katex": "0.16.45",
+    "mermaid": "11.16.0",
     "mime-types": "3.0.1",
     "minimatch": "10.2.6",
     "pdfjs-dist": "5.4.296",
@@ -124,6 +125,7 @@
     "undici": "5.29.0",
     "web-tree-sitter": "0.21.0",
     "ws": "8.20.0",
+    "xlsx": "0.18.5",
     "zod": "^3.25.76",
     "zod-to-json-schema": "3.24.5"
   },

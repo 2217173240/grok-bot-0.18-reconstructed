@@ -5,8 +5,6 @@
 // @evidence src/app/dist/renderer/assets/messages-ByIkiGdI.js#exports=groups,skinTones,subgroups
 // @evidence recovered/frontend/app/assets/messages-ByIkiGdI.js#exports=groups,skinTones,subgroups
 
-import { rendererRuntimeAssetUrl } from "../../../../../production/runtime-assets";
-
 // @evidence src/app/dist/renderer/assets/compact-C8-lyxgK.js#bytes=571490#sha256=a163448dab9eeeb2eba2e743625ae925eac5d2d70f919c3396897c5f042ba39c
 // @evidence src/app/dist/renderer/assets/messages-ByIkiGdI.js#bytes=5892#sha256=982d1fb9ed0b0f95155c30c327738f055e2c1a512cef219f7c20d49b978f2628
 // @evidence src/app/dist/renderer/assets/iamcal-CEyh6ide.js#bytes=47901#sha256=69f6164afb9487768f9e9da137005c546a472059d24b7244ed1b90320fcee9f1
@@ -15,29 +13,6 @@ import { rendererRuntimeAssetUrl } from "../../../../../production/runtime-asset
 // @evidence recovered/frontend/app/assets/messages-ByIkiGdI.js#same-bytes-as=src/app/dist/renderer/assets/messages-ByIkiGdI.js
 // @evidence recovered/frontend/app/assets/iamcal-CEyh6ide.js#same-bytes-as=src/app/dist/renderer/assets/iamcal-CEyh6ide.js
 // @evidence recovered/frontend/app/assets/emojibase-Bc-csq5x.js#same-bytes-as=src/app/dist/renderer/assets/emojibase-Bc-csq5x.js
-
-export const EMOJI_RUNTIME_ASSETS = {
-  compact: {
-    file: "compact-C8-lyxgK.js",
-    bytes: 571490,
-    sha256: "a163448dab9eeeb2eba2e743625ae925eac5d2d70f919c3396897c5f042ba39c",
-  },
-  messages: {
-    file: "messages-ByIkiGdI.js",
-    bytes: 5892,
-    sha256: "982d1fb9ed0b0f95155c30c327738f055e2c1a512cef219f7c20d49b978f2628",
-  },
-  iamcal: {
-    file: "iamcal-CEyh6ide.js",
-    bytes: 47901,
-    sha256: "69f6164afb9487768f9e9da137005c546a472059d24b7244ed1b90320fcee9f1",
-  },
-  emojibase: {
-    file: "emojibase-Bc-csq5x.js",
-    bytes: 170339,
-    sha256: "0a5a09ad69567774c7988c1e85a77f5a406d66ffff0b0bdbcb55e14e2a144ba2",
-  },
-} as const;
 
 export interface RawEmojiRecord {
   readonly group?: number;
@@ -217,16 +192,12 @@ export function searchEmoji(
   return [...exact, ...secondary].slice(0, Math.max(0, limit));
 }
 
-async function importEmojiAsset(file: string): Promise<unknown> {
-  return import(/* @vite-ignore */ rendererRuntimeAssetUrl(file));
-}
-
 export async function loadShippedEmojiChunks(): Promise<EmojiChunkModules> {
   const [compact, messages, iamcal, emojibase] = await Promise.all([
-    importEmojiAsset(EMOJI_RUNTIME_ASSETS.compact.file),
-    importEmojiAsset(EMOJI_RUNTIME_ASSETS.messages.file),
-    importEmojiAsset(EMOJI_RUNTIME_ASSETS.iamcal.file),
-    importEmojiAsset(EMOJI_RUNTIME_ASSETS.emojibase.file),
+    import("emojibase-data/en/compact.json"),
+    import("emojibase-data/en/messages.json"),
+    import("emojibase-data/en/shortcodes/iamcal.json"),
+    import("emojibase-data/en/shortcodes/emojibase.json"),
   ]);
   return {
     compact: compact as EmojiDataModule,

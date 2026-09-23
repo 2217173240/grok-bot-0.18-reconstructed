@@ -38,23 +38,23 @@ function mcpResult(value: unknown): Record<string, unknown> {
 }
 
 export async function createRoutedMcpBridge(deps: {
-  readonly listTools: () => Promise<unknown>;
-  readonly callTool: (args: Tool & { readonly args: unknown; readonly toolCallId: string }) => Promise<unknown>;
+  readonly listTools: (signal: AbortSignal) => Promise<unknown>;
+  readonly callTool: (args: Tool & { readonly args: unknown; readonly toolCallId: string; readonly signal: AbortSignal }) => Promise<unknown>;
 }): Promise<{ readonly url: string; close(): Promise<void> }> {
   const secret = randomUUID();
   let tools = new Map<string, z.infer<typeof RoutedToolSchema>>();
   const mcp = new Server({ name: "grok-bot-plugins", version: "1" }, { capabilities: { tools: { listChanged: false } } });
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => {
-    const discovered = z.array(RoutedToolSchema).parse(await deps.listTools());
+  mcp.setRequestHandler(ListToolsRequestSchema, async (_request, extra) => {
+    const discovered = z.array(RoutedToolSchema).parse(await deps.listTools(extra.signal));
     const next = new Map(discovered.map(tool => [tool.name, tool]));
     if (next.size !== discovered.length) throw new Error("Duplicate routed MCP tool names");
     tools = next;
     return { tools: discovered.map(tool => ({ name: tool.name, description: tool.description ?? `${tool.toolName} via ${tool.providerIdentifier}`, inputSchema: tool.inputSchema })) };
   });
-  mcp.setRequestHandler(CallToolRequestSchema, async request => {
+  mcp.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const selected = tools.get(request.params.name);
     if (selected == null) throw new McpError(ErrorCode.InvalidParams, `Unknown Grok Bot plugin tool: ${request.params.name}`);
-    return mcpResult(await deps.callTool({ name: selected.name, providerIdentifier: selected.providerIdentifier, toolName: selected.toolName, args: request.params.arguments ?? {}, toolCallId: randomUUID() }));
+    return mcpResult(await deps.callTool({ name: selected.name, providerIdentifier: selected.providerIdentifier, toolName: selected.toolName, args: request.params.arguments ?? {}, toolCallId: randomUUID(), signal: extra.signal }));
   });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
   await mcp.connect(adaptSdkTransport(transport));

@@ -20,15 +20,5 @@
     { "file": "tableau-DMgl1MR0.png", "sha256": "e991eb03b713a7695f8a925ba2918c132505781556c907ebf123c2cd3e25cb55" },
     { "file": "workday-DI2a8j1o.svg", "sha256": "a09892f94ee5990e0f16b41852eca1a115de9b80264e7607e8055b4c1a9caeca" },
     { "file": "zoominfo-kXQt8h27.png", "sha256": "672af7a026b514c043d0dc611aea8ac8bff8e17c56e44027b0a04a6316206142" }
-  ],
-  "immutableAssets": [
-    { "file": "compact-C8-lyxgK.js", "bytes": 571490, "sha256": "a163448dab9eeeb2eba2e743625ae925eac5d2d70f919c3396897c5f042ba39c" },
-    { "file": "messages-ByIkiGdI.js", "bytes": 5892, "sha256": "982d1fb9ed0b0f95155c30c327738f055e2c1a512cef219f7c20d49b978f2628" },
-    { "file": "iamcal-CEyh6ide.js", "bytes": 47901, "sha256": "69f6164afb9487768f9e9da137005c546a472059d24b7244ed1b90320fcee9f1" },
-    { "file": "emojibase-Bc-csq5x.js", "bytes": 170339, "sha256": "0a5a09ad69567774c7988c1e85a77f5a406d66ffff0b0bdbcb55e14e2a144ba2" },
-    { "file": "pdf-WLgSwHwh.js", "sha256": "6bb712dd774816db63697c84bc45a2bec722f0906629398dbfcea78a579cb4f2" },
-    { "file": "pdf.worker.min-qwK7q_zL.mjs", "sha256": "dbcae78a691b3c501508f74b774c6066a57a14a76cefdc9e25ad86b651bb75d5" },
-    { "file": "xlsx-CNerDvZX.js", "sha256": "88bd58aabec374fbb50e18e1f271a15d6fca247297e8af73db4c368ae0408a9c" },
-    { "file": "katex-DHMw6HUq.js", "bytes": 259053, "sha256": "8c143536a1933d1f96d975b0e7dcbd6057bb0885fea799852896530b3234d08a" }
   ]
 }

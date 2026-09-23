@@ -17,18 +17,13 @@ import {
 // @evidence src/app/dist/renderer/assets/index-UbX-y3il.js#byteOffset=4708351 (file-chip/table preview entry)
 // @evidence src/app/dist/renderer/assets/xlsx-CNerDvZX.js#SHA256=88bd58aabec374fbb50e18e1f271a15d6fca247297e8af73db4c368ae0408a9c
 
-export const XLSX_RUNTIME_ASSET = "xlsx-CNerDvZX.js";
-
 export interface SpreadsheetRuntimeModule {
   readonly read: SpreadsheetRuntime["read"];
   readonly utils: SpreadsheetRuntime["utils"];
 }
 
 export async function loadShippedSpreadsheetRuntime(): Promise<SpreadsheetRuntime> {
-  const base = import.meta.env?.DEV === true && typeof window !== "undefined"
-    ? new URL("/upstream/assets/", window.location.href)
-    : new URL("./", import.meta.url);
-  const module = await import(/* @vite-ignore */ new URL(XLSX_RUNTIME_ASSET, base).href) as SpreadsheetRuntimeModule;
+  const module = await import("xlsx") as SpreadsheetRuntimeModule;
   if (typeof module.read !== "function" || typeof module.utils?.sheet_to_json !== "function") throw new Error("The shipped spreadsheet parser is unavailable.");
   return module;
 }

@@ -9,7 +9,7 @@ import { Value, type JsonValue } from "@bufbuild/protobuf";
 import { mcpExecutorResource, mcpStateExecutorResource } from "../../../packages/agent-exec/mcp.js";
 import type { ResourceAccessor } from "../../../packages/agent-exec/resource-provider.js";
 import type { RemoteExecManager } from "../../../packages/agent-exec/remote.js";
-import { createContext } from "../../../packages/context/core.js";
+import { createContext, type Context } from "../../../packages/context/core.js";
 import { recordMcpExecErrorClass } from "../../../shared/node/mcp/mcp-diagnostics.js";
 import { toJsonArgs } from "../../../shared/node/mcp/mcp-validation.js";
 import {
@@ -45,7 +45,7 @@ export interface BoxMcpExecPort {
     toolCount: number;
     tools: Array<BoxMcpTool & { clientKey: string }>;
   }>>;
-  executeTool(args: McpArgs): Promise<McpResult>;
+  executeTool(args: McpArgs, context?: Context): Promise<McpResult>;
 }
 
 export function errorLabel(error: unknown): string {
@@ -122,10 +122,12 @@ export function createBoxSandMcpExec(box: CapableBox): BoxMcpExecPort {
           }))
         }));
     },
-    async executeTool(args) {
+    async executeTool(args, context) {
+      const runContext = context ?? ctx;
       try {
-        const accessor = await boxMcpResourceAccessor(box, ctx) as McpAccessor;
-        return await accessor.get(mcpExecutorResource).execute(ctx, toMcpArgs(args));
+        if (runContext.signal.aborted) throw runContext.reason ?? new Error("MCP tool call canceled.");
+        const accessor = await boxMcpResourceAccessor(box, runContext) as McpAccessor;
+        return await accessor.get(mcpExecutorResource).execute(runContext, toMcpArgs(args));
       } catch (error) {
         recordMcpExecErrorClass(args.toolCallId, error);
         return errorResult(

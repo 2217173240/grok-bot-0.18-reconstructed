@@ -241,6 +241,9 @@ interface StreamCollectionOptions {
   readonly emitToolCallEvents?: boolean;
   readonly executionToolMap?: Record<string, ToolLike>;
   readonly acceptedUnadvertisedToolNames?: readonly string[];
+  readonly hostToolExecution?: {
+    readonly execute: (call: { readonly name: string; readonly args: unknown; readonly toolCallId: string; readonly signal: AbortSignal }) => Promise<{ readonly content: readonly Record<string, unknown>[]; readonly isError: boolean }>;
+  };
 }
 
 function toolNameForLogging(toolName: string, toolMap: Record<string, ToolLike>): string {
@@ -910,7 +913,7 @@ function streamModelAndCollectToolCalls(
     ctx,
     interactionHandler.invocationId,
     toolDefinitions,
-    { acceptedUnadvertisedToolNames },
+    { acceptedUnadvertisedToolNames, hostToolExecution: options?.hostToolExecution },
   );
   const settledResultResponse = result.response.then(
     response => ({ didReject: false as const, response }),
@@ -1295,6 +1298,31 @@ function executeToolStream(
     modelVisibleTools as ToolLike[],
   );
   const renderProps = { allTools: extractToolMetadataMap(executableTools) };
+  const hostToolExecution = {
+    execute: async (call: { readonly name: string; readonly args: unknown; readonly toolCallId: string; readonly signal: AbortSignal }) => {
+      if (!modelVisibleTools.some(tool => tool.name === call.name)) throw new Error(`Host tool is not visible to this model: ${call.name}`);
+      const [callCtx, cancel] = ctx.withCancel();
+      const abort = () => cancel(call.signal.reason);
+      if (call.signal.aborted) abort();
+      else call.signal.addEventListener("abort", abort, { once: true });
+      try {
+        if (callCtx.canceled) throw callCtx.reason ?? new Error("Host tool call canceled.");
+        const descriptor = resolveEffectiveToolCallDescriptor({ toolCallId: call.toolCallId, toolName: call.name, args: call.args }, toolExecutionSet);
+        const result = await executeDeferredToolCall(
+          callCtx, descriptor, toolMap, interactionHandler, extraT, recordToolCallResult,
+          renderProps, undefined, Promise.resolve(call.args), directDynamicToolNames,
+        );
+        const part = Array.isArray(result.content) ? result.content.find((item: unknown) => typeof item === "object" && item !== null && (item as { type?: unknown }).type === "tool-result") as Record<string, unknown> | undefined : undefined;
+        const experimental = part?.experimental_content;
+        const content = Array.isArray(experimental) ? experimental as Record<string, unknown>[] : [{ type: "text", text: String(part?.result ?? "") }];
+        const providerOptions = result.providerOptions as { cursor?: { highLevelToolCallResult?: { isError?: boolean } } } | undefined;
+        return { content, isError: providerOptions?.cursor?.highLevelToolCallResult?.isError === true };
+      } finally {
+        call.signal.removeEventListener("abort", abort);
+        cancel();
+      }
+    },
+  };
   const streamResult = streamModelAndCollectToolCalls(
     ctx,
     executor,
@@ -1305,6 +1333,7 @@ function executeToolStream(
     {
       executionToolMap: toolMap,
       acceptedUnadvertisedToolNames: [...directDynamicToolNames],
+      hostToolExecution,
     },
   );
   const responsePromise = (async (): Promise<ModelResponse> => {

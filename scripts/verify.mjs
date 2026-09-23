@@ -16,6 +16,7 @@ import { prepareReconstructedElectronMainArtifactFallback } from "./lib/build-as
 import { resolvePackagedAppArtifacts } from "./lib/packaged-app.mjs";
 import { capture, run } from "./lib/process.mjs";
 import { SYSTEM_TOOLS } from "./lib/system-tools.mjs";
+import { verifySourceOnlyPackage } from "./lib/verify-source-only.mjs";
 
 function readAppArgument(argv) {
   const index = argv.indexOf("--app");
@@ -46,6 +47,14 @@ async function walkFiles(root, current = root) {
     else if (entry.isFile()) files.push(path.relative(root, target).split(path.sep).join("/"));
   }
   return files.sort();
+}
+
+await requirePath(builtAsar);
+const packageKind = JSON.parse(extractFile(builtAsar, "dist/reconstruction-build.json").toString("utf8")).buildKind;
+if (packageKind === "source-only-components") {
+  const result = await verifySourceOnlyPackage(verifiedApp);
+  console.log(`Verified source-only macOS package ${result.appPath}: ${result.outputCount} hashed outputs, Electron ${result.electron}, ${result.runtimeCount} runtime components.`);
+  process.exit(0);
 }
 
 const electronMain = await readFile(path.join(sourceAppDir, "dist", "electron-main", "main.cjs"), "utf8");

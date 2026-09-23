@@ -398,9 +398,12 @@ export function createMcpToolsDiscovery(
   }
 
   async function executeToolRaw(
+    ctx: unknown,
     args: any,
     auditIdentity: any,
   ): Promise<McpResultLike> {
+    const signal = (ctx as { signal?: AbortSignal } | undefined)?.signal;
+    if (signal?.aborted) throw signal.reason ?? new Error("MCP tool call canceled.");
     if (!isLocalAdminEnabled() && await isHttpProvider(args.providerIdentifier)) {
       const result = await core.backendMcpExec.executeTool({
         serverIdentifier: args.providerIdentifier,
@@ -408,7 +411,7 @@ export function createMcpToolsDiscovery(
         args: toJsonArgs(args.args),
         toolCallId: args.toolCallId,
         agentId: auditIdentity?.agentId,
-      });
+      }, signal == null ? undefined : { signal });
       reportFirstCall(args.providerIdentifier, result.result.case !== "error");
       return result;
     }
@@ -424,7 +427,7 @@ export function createMcpToolsDiscovery(
           `Could not load MCP servers onto Grok Bot's computer: ${errorMessage(error)}`,
         );
       }
-      return boxMcpExec.executeTool(args);
+      return boxMcpExec.executeTool(args, ctx);
     }
     return resultFactory.error(
       `MCP server "${args.providerIdentifier}" is not available here. HTTP/SSE servers execute on the backend and stdio servers run on Grok Bot's computer; this server is neither reachable nor supported in this context.`,
@@ -479,7 +482,7 @@ export function createMcpToolsDiscovery(
       return "unknown";
     },
     async executeTool(
-      _ctx: unknown,
+      ctx: unknown,
       args: any,
       auditIdentity: any,
     ): Promise<McpResultLike> {
@@ -497,7 +500,7 @@ export function createMcpToolsDiscovery(
           `Tool "${args.toolName}" is disabled for "${displayName}".`,
         );
       }
-      const raw = await executeToolRaw(args, auditIdentity);
+      const raw = await executeToolRaw(ctx, args, auditIdentity);
       return applyCustomInstructionsToMcpResult(
         raw,
         displayName,

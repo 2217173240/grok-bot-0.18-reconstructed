@@ -6,11 +6,10 @@
 
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { AttachmentBytesResult } from "../../../contracts/desktop-bridge";
 
-export const PDFJS_ASSET = "/upstream/assets/pdf-WLgSwHwh.js";
-export const PDF_WORKER_FILENAME = "pdf.worker.min-qwK7q_zL.mjs";
-export const PDF_WORKER_ASSET = `/upstream/assets/${PDF_WORKER_FILENAME}`;
+export const PDF_WORKER_ASSET = pdfWorkerUrl;
 export const PDFJS_VERSION = "5.4.296";
 export const PDFJS_BUILD = "f56dc8601";
 export const PDF_PREVIEW_BYTE_CAP = 25 * 1024 * 1024;
@@ -22,9 +21,8 @@ function documentBaseUrl(): string {
   return "http://localhost/";
 }
 
-export function resolvePdfWorkerUrl(runtimeAssetUrl = PDFJS_ASSET, baseUrl = documentBaseUrl()): string {
-  const runtimeUrl = new URL(runtimeAssetUrl, baseUrl);
-  return new URL(PDF_WORKER_FILENAME, runtimeUrl).href;
+export function resolvePdfWorkerUrl(workerAssetUrl = PDF_WORKER_ASSET, baseUrl = documentBaseUrl()): string {
+  return new URL(workerAssetUrl, baseUrl).href;
 }
 
 interface PdfViewport {
@@ -58,10 +56,6 @@ interface PdfRuntime {
   getDocument(options: { data: Uint8Array; isEvalSupported: false; disableAutoFetch: true }): { promise: Promise<PdfDocument> };
 }
 
-interface PdfRuntimeModule extends Partial<PdfRuntime> {
-  readonly default?: Partial<PdfRuntime>;
-}
-
 export type PdfRuntimeLoader = () => Promise<PdfRuntime>;
 export type PdfBytesResolver = (source: string, maxBytes: number) => Promise<AttachmentBytesResult | null>;
 
@@ -79,16 +73,12 @@ export type PdfDocumentSnapshot =
 let workerConfigured = false;
 
 export async function loadShippedPdfRuntime(): Promise<PdfRuntime> {
-  const module = await import(/* @vite-ignore */ PDFJS_ASSET) as PdfRuntimeModule;
-  const runtime = module.default?.getDocument == null ? module : module.default;
-  if (runtime.getDocument == null || runtime.GlobalWorkerOptions == null || runtime.TextLayer == null) {
-    throw new Error("Shipped PDF runtime is unavailable.");
-  }
+  const runtime = await import("pdfjs-dist");
   if (!workerConfigured) {
-    runtime.GlobalWorkerOptions.workerSrc = resolvePdfWorkerUrl(PDFJS_ASSET, import.meta.url);
+    runtime.GlobalWorkerOptions.workerSrc = resolvePdfWorkerUrl(PDF_WORKER_ASSET, import.meta.url);
     workerConfigured = true;
   }
-  return runtime as PdfRuntime;
+  return runtime as unknown as PdfRuntime;
 }
 
 function snapshotForBytes(result: AttachmentBytesResult | null): PdfBytesSnapshot {

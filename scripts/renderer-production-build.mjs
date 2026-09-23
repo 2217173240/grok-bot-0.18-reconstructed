@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +43,16 @@ const KATEX_FONT_HASHES = Object.freeze({
   "KaTeX_Size4-Regular.woff2": "a4af7d414440a1c1790825cfb700cf9cf43b0f2c4b04f0ebc523011ad9853ec0",
   "KaTeX_Typewriter-Regular.woff2": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b",
 });
+const CLEAN_VENDOR_DYNAMIC_ENTRIES = Object.freeze([
+  "../node_modules/emojibase-data/en/compact.json",
+  "../node_modules/emojibase-data/en/messages.json",
+  "../node_modules/emojibase-data/en/shortcodes/iamcal.json",
+  "../node_modules/emojibase-data/en/shortcodes/emojibase.json",
+  "../node_modules/katex/dist/katex.mjs",
+  "../node_modules/mermaid/dist/mermaid.core.mjs",
+  "../node_modules/pdfjs-dist/build/pdf.mjs",
+  "../node_modules/xlsx/xlsx.mjs",
+]);
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -75,7 +84,7 @@ async function readJson(relative) {
   return JSON.parse(await readFile(path.join(repoRoot, relative), "utf8"));
 }
 
-async function validateBootstrapEvidence() {
+export async function auditHistoricalRendererBootstrapAnchors() {
   const catalog = await readJson("frontend/manifests/renderer-bootstrap.json");
   const artifact = await readFile(path.join(repoRoot, catalog.artifact));
   const anchors = [
@@ -93,11 +102,36 @@ async function validateBootstrapEvidence() {
   return catalog;
 }
 
+async function validateBootstrapSourceCatalog() {
+  const catalog = await readJson("frontend/manifests/renderer-bootstrap.json");
+  if (catalog.schemaVersion !== 1 || catalog.mount?.rootId !== "root" || catalog.runtimeAcquisition?.desktop?.required !== true || catalog.runtimeAcquisition?.coordinatorPort?.required !== true) {
+    throw new Error("Checked renderer bootstrap catalog is incomplete.");
+  }
+  if (catalog.expectedFeatureSurfaces !== 5 || catalog.expectedShippedRoutes !== 11 || !Array.isArray(catalog.lazyBoundaries) || catalog.lazyBoundaries.length !== 5 || catalog.unsupportedLazyChunks?.length !== 0) {
+    throw new Error("Checked renderer bootstrap feature boundaries are incomplete.");
+  }
+  const lazyBoundaries = catalog.lazyBoundaries.map(({ id, cleanDynamicEntry }) => ({ id, cleanDynamicEntry }));
+  if (lazyBoundaries.some(({ id, cleanDynamicEntry }) => typeof id !== "string" || id.length === 0 || typeof cleanDynamicEntry !== "string" || !cleanDynamicEntry.startsWith("src/recovered/"))) {
+    throw new Error("Checked renderer bootstrap source entries are invalid.");
+  }
+  if (new Set(lazyBoundaries.map(({ id }) => id)).size !== lazyBoundaries.length || new Set(lazyBoundaries.map(({ cleanDynamicEntry }) => cleanDynamicEntry)).size !== lazyBoundaries.length) {
+    throw new Error("Checked renderer bootstrap source entries are duplicated.");
+  }
+  return {
+    validation: "source-catalog-and-emitted-output",
+    source: rendererProductionEntrypoint,
+    mountRootId: catalog.mount.rootId,
+    runtimeAcquisition: ["desktop", "coordinatorPort"],
+    lazyBoundaries,
+  };
+}
+
 async function validateCleanGraph() {
   const result = await esbuild({
     absWorkingDir: repoRoot,
     bundle: true,
     entryPoints: [path.join(repoRoot, rendererProductionEntrypoint)],
+    external: ["*.mjs?url"],
     format: "esm",
     loader: { ".css": "empty", ".woff2": "dataurl" },
     logLevel: "silent",
@@ -108,47 +142,50 @@ async function validateCleanGraph() {
   const inputs = Object.keys(result.metafile.inputs).map(input => normalize(path.relative(repoRoot, path.resolve(repoRoot, input)))).sort();
   const forbiddenInputs = inputs.filter(input => input === "src/app" || input.startsWith("src/app/") || input.startsWith("recovered/source-capsules/"));
   if (forbiddenInputs.length > 0) throw new Error(`Clean renderer graph reaches immutable evidence: ${forbiddenInputs.join(", ")}`);
-  return { entrypoint: rendererProductionEntrypoint, inputs, forbiddenInputs };
+  const requiredSourceInputs = [rendererProductionEntrypoint, "frontend/src/production/bootstrap.tsx", "frontend/src/production/ProductionRenderer.tsx"];
+  const missingSourceInputs = requiredSourceInputs.filter(input => !inputs.includes(input));
+  if (missingSourceInputs.length > 0) throw new Error(`Clean renderer graph misses bootstrap source: ${missingSourceInputs.join(", ")}`);
+  const workerPath = "node_modules/pdfjs-dist/build/pdf.worker.min.mjs";
+  const workerBytes = await readFile(path.join(repoRoot, workerPath));
+  return { entrypoint: rendererProductionEntrypoint, inputs, forbiddenInputs, externalAssets: [{ path: workerPath, bytes: workerBytes.byteLength, sha256: sha256(workerBytes) }] };
 }
 
 async function validateEvidenceClosure() {
-  if (!existsSync(path.join(repoRoot, "recovered", "frontend", "reports", "imports.tsv"))) {
-    const closure = await readJson("manifests/reconstruction/renderer-closure.json");
-    if (closure.schemaVersion !== 1 || closure.verdict?.canReplaceShippedBundleWithoutFeatureLoss !== true) {
-      throw new Error("Checked renderer closure does not authorize the clean source renderer.");
-    }
-    if (closure.summary?.high !== 0 || closure.summary?.findings !== 0 || closure.summary?.composedFeatureSurfaces !== 5 || closure.summary?.shippedFeatureRoutes !== 11) {
-      throw new Error("Checked renderer closure is incomplete.");
-    }
-    if (!Array.isArray(closure.routes) || closure.routes.length !== 11 || closure.routes.some((route) => route.reviewed !== true || route.cleanComposition !== "present")) {
-      throw new Error("Checked renderer routes are incomplete.");
-    }
-    const uiCatalog = await readJson("frontend/manifests/ui-evidence-anchors.json");
-    if (uiCatalog.schemaVersion !== 1 || !Array.isArray(uiCatalog.entries) || uiCatalog.entries.length === 0) {
-      throw new Error("Checked renderer UI catalog is invalid.");
-    }
-    const cleanPaths = new Set();
-    let anchorCount = 0;
-    for (const entry of uiCatalog.entries) {
-      if (typeof entry.cleanPath !== "string" || cleanPaths.has(entry.cleanPath) || !Array.isArray(entry.anchors) || entry.anchors.length === 0) {
-        throw new Error("Checked renderer UI catalog has a missing, duplicate, or empty source entry.");
-      }
-      cleanPaths.add(entry.cleanPath);
-      await readFile(path.join(repoRoot, entry.cleanPath));
-      for (const anchor of entry.anchors) {
-        if (typeof anchor.value !== "string" || anchor.value.length === 0 || typeof anchor.artifact !== "string") {
-          throw new Error(`Checked renderer UI catalog has an invalid anchor: ${entry.cleanPath}`);
-        }
-        // Recovery registries are historical annotation sources and are
-        // intentionally omitted from the clean publication tree. Checked-in
-        // publication registries remain live build inputs and must exist.
-        if (anchor.registry != null && !anchor.registry.startsWith("recovered/")) await readFile(path.join(repoRoot, anchor.registry));
-        anchorCount += 1;
-      }
-    }
-    if (anchorCount !== closure.summary.uiAnchors) throw new Error("Checked renderer UI anchor count differs from the closure report.");
-    return { closure, ui: { summary: { catalogErrors: 0, findings: 0 }, source: "checked-publication-catalog" } };
+  const closure = await readJson("manifests/reconstruction/renderer-closure.json");
+  if (closure.schemaVersion !== 1 || closure.verdict?.canReplaceShippedBundleWithoutFeatureLoss !== true) {
+    throw new Error("Checked renderer closure does not authorize the clean source renderer.");
   }
+  if (closure.summary?.high !== 0 || closure.summary?.findings !== 0 || closure.summary?.composedFeatureSurfaces !== 5 || closure.summary?.shippedFeatureRoutes !== 11) {
+    throw new Error("Checked renderer closure is incomplete.");
+  }
+  if (!Array.isArray(closure.routes) || closure.routes.length !== 11 || closure.routes.some((route) => route.reviewed !== true || route.cleanComposition !== "present")) {
+    throw new Error("Checked renderer routes are incomplete.");
+  }
+  const uiCatalog = await readJson("frontend/manifests/ui-evidence-anchors.json");
+  if (uiCatalog.schemaVersion !== 1 || !Array.isArray(uiCatalog.entries) || uiCatalog.entries.length === 0) {
+    throw new Error("Checked renderer UI catalog is invalid.");
+  }
+  const cleanPaths = new Set();
+  let anchorCount = 0;
+  for (const entry of uiCatalog.entries) {
+    if (typeof entry.cleanPath !== "string" || cleanPaths.has(entry.cleanPath) || !Array.isArray(entry.anchors) || entry.anchors.length === 0) {
+      throw new Error("Checked renderer UI catalog has a missing, duplicate, or empty source entry.");
+    }
+    cleanPaths.add(entry.cleanPath);
+    await readFile(path.join(repoRoot, entry.cleanPath));
+    for (const anchor of entry.anchors) {
+      if (typeof anchor.value !== "string" || anchor.value.length === 0 || typeof anchor.artifact !== "string") {
+        throw new Error(`Checked renderer UI catalog has an invalid anchor: ${entry.cleanPath}`);
+      }
+      if (anchor.registry != null && !anchor.registry.startsWith("recovered/")) await readFile(path.join(repoRoot, anchor.registry));
+      anchorCount += 1;
+    }
+  }
+  if (anchorCount !== closure.summary.uiAnchors) throw new Error("Checked renderer UI anchor count differs from the closure report.");
+  return { closure, ui: { summary: { catalogErrors: 0, findings: 0 }, source: "checked-publication-catalog" } };
+}
+
+export async function auditHistoricalRendererEvidenceClosure() {
   const [closure, ui] = await Promise.all([auditRendererClosure(repoRoot), auditUiProvenance(repoRoot)]);
   if (!closure.verdict.canReplaceShippedBundleWithoutFeatureLoss || closure.summary.high !== 0 || closure.summary.findings !== 0) {
     throw new Error(`Renderer closure is not green: ${closure.summary.high} high / ${closure.summary.findings} findings`);
@@ -164,6 +201,9 @@ async function validateEvidenceClosure() {
 
 export async function copyRuntimeAssets(rendererRoot) {
   const manifest = await readJson("frontend/manifests/renderer-runtime-assets.json");
+  if (manifest.artifactRoot !== "frontend/assets") {
+    throw new Error("Source-only renderer assets must come from tracked frontend/assets");
+  }
   const frontendRoot = path.join(repoRoot, "frontend", "src");
   const usedAssets = new Set();
   for (const relative of await walk(frontendRoot)) {
@@ -180,7 +220,7 @@ export async function copyRuntimeAssets(rendererRoot) {
   const outputAssets = path.join(rendererRoot, "assets");
   await mkdir(outputAssets, { recursive: true });
   const copied = [];
-  for (const asset of [...manifest.assets, ...(manifest.immutableAssets ?? [])]) {
+  for (const asset of manifest.assets) {
     const source = path.join(repoRoot, manifest.artifactRoot, asset.file);
     const bytes = await readFile(source);
     const record = validateRuntimeAssetBytes(asset, bytes);
@@ -223,46 +263,6 @@ export async function copyKatexRuntimeAssets(rendererRoot) {
   return { version: KATEX_VERSION, assets: copied, stylesheet: "assets/katex/katex.css" };
 }
 
-export async function rewritePdfAssetReferences(rendererRoot) {
-  const moduleReference = "/upstream/assets/pdf-WLgSwHwh.js";
-  const workerReference = "/upstream/assets/pdf.worker.min-qwK7q_zL.mjs";
-  const counts = { [moduleReference]: 0, [workerReference]: 0 };
-  for (const relative of await walk(rendererRoot)) {
-    if (!relative.endsWith(".js")) continue;
-    const target = path.join(rendererRoot, relative);
-    const original = await readFile(target, "utf8");
-    let rewritten = original;
-    const moduleOccurrences = rewritten.split(moduleReference).length - 1;
-    if (moduleOccurrences > 0) {
-      counts[moduleReference] += moduleOccurrences;
-      rewritten = rewritten.split(moduleReference).join("./pdf-WLgSwHwh.js");
-    }
-    const workerBinding = rewritten.match(/(?:^|[,;])\s*([A-Za-z_$][\w$]*)=["']pdf\.worker\.min-qwK7q_zL\.mjs["']/);
-    if (workerBinding != null) {
-      const workerVariable = workerBinding[1];
-      const workerPattern = new RegExp("`/upstream/assets/\\$\\{" + workerVariable + "\\}`", "g");
-      const workerOccurrences = rewritten.match(workerPattern)?.length ?? 0;
-      if (workerOccurrences > 0) {
-        counts[workerReference] += workerOccurrences;
-        rewritten = rewritten.replace(workerPattern, "`./${" + workerVariable + "}`");
-      }
-    }
-    if (counts[workerReference] === 0) {
-      if (rewritten.includes("pdf.worker.min-qwK7q_zL.mjs")) counts[workerReference] += 1;
-    }
-    if (rewritten !== original) await writeFile(target, rewritten);
-  }
-  for (const [from, count] of Object.entries(counts)) {
-    if (count === 0) throw new Error(`Renderer PDF reference was not emitted: ${from}`);
-  }
-  return {
-    replacements: {
-      [moduleReference]: { to: "./pdf-WLgSwHwh.js", count: counts[moduleReference] },
-      [workerReference]: { to: "./pdf.worker.min-qwK7q_zL.mjs", count: counts[workerReference] },
-    },
-  };
-}
-
 /**
  * Vite can describe the HTML entry as its own dynamic import when manifest
  * generation sees the HTML shell. It is not a JavaScript lazy boundary and
@@ -296,7 +296,7 @@ export async function buildProductionRenderer({ outputRoot }) {
   if (typeof outputRoot !== "string" || outputRoot.length === 0) throw new TypeError("buildProductionRenderer requires outputRoot");
   const rendererRoot = path.join(outputRoot, rendererProductionOutput);
   const [bootstrap, graph, evidence] = await Promise.all([
-    validateBootstrapEvidence(),
+    validateBootstrapSourceCatalog(),
     validateCleanGraph(),
     validateEvidenceClosure(),
   ]);
@@ -326,11 +326,14 @@ export async function buildProductionRenderer({ outputRoot }) {
   });
   const assets = await copyRuntimeAssets(rendererRoot);
   const katex = await copyKatexRuntimeAssets(rendererRoot);
-  const pdfAssetRewrite = await rewritePdfAssetReferences(rendererRoot);
   const viteManifest = normalizeRendererManifestDynamicImports(JSON.parse(await readFile(path.join(rendererRoot, ".vite", "manifest.json"), "utf8")));
+  const html = await readFile(path.join(rendererRoot, "index.html"), "utf8");
+  if (!html.includes(`<div id="${bootstrap.mountRootId}"></div>`) || viteManifest["index.html"]?.isEntry !== true) {
+    throw new Error("Clean renderer HTML does not mount the checked source entrypoint.");
+  }
   await writeFile(path.join(rendererRoot, ".vite", "manifest.json"), `${JSON.stringify(viteManifest, null, 2)}\n`);
   const emittedLazyEntries = [...(viteManifest["index.html"]?.dynamicImports ?? [])].sort();
-  const expectedLazyEntries = bootstrap.lazyBoundaries.map(boundary => boundary.cleanDynamicEntry).sort();
+  const expectedLazyEntries = [...bootstrap.lazyBoundaries.map(boundary => boundary.cleanDynamicEntry), ...CLEAN_VENDOR_DYNAMIC_ENTRIES].sort();
   if (JSON.stringify(emittedLazyEntries) !== JSON.stringify(expectedLazyEntries)) {
     throw new Error(`Renderer lazy boundaries drifted; expected ${expectedLazyEntries.join(",")}, emitted ${emittedLazyEntries.join(",")}`);
   }
@@ -351,7 +354,6 @@ export async function buildProductionRenderer({ outputRoot }) {
       uiSummary: evidence.ui.summary,
       bootstrap,
       emittedLazyEntries,
-      pdfAssetRewrite,
     },
     assets,
     katex,

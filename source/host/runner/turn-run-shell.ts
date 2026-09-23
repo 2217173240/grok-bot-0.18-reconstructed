@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { createContext } from "../../packages/context/core.js";
 import type { Context } from "../../packages/context/core.js";
 import type { PrivacyMode } from "../../packages/redaction/privacy-mode.js";
 import { SAND_SUMMARIZATION_MODEL_ID } from "../../shared/agents/sand-agent-model.js";
@@ -192,9 +191,17 @@ export async function createTurnAgentRunContext<ContextValue>(
   // The plugin tools live on this computer's MCP host. The CLI child fetches
   // them from a loopback bridge, so the session is given the two calls the
   // bridge needs; without them the model has no plugin tools at all.
+  const withMcpRequestContext = async <T>(signal: AbortSignal, action: (ctx: Context) => Promise<T>): Promise<T> => {
+      const [callContext, cancel] = (input.context as Context).withCancel();
+      const abort = () => cancel(signal.reason);
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+      try { return await action(callContext); }
+      finally { signal.removeEventListener("abort", abort); cancel(); }
+  };
   const mcpTools: HostMcpTools | undefined = input.mcp?.listTools == null || input.mcp.executeTool == null ? undefined : {
-    listTools: () => input.mcp!.listTools!(createContext()),
-    callTool: tool => input.mcp!.executeTool!(createContext(), tool),
+    listTools: signal => withMcpRequestContext(signal, ctx => input.mcp!.listTools!(ctx)),
+    callTool: tool => withMcpRequestContext(tool.signal, ctx => input.mcp!.executeTool!(ctx, tool)),
   };
   const agent = inferenceProvider === "cursor"
     ? input.inference.createSession(input.onRequestId, sessionOptions)
