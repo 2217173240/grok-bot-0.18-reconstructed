@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grok Bot 学习金字塔</title>
+<!-- 归档的分析文档排版版本，内容以 docs/LEARNING-PYRAMID.md 为准。
+     不引用外部资源：字体按 --sans / --mono 声明的本地字体依次回退，离线打开即完整。 -->
+
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-raise: #10141d;
+    --bg-inset: #141926;
+    --ink: #e8ecf4;
+    --ink-dim: #98a1b5;
+    --ink-faint: #6b7387;
+    --line: #242c3c;
+    --line-strong: #37415a;
+    --accent: #e5a142;
+    --accent-soft: rgba(229, 161, 66, 0.13);
+    --ok: #57c98d;
+    --ok-soft: rgba(87, 201, 141, 0.12);
+    --inf: #7fb4e8;
+    --inf-soft: rgba(127, 180, 232, 0.12);
+    --red: #e06a60;
+    --sans: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", "SF Mono", "PingFang SC", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0e14;
+      --bg-raise: #10141d;
+      --bg-inset: #141926;
+      --ink: #e8ecf4;
+      --ink-dim: #98a1b5;
+      --ink-faint: #6b7387;
+      --line: #242c3c;
+      --line-strong: #37415a;
+      --accent: #e5a142;
+      --accent-soft: rgba(229, 161, 66, 0.13);
+      --ok: #57c98d;
+      --ok-soft: rgba(87, 201, 141, 0.12);
+      --inf: #7fb4e8;
+      --inf-soft: rgba(127, 180, 232, 0.12);
+      --red: #e06a60;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0e14;
+    --bg-raise: #10141d;
+    --bg-inset: #141926;
+    --ink: #e8ecf4;
+    --ink-dim: #98a1b5;
+    --ink-faint: #6b7387;
+    --line: #242c3c;
+    --line-strong: #37415a;
+    --accent: #e5a142;
+    --accent-soft: rgba(229, 161, 66, 0.13);
+    --ok: #57c98d;
+    --ok-soft: rgba(87, 201, 141, 0.12);
+    --inf: #7fb4e8;
+    --inf-soft: rgba(127, 180, 232, 0.12);
+    --red: #e06a60;
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f9;
+    --bg-raise: #ffffff;
+    --bg-inset: #eceff5;
+    --ink: #1b2433;
+    --ink-dim: #4a556c;
+    --ink-faint: #7a8498;
+    --line: #d8dde8;
+    --line-strong: #b6c0d2;
+    --accent: #a86817;
+    --accent-soft: rgba(168, 104, 23, 0.10);
+    --ok: #1f8f5f;
+    --ok-soft: rgba(31, 143, 95, 0.10);
+    --inf: #3a6ea8;
+    --inf-soft: rgba(58, 110, 168, 0.10);
+    --red: #c04a40;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.7;
+    font-size: 15.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 28px; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+  code, .mono { font-family: var(--mono); font-size: 0.86em; }
+  code {
+    background: var(--bg-inset);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  ::selection { background: var(--accent-soft); }
+
+  /* ── hero ── */
+  header {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--accent-soft), transparent 60%);
+    padding: 64px 0 48px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "0x18";
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(30px, 5vw, 44px);
+    line-height: 1.15;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  h1 .accent { color: var(--accent); }
+  .lede {
+    font-size: 17px;
+    color: var(--ink-dim);
+    max-width: 62ch;
+    margin: 0 0 34px;
+    text-wrap: pretty;
+  }
+  .thesis {
+    border: 1px solid var(--line-strong);
+    border-left: 4px solid var(--accent);
+    background: var(--bg-raise);
+    border-radius: 6px;
+    padding: 20px 24px;
+    font-size: 16.5px;
+    line-height: 1.8;
+    margin: 0 0 40px;
+    text-wrap: pretty;
+  }
+  .thesis strong { color: var(--accent); font-weight: 600; }
+  .thesis .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 1px 7px;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+
+  /* ── stack diagram ── */
+  .diagram {
+    background: var(--bg-raise);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 22px 24px;
+    margin: 0 0 40px;
+  }
+  .diagram h2 {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 18px;
+    font-weight: 600;
+  }
+  .stack { display: flex; flex-direction: column; gap: 0; }
+  .layer {
+    display: grid;
+    grid-template-columns: 150px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 9px 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg-inset);
+  }
+  .layer + .layer { margin-top: 6px; }
+  .layer .name { font-family: var(--mono); font-weight: 600; font-size: 13px; }
+  .layer .role { color: var(--ink-dim); font-size: 13.5px; }
+  .layer .wire { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); text-align: right; }
+  .layer.sandboxed {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    border-style: dashed;
+  }
+  .layer.star .name::before { content: "★ "; color: var(--accent); }
+  .layer.host .name { color: var(--accent); }
+  .down-arrow {
+    text-align: center;
+    color: var(--ink-faint);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 2px 0;
+  }
+  .sand-note {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--accent);
+    margin-top: 10px;
+    letter-spacing: 0.02em;
+  }
+
+  /* ── pillar index ── */
+  .pillars {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin: 0 0 56px;
+  }
+  .pillar-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg-raise);
+    padding: 16px 18px;
+    transition: border-color 0.15s ease;
+  }
+  .pillar-card:hover { border-color: var(--line-strong); }
+  .pillar-card .lid {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  .pillar-card .q { color: var(--ink-faint); font-size: 13px; margin: 0 0 4px; }
+  .pillar-card .one { font-size: 14.5px; color: var(--ink); margin: 0; line-height: 1.6; }
+  .pillar-card a { border: none; }
+
+  /* ── sections ── */
+  section { padding: 48px 0; border-bottom: 1px solid var(--line); }
+  section:last-of-type { border-bottom: none; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 6px; }
+  .sec-no {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    padding: 2px 9px;
+    flex-shrink: 0;
+  }
+  h2 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 24px;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .sec-q { color: var(--ink-faint); font-family: var(--mono); font-size: 13px; margin: 0 0 14px; }
+  .sec-thesis {
+    font-size: 16px;
+    color: var(--ink);
+    border-left: 3px solid var(--line-strong);
+    padding: 4px 0 4px 18px;
+    margin: 0 0 28px;
+    max-width: 68ch;
+    text-wrap: pretty;
+  }
+  .sec-thesis strong { color: var(--accent); font-weight: 600; }
+
+  .point {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    margin: 0 0 18px;
+  }
+  .point .pn {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink-faint);
+    padding-top: 2px;
+  }
+  .point .body { min-width: 0; }
+  .point .body b:first-child { font-weight: 600; }
+  .point .body > p { margin: 0 0 6px; text-wrap: pretty; }
+  .point .body p:last-child { margin-bottom: 0; }
+  .src {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    display: block;
+    margin-top: 4px;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    border-radius: 3px;
+    padding: 0 6px;
+    margin-right: 6px;
+    vertical-align: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .chip.evd { color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok); }
+  .chip.inf { color: var(--inf); background: var(--inf-soft); border: 1px solid var(--inf); }
+
+  /* tables */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 24px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--bg-raise); }
+  caption {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-inset);
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td { padding: 11px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: normal; word-break: break-all; }
+  td .mono { white-space: nowrap; }
+  .num { font-variant-numeric: tabular-nums; font-family: var(--mono); color: var(--ink-faint); }
+  tr:hover td { background: var(--bg-inset); }
+
+  /* E pillar extras */
+  .paradigm {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    background: var(--bg-raise);
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  .paradigm h4 { font-family: var(--mono); font-size: 14.5px; margin: 0 0 4px; font-weight: 600; }
+  .paradigm p { margin: 0; color: var(--ink-dim); font-size: 14px; text-wrap: pretty; }
+  .paradigm .where { color: var(--ink-faint); font-size: 13px; }
+  ol.questions { margin: 0; padding-left: 0; counter-reset: q; list-style: none; }
+  ol.questions li {
+    counter-increment: q;
+    padding: 10px 0 10px 44px;
+    position: relative;
+    border-bottom: 1px solid var(--line);
+    font-size: 14.5px;
+    text-wrap: pretty;
+  }
+  ol.questions li:last-child { border-bottom: none; }
+  ol.questions li::before {
+    content: "Q" counter(q);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 1px 6px;
+    position: absolute;
+    left: 0;
+    top: 12px;
+  }
+  ol.questions li code { white-space: normal; }
+
+  /* appendix */
+  .appendix .src { margin-bottom: 10px; }
+  .appendix h3 { font-family: var(--mono); font-size: 14px; margin: 26px 0 10px; font-weight: 600; }
+  .appendix h3:first-child { margin-top: 0; }
+
+  footer {
+    padding: 40px 0 64px;
+    color: var(--ink-faint);
+    font-size: 13px;
+    font-family: var(--mono);
+    line-height: 1.8;
+  }
+  footer .sep { color: var(--line-strong); }
+
+  @media (max-width: 640px) {
+    .layer { grid-template-columns: 1fr; gap: 4px; }
+    .layer .wire { text-align: left; }
+    .point { grid-template-columns: 1fr; gap: 4px; }
+    .point .pn { font-size: 11px; color: var(--accent); }
+    header { padding: 44px 0 34px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .layer { animation: rise 0.5s ease both; }
+    .layer:nth-child(2) { animation-delay: 0.05s; }
+    .layer:nth-child(3) { animation-delay: 0.10s; }
+    .layer:nth-child(4) { animation-delay: 0.15s; }
+    .layer:nth-child(5) { animation-delay: 0.20s; }
+    .layer:nth-child(6) { animation-delay: 0.25s; }
+    .layer:nth-child(7) { animation-delay: 0.30s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  }
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="wrap">
+    <p class="eyebrow">Grok Bot 0.18 · 逆向重建项目 · 学习材料</p>
+    <h1>Grok Bot <span class="accent">学习金字塔</span></h1>
+    <p class="lede">低认知负担地抓住这个项目的底层逻辑——注意力留给三件事：<strong>架构理解</strong>、<strong>工程化思维</strong>、<strong>取舍与判断倒推</strong>。金字塔法则：结论先行 → 逐层概括 → MECE 分组。</p>
+    <p class="lede">归档说明：本页是分析文档的排版版本，内容以 <code>docs/LEARNING-PYRAMID.md</code> 为准。文中的 <code>file:line</code> 是写作时的快照，代码演进后行号会移动，定位证据时以符号名（函数、常量、类名）为准。</p>
+    <div class="thesis">
+      <span class="tag">金字塔尖 · 一句话结论</span><br>
+      Grok Bot 是一条 <strong>把信任编成进程、把对话编成协议流、把诚实编成可执行门禁</strong> 的工程主线。读懂它只需记住一个反直觉事实——<strong>AI 引擎不在你的电脑里，它在远端沙箱（盒）里，桌面应用只是盒的客户端</strong>。而这个重建项目是同一工程精神的镜像：重建者的<strong>证据门禁驱动</strong>与原作者的<strong>安全边界驱动</strong>互为表里。
+    </div>
+
+    <div class="diagram">
+      <h2>进程剖面 · 一次对话的拓扑</h2>
+      <div class="stack">
+        <div class="layer">
+          <span class="name">renderer</span>
+          <span class="role">原版 minified UI（frontend/ 为可读重建）</span>
+          <span class="wire">desktop + coordinatorPort</span>
+        </div>
+        <div class="down-arrow">▾ MessagePort 帧 · JSON 协议 v1</div>
+        <div class="layer">
+          <span class="name">electron-main</span>
+          <span class="role">窗口 / 设置 / 密钥 / 盒生命周期</span>
+          <span class="wire">IPC 杂务面</span>
+        </div>
+        <div class="down-arrow">▾ fork + 3 条 MessageChannel</div>
+        <div class="layer">
+          <span class="name">node-agent-coordinator</span>
+          <span class="role">对话中枢：路由 / SSE 转播 / local-exec 监管</span>
+          <span class="wire">router 插入点 ✓</span>
+        </div>
+        <div class="down-arrow">▾ HTTP / SSE + gatewayToken</div>
+        <div class="layer host sandboxed">
+          <span class="name">host</span>
+          <span class="role">★ AI 引擎：turn 执行 / 工具 / MCP / transcript</span>
+          <span class="wire">跑在盒内 或 Docker</span>
+        </div>
+        <div class="down-arrow">▾ connect / protobuf (gRPC)</div>
+        <div class="layer sandboxed">
+          <span class="name">box-exec-daemon</span>
+          <span class="role">盒内 shell / 工具执行</span>
+          <span class="wire">127.0.0.1:1337</span>
+        </div>
+        <div class="layer">
+          <span class="name">local-exec-daemon</span>
+          <span class="role">用户机上的工具执行 · 权限审批</span>
+          <span class="wire">gateway 桥</span>
+        </div>
+      </div>
+      <div class="sand-note">▢ 虚线框 = 沙箱边界：host 与 box-exec-daemon 在盒内；用户机唯一的本地代理是 local-exec-daemon</div>
+    </div>
+
+    <div class="pillars">
+      <div class="pillar-card"><p class="lid">A · 架构</p><p class="q">它是什么</p><p class="one">五进程三层沙箱：思考在盒内，执行在边界外</p></div>
+      <div class="pillar-card"><p class="lid">B · 机制</p><p class="q">它怎么运转</p><p class="one">一次对话 = 路由 × 双层循环 × 统一事件流</p></div>
+      <div class="pillar-card"><p class="lid">C · 实践</p><p class="q">它怎么防错</p><p class="one">三层纪律对抗"悄悄漂移"：身份校验 / 闭包审计 / 双轨验证</p></div>
+      <div class="pillar-card"><p class="lid">D · 取舍</p><p class="q">它为什么长这样</p><p class="one">每个决策都有明码标价的代价</p></div>
+      <div class="pillar-card"><p class="lid">E · 元认知</p><p class="q">学了对我有什么用</p><p class="one">技术会过时，判断系统可迁移</p></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">A</span><h2>架构：五进程三层沙箱</h2></div>
+    <p class="sec-q">它是什么</p>
+    <p class="sec-thesis">这个桌面应用是个<strong>瘦客户端</strong>——本地只有 UI 和调度，真正的 agent 引擎（host）跑在沙箱里，通过 broker 返回的 gatewayUrl + token 被连接。</p>
+
+    <div class="point"><span class="pn">A1</span><div class="body"><p><span class="chip evd">实证</span><b>反直觉拓扑：host 不在桌面端</b>。main 通过 connect protobuf 调 broker <code>ensureSandBox</code> 拿到 <code>gatewayUrl+gatewayToken</code> 后才连上盒；local-docker 模式等价替换为 <code>docker run</code> 暴露 <code>127.0.0.1:1340</code>。用户机唯一的本地代理是 local-exec-daemon——这正是"本地工具权限审批"存在的前提。</p><span class="src">box-host-connector.ts:74-99 · local-docker-host-connector.ts:13-15</span></div></div>
+
+    <div class="point"><span class="pn">A2</span><div class="body"><p><span class="chip evd">实证</span><span class="chip inf">推断</span><b>两条通道是整套架构的脊柱</b>。对话数据（sendPrompt / 事件流）走 <code>fork + MessagePort 帧</code>，避开 Electron IPC 序列化瓶颈；桌面杂务（设置/密钥）走 <code>window.desktop</code> 的 IPC。数据面走直连通道，控制面走 IPC edge。</p><span class="src">frontend/src/production/bootstrap.tsx:33-39 · electron-preload/preload.ts:295-318</span></div></div>
+
+    <div class="point"><span class="pn">A3</span><div class="body"><p><span class="chip evd">实证</span><b>协议分层即信任分层</b>。进程内 JSON 帧有严格生命周期（协议违规直接 settle 退出）；HTTP 层有 loopback 绑定 + gatewayToken + 15s SSE 心跳；对外才用 connect 带认证头。信任随距离递减。</p><span class="src">shared/rpc/coordinator-port.ts:1-6 · host/gateway-server.ts:46-55</span></div></div>
+
+    <div class="point"><span class="pn">A4</span><div class="body"><p><span class="chip evd">实证</span><b>"方法表"是原版的第一等架构物</b>。<code>MAIN_METHOD_TABLE</code>、<code>COORDINATOR_METHOD_TABLE</code>、<code>SAND_GATEWAY_COMMANDS</code> 三张表分别写定三层协议（后者注释写明"Mechanically recovered from the immutable 0.18 host bundle"）。读协议，先找方法表。</p><span class="src">shared/rpc/main.ts · shared/rpc/coordinator.ts 的 COORDINATOR_METHOD_TABLE · host/gateway-protocol.ts 的 SAND_GATEWAY_COMMANDS</span></div></div>
+
+    <div class="point"><span class="pn">A5</span><div class="body"><p><span class="chip evd">实证</span><b>重建的插入点极小</b>。Router 只在 coordinator 的 <code>dispatchRequest</code> 一处钩子（<code>handled?</code>）接管 sendPrompt，其余原样透传——一个分派函数即可整体替换推理后端，最小侵入范式。</p><span class="src">inference-router.ts 的 dispatch</span></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">B</span><h2>机制：一次对话 = 路由 × 双层循环 × 事件流</h2></div>
+    <p class="sec-q">它怎么运转</p>
+    <p class="sec-thesis">模型<strong>"思考"</strong>在盒内 host 的循环里，工具<strong>"行动"</strong>被抽象成跨进程 protobuf 消息流分发给两个 daemon；所有输出统一翻译成 <code>InteractionUpdate</code> 事件流，渲染层因此不关心 provider 是谁。</p>
+
+    <div class="point"><span class="pn">B1</span><div class="body"><p><span class="chip evd">实证</span><b>路由 = 策略叠加</b>。决策数据只有一处：<code>settings.json</code> 的 <code>inferenceProvider</code> 字段；决策点有两个：coordinator 拦截 <code>sendPrompt</code> + host 按同一 settings 选会话。接入差异：cursor 复用沙箱登录态；codex 直读 <code>~/.codex/auth.json</code>（强制 0600 普通文件、拒 symlink、401 自动 refresh_token 刷新）；claude-code 用 SDK spawn CLI 子进程；openrouter 直连 + 密钥走 box-secrets。</p><span class="src">sand-settings-store.ts 的 getInferenceProvider · inference-router.ts 的 sendPrompt 拦截 · provider-session.ts 的 claudeChildEnv / codexExecutor / claudeExecutor / openRouterExecutor / CLAUDE_LOCAL_TOOLS</span></div></div>
+
+    <div class="point"><span class="pn">B2</span><div class="body"><p><span class="chip evd">实证</span><b>双层循环 + 熔断，保证必然收敛</b>。turn 层：上限 5000 步（<code>SAND_AGENT_MAX_STEPS</code>），终止条件 = 无工具调用且无排队消息；step 层：边流式收输出边收集工具调用，工具<strong>并发执行</strong>，结果以 <code>role:"tool"</code> 回喂。exec 后端不可用时<strong>熔断跳过工具并注入错误结果</strong>，防死循环。</p><span class="src">turn-agent-composition.ts 的 maxSteps · tool-stream-executor.ts 的双层循环与熔断</span></div></div>
+
+    <div class="point"><span class="pn">B3</span><div class="body"><p><span class="chip evd">实证</span><b>一切皆 proto 事件流</b>。模型流统一转 <code>InteractionUpdate</code>：textDelta / thinkingDelta / toolCallStarted/Delta/Completed / partialToolCall / tokenDelta。进程边界即协议边界，<strong>脱敏是边界投影的一部分</strong>（跨进程投影 redacted proto）。</p><span class="src">agent-core/interaction-updates.ts 的 InteractionUpdate · chat-inference-proto/converters.ts（消息↔proto）</span></div></div>
+
+    <div class="point"><span class="pn">B4</span><div class="body"><p><span class="chip evd">实证</span><b>执行分治</b>。agent 只面对 <code>RemoteExecManager</code> 抽象，不知道工具在哪跑：盒内工具 → box-exec-daemon（Connect gRPC）；用户机工具 → local-exec-daemon（带权限门 + 审批）。目标分表面：盒内 <code>Shell</code>/<code>Read</code> vs 用户机 <code>ExternalShell</code>/<code>ExternalRead</code>。<strong>插件 MCP 服务器也归这一层</strong>：stdio 服务器由盒内 daemon 启动并托管，盒内轮次通过回环桥把工具交给 CLI 子进程，HTTP 服务器仍由后端执行。</p><span class="src">agent-exec/remote.ts 的 RemoteExecManager · box-exec-daemon/server.ts 的 BOX_EXEC_DAEMON_PORT · box-exec-daemon/mcp-host.ts 的 BoxMcpHost · shared/node/mcp/routed-mcp-bridge.ts · sand-activity.ts</span></div></div>
+
+    <div class="point"><span class="pn">B6</span><div class="body"><p><span class="chip evd">实证</span><b>工具参数的搬运纪律</b>。命令型工具的权限回调必须把工具参数<strong>原样交回</strong>：Claude CLI 用权限结果里的 <code>updatedInput</code> 覆盖工具参数，交回空对象会把模型给出的参数全部抹掉。参数跨进程序列化时在边界处把普通 JSON 转成 protobuf <code>Value</code>，与后端执行端口保持一致。</p><span class="src">provider-session.ts 的 claudeToolPermission 与 allowUnchanged · box-mcp-exec.ts 的 toMcpArgs</span></div></div>
+
+    <div class="point"><span class="pn">B5</span><div class="body"><p><span class="chip inf">推断</span><b>"看起来一致"的代价</b>。cursor 走远端 gateway 原生状态（thinking 原生透传）；routed provider 只有文本 delta，router <b>合成</b> transcript 事件——thinking 是合成的 activity 行（250ms pulse 防渲染抖动）、reactions 本地存储。渲染层无法区分 provider，代价是流式细节降级为合成呈现。</p><span class="src">inference-router.ts 的合成与本地存储</span></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">C</span><h2>实践：三层纪律对抗"悄悄漂移"</h2></div>
+    <p class="sec-q">它怎么防错</p>
+    <p class="sec-thesis">重建品的最大风险是<strong>"与原版悄悄不一样"</strong>。作者的回应是三层可执行纪律——每个脚本都在防一个具体的坑。</p>
+
+    <div class="point"><span class="pn">C1</span><div class="body"><p><span class="chip evd">实证</span><b>身份校验：先哈希、后写入</b>。bootstrap 下载写 <code>.partial</code>（<code>mode 0o600</code>）→ SHA-256 校验 → rename，坏文件永远不会写入磁盘；DMG 与 app.asar 双重固定；补丁机制 fail-closed：patch 前 <code>stockSha256</code> 必须匹配、锚点必须<strong>恰好出现一次</strong>、patch 后 <code>patchedSha256</code> 必须匹配，任一不符直接 throw。供应链纪律：每条获取路径（LFS / 缓存 / 下载 / env）都校验。</p><span class="src">scripts/lib/config.mjs · scripts/apply-third-party-patches.mjs</span></div></div>
+
+    <div class="point"><span class="pn">C2</span><div class="body"><p><span class="chip evd">实证</span><b>闭包审计：把"不允许什么"写成代码</b>。<code>audit-renderer-closure.mjs</code>：clean 入口只允许 TS/TSX/JS/CSS，禁止任何 import 触碰不可变原版 artifact；<code>audit-runtime-composition.mjs</code>：<code>forbiddenEvidencePrefix = "src/app/"</code>，生产区域用显式 Set 枚举（新增不会静默替换、删除会报错）；<code>audit-ui-provenance.mjs</code>：<code>@evidence</code> 注解必须位于白名单根目录内。防的是审计范围漂移。</p><span class="src">scripts/audit-*.mjs</span></div></div>
+
+    <div class="point"><span class="pn">C3</span><div class="body"><p><span class="chip evd">实证</span><b>双轨验证：交付门禁链</b>。<code>verify.mjs</code> 数十条断言（≥1000 条源码证据标记、ASAR 必需文件清单含 4 个 agent-isolation worker、禁 source map、确定性 manifest 逐项比对、干净渲染器禁出现原版 chunk 名）；<code>native-e2e-check.mjs</code> 真实 spawn 打包 App 判定 <code>productionStartup</code>；<code>package-fidelity-diagnostic.mjs</code> 三方对照（官方参考 / 固定渲染包 / 重建包）且开局拒绝把诊断当交付；<code>verify-publication-tree.mjs</code> 用 <code>git archive HEAD</code> 树哈希证明导出无损。"没改坏"用可执行检查证明，README 的声明不算数。</p><span class="src">scripts/verify.mjs · native-e2e-check.mjs · package-fidelity-diagnostic.mjs · verify-publication-tree.mjs</span></div></div>
+
+    <div class="point"><span class="pn">C4</span><div class="body"><p><span class="chip evd">实证</span><b>韧性细节：防的具体坑</b>。错误进注册表不进字符串（<code>SAND_ERROR_DEFINITIONS</code> 带 <code>retryable</code> 标注，未注册错误在 emit 边界被重新分类，原始 code/payload 永不 ship）；host 锁带 PID 存活探测与升级接管（SIGTERM→SIGKILL，防锁残留卡死下次启动）；<code>WriteEpoch</code> 世代计数使过期写入失效（防乱序回写覆盖新值）；secret-store 全部 <code>temp + rename</code> 原子写。</p><span class="src">shared/errors/registry.ts · host-lock.ts · write-epoch.ts · host-secret-store.ts</span></div></div>
+
+    <div class="point"><span class="pn">C5</span><div class="body"><p><span class="chip evd">实证</span><b>隐私默认剥离</b>。密钥模式正则剥除（<code>sk-</code> / <code>ghp_</code> / <code>xoxb</code> / <code>AIza</code> / <code>Bearer</code>）；invariant 消息打包时剥离但保留调用链信息（防泄露 + 可定位）；<code>PrivacyMode</code> 五档，脱敏规则是"分类 × 用途 × 隐私模式"的<strong>纯函数</strong> <code>allowedPurpose()</code>——合规不靠自觉，靠可测试的决策函数。</p><span class="src">sand-auto-review-redact.ts · redaction/privacy-mode.ts · classification.ts</span></div></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">D</span><h2>取舍：每个决策都有明码标价的代价</h2></div>
+    <p class="sec-q">它为什么长这样</p>
+    <p class="sec-thesis">这是一次<strong>"可审计地重建"</strong>：在每一个决策点，可验证性都排在完整性前面。作者的取舍边界本身就是教材。</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <caption>D1 · 重建者的取舍</caption>
+        <thead><tr><th class="num">#</th><th>决策</th><th>代价</th><th>证据</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td><b>保留 shipped renderer</b>，不重建前端（明说"weekend build 不现实"）</td><td>UI 仍是黑盒，等价性只能靠哈希 + 闭包审计间接保证</td><td><code>README.md:48-64</code></td></tr>
+          <tr><td class="num">2</td><td><b>hybrid 构建</b>：运行时编译自可读源码 + 渲染层保留固定产物 + 窄变换</td><td>构建强依赖外部 DMG 下载与公证校验</td><td><code>README.md</code></td></tr>
+          <tr><td class="num">3</td><td><b>独立 bundle id + ad-hoc 签名</b>，绝不继承上游签名</td><td>要处理 quarantine / Gatekeeper 平台坑；用户多一步"右键打开"</td><td><code>PROVENANCE.md:20</code></td></tr>
+          <tr><td class="num">4</td><td><b>绝不覆盖官方应用</b> + 注入 <code>SAND_DISABLE_UPDATES/SENTRY/TELEMETRY=1</code></td><td>与原版行为差异（不更新、无遥测），靠 updater-guard 测试守护</td><td><code>build-asar.mjs:16-19</code></td></tr>
+          <tr><td class="num">5</td><td><b>Git LFS 存原版安装包</b> + 每条获取路径校验</td><td>仓库依赖 LFS，克隆需 <code>git lfs pull</code></td><td><code>.gitattributes</code> + bootstrap</td></tr>
+          <tr><td class="num">6</td><td><b>第三方依赖打补丁</b>（<code>@connectrpc/connect@1.6.1</code> 空 body 问题），不改上游实现也不等上游</td><td>patch 是定点修改，依赖升级即失效</td><td><code>patches/</code> + postinstall</td></tr>
+          <tr><td class="num">7</td><td><b>Node 固定 ≥26.5 &lt;27</b>（非 LTS 窄窗口）</td><td>开发者须手动装指定版本</td><td><code>.node-version</code> + engines</td></tr>
+          <tr><td class="num">8</td><td><b>测试用原生 <code>node --test</code></b>，零测试框架依赖 <span class="chip inf">推断</span></td><td>无覆盖率 / 快照 / 分片生态</td><td><code>package.json:23</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <caption>D2 · 原作者被逆推出的取舍（证据级别）</caption>
+        <thead><tr><th class="num">#</th><th>决策</th><th>动机 / 代价</th><th>级别</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td><b>远程 box 执行模型</b>（默认 <code>"remote"</code>）</td><td>一次解决三件事：不信任本地机器、执行环境一致、云端可计费；代价是云成本与延迟——本地 Docker sandbox 只能"可选"的结构性原因</td><td><span class="chip evd">高</span></td></tr>
+          <tr><td class="num">2</td><td><b>进程分离 = 信任边界</b>（main ≠ host ≠ 两个 daemon）</td><td>崩溃隔离 + 权限最小化 + 可独立更新</td><td><span class="chip evd">中高</span></td></tr>
+          <tr><td class="num">3</td><td><b>connect / protobuf 做协议</b></td><td>多语言客户端、强类型接口约定、流式支持；代价是依赖 bug 需自己打补丁</td><td><span class="chip inf">中</span></td></tr>
+          <tr><td class="num">4</td><td><b>渲染层极重</b>（React 19 + tiptap + katex + pdfjs + tree-sitter + JIMP 图片族）</td><td>富文本 / 代码高亮 / PDF 内联；代价是无源码分发——<b>重建者无法重建前端的结构性根因</b></td><td><span class="chip evd">高</span></td></tr>
+          <tr><td class="num">5</td><td><b>redaction / 密钥桥设计</b></td><td>凭据分类最严、box-secrets 保留名单（<code>SAND_</code>/<code>__CURSOR</code> 前缀、上限 100 个 / 单值 32KB / 总量 96KB）；LLM 会话含凭据，脱敏必须内建在类型层，事后过滤不足以承担</td><td><span class="chip evd">中高</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tbl-wrap">
+      <table>
+        <caption>D3 · 元取舍（工程方法层面）</caption>
+        <thead><tr><th class="num">#</th><th>取舍</th><th>证据</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td><b>可审计性 &gt; 完整性</b>——evidence-only rule："speculative behavior is a release-blocking defect"，宁可留空不猜</td><td><code>PROVENANCE.md:31-48</code></td></tr>
+          <tr><td class="num">2</td><td><b>确定性 &gt; 最新</b>——DMG / app.asar / node / electron / connect 全部固定；升级是一次显式决策，默认不发生</td><td><code>config.mjs</code> + lockfile</td></tr>
+          <tr><td class="num">3</td><td><b>文档化 &gt; 注释化</b>——把边界、代价、发布流程写成约定（CONTRIBUTING 要求 commit 声明影响的层、禁止弱化校验）</td><td><code>CONTRIBUTING.md</code></td></tr>
+          <tr><td class="num">4</td><td><b>研究过程本身被"产品化"经营</b>——CI 跑 typecheck + publication:check，连"如何发布这个研究仓库"都被工程化</td><td><code>.github/workflows/check.yml</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">E</span><h2>元认知：可迁移的判断系统</h2></div>
+    <p class="sec-q">学了对我有什么用</p>
+    <p class="sec-thesis">这个仓库最值得学的是两套判断系统——原作者把<strong>安全承诺</strong>编译成结构，重建者把<strong>诚实</strong>编译成脚本。<strong>技术会过时，这两套系统可迁移到任何项目。</strong></p>
+
+    <h3 style="font-family:var(--mono);font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 14px;">E1 · 四个可迁移范式</h3>
+    <div class="paradigm"><h4>Pinned 身份思维</h4><p>外部输入 = 不可变 + 校验身份。本项目对 DMG / app.asar 的<strong>每条获取路径</strong>都做 SHA-256，身份不符即删除重来。<span class="where">别处：供应链、可复现构建、"下载即校验"。</span></p></div>
+    <div class="paradigm"><h4>边界即约定</h4><p>进程 / 协议边界按 API 设计并配验证。adapter 目录是"结构性约定"——新增不能静默替换、删除会报错。<span class="where">别处：微服务 / 插件系统先写边界约定再写实现。</span></p></div>
+    <div class="paradigm"><h4>保真度预算（混合架构分层）</h4><p>先问"什么可重建且可验证、什么必须保留"。本项目：运行时可重建（有证据锚点），renderer 保留（无源码），分界处用"窄确定性 transform + 哈希记录"缝合。<span class="where">别处：任何 legacy 现代化 / 迁移，混合可以是正当的架构选择。</span></p></div>
+    <div class="paradigm"><h4>门禁即验收</h4><p>把"成功"定义为可执行断言集，且拒绝为通过而削弱（≥1000 source marker、clean-source 不得携带禁入证据）。<span class="where">别处：把验收标准写成脚本，测试失败 = 构建失败。</span></p></div>
+
+    <h3 style="font-family:var(--mono);font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin:30px 0 14px;">E2 · 元认知阅读路径（每步训练一种判断）</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="num">步</th><th>读什么</th><th>训练什么</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td><code>README.md</code></td><td><b>读取舍</b>：识别作者明说的放弃与理由</td></tr>
+          <tr><td class="num">2</td><td><code>PROVENANCE</code> + <code>CONTRIBUTING</code></td><td><b>读约束系统</b>：每条规则约束什么行为、违反代价</td></tr>
+          <tr><td class="num">3</td><td><code>scripts/bootstrap-runtime.mjs</code></td><td><b>Pinned 输入思维</b>：一个二进制如何变成可验证构建输入</td></tr>
+          <tr><td class="num">4</td><td>一条对话链路（preload → main → coordinator → router → host → provider）</td><td><b>边界即约定</b>：每层校验了什么、信任在哪断</td></tr>
+          <tr><td class="num">5</td><td>router 的 dispatch + <code>verify.mjs</code></td><td><b>最小可审计变更 + 门禁验证</b>的完整样本</td></tr>
+          <tr><td class="num">6</td><td><code>tests/</code> + <code>smoke.mjs</code></td><td><b>测试意图</b>：测真实模块、有预算、fail-closed</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--mono);font-size:14px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint);margin:30px 0 14px;">E3 · 判断练习问题（带着问题读代码）</h3>
+    <ol class="questions">
+      <li>为什么要在 host 之外再分出 local-exec-daemon / box-exec-daemon？这条边界画在哪条线上？</li>
+      <li>redaction 为什么是"分类 × 用途 × 模式"的纯函数，而不写成分散的 if？简化成查表会丢什么？</li>
+      <li>重建者为什么宁可保留 minified renderer？换你，你的"重建 vs 保留"边界和保真度预算是什么？</li>
+      <li>patch 为什么要求锚点"恰好出现一次"、缺失即失败？模糊匹配省下的时间买走了什么？</li>
+      <li>verify.mjs 为什么数 ≥1000 个 source marker 而不只查产物存在？"证据质量"如何变成可执行断言？</li>
+      <li>换 bundle id、ad-hoc 签名、默认关 telemetry——"无缝集成"与"身份诚实"冲突时你选哪个？</li>
+      <li>原版隐含假设"必须连远端 box"；local Docker sandbox 动了哪些未说出的假设？你代码里有什么同类隐含假设？</li>
+      <li>bootstrap 对每条获取路径都校验——你自己的依赖 / 下载流程里，哪些路径被信任了却没校验？</li>
+    </ol>
+  </div>
+</section>
+
+<section class="appendix">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-no">∎</span><h2>附录 · 证据索引</h2></div>
+    <p class="sec-q">按支柱归类 · 全部可点击定位</p>
+
+    <h3>A · 架构</h3>
+    <div class="src">frontend/src/production/bootstrap.tsx:33-39（双通道）· electron-preload/preload.ts:295-318（窄桥）· node-agent-coordinator/main.ts:66（fork 引导）· shared/rpc/coordinator-port.ts:1-6（JSON 帧协议）· host/main.ts:188（host 入口）· host/gateway-server.ts:46-55（HTTP/SSE）· box-host-connector.ts:74-99（ensureSandBox）· local-docker-host-connector.ts:13-15（docker 模式）· shared/rpc/coordinator.ts:97（方法表）· gateway-protocol.ts:4-127（命令表）</div>
+
+    <h3>B · 机制</h3>
+    <div class="src">sand-settings-store.ts:29,158-167（settings.json）· inference-router.ts:189-229,212（路由钩子）· provider-session.ts:45-49,67-71,90-115,178-181,204-214（四 provider）· turn-agent-composition.ts:142,272（maxSteps=5000）· tool-stream-executor.ts:1279-1452,1319-1336（双层循环+熔断）· interaction-updates.ts:41-119（事件统一）· chat-inference-proto/converters.ts:135-255（转换）· agent-exec/remote.ts:44-53（执行抽象）· box-exec-daemon/server.ts:66-75（gRPC 1337）· sand-activity.ts:5（目标分表）</div>
+
+    <h3>C · 实践</h3>
+    <div class="src">shared/errors/registry.ts（错误注册表）· host-lock.ts（锁接管）· write-epoch.ts（世代计数）· host-secret-store.ts（原子写）· audit-renderer-closure.mjs / audit-runtime-composition.mjs / audit-ui-provenance.mjs（闭包审计）· verify.mjs / native-e2e-check.mjs / smoke.mjs / package-fidelity-diagnostic.mjs / verify-publication-tree.mjs（门禁链）· apply-third-party-patches.mjs（双哈希门禁）· sand-auto-review-redact.ts（密钥剥除）· redaction/privacy-mode.ts:1-8 + classification.ts（五档/纯函数）</div>
+
+    <h3>D · 取舍</h3>
+    <div class="src">README.md:38-64,217-221 · PROVENANCE.md:20,31-48 · scripts/lib/build-asar.mjs:16-19 · scripts/lib/config.mjs:46-48 · patches/@connectrpc__connect@1.6.1.patch · box-runtime.ts · shared/box-secrets.ts（保留名单/上限）</div>
+
+    <h3>E · 元认知</h3>
+    <div class="src">README.md · PROVENANCE.md · CONTRIBUTING.md · docs/ARCHITECTURE.md · docs/PUBLISHING.md · redaction/shouldRedact.ts:8-25（脱敏规则）</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    由 5 个并行分析 agent 的独立报告按金字塔法则合成<span class="sep"> · </span>架构链路 / 核心机制 / 工程实践 / 取舍清单 / 元认知<span class="sep"> · </span>每条要点保留 [实证] / [推断] 标注<span class="sep"> · </span>完整定位见附录
+    <br>Grok Bot 0.18 · reconstructed · 学习金字塔 <span class="sep">·</span> 2026-08-25
+  </div>
+</footer>
+</body>
+</html>

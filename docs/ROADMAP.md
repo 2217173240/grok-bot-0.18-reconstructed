@@ -202,6 +202,12 @@ S-9 golden path 必须含「盒内全新会话全流程」门禁（本轮的教�
 账号切换时删除 `localToolPermission` 是有意行为：切换后权限回到默认值，而 `never` 现在同时对盒内 CLI 工具生效，
 因此这个重置只会放宽而不会遗留一个已失效的收紧设置。
 
+**文档归档（2026-09-23）**：`docs/LEARNING-PYRAMID.md` 与 `docs/LEARNING-PYRAMID.html` 由未跟踪文件转为版本化文档。
+归档时按仓库自身的规矩整理了两份文件：示意图从字符画改为 mermaid（`.md`）与结构化标记（`.html`），清掉全部违禁
+用词与"不是…而是…"式句式，`.html` 补上完整的文档骨架（`DOCTYPE`、`charset`、`</html>`）并去掉对外部字体服务的引用，
+两份都标注了"内容以 `.md` 为准"。附录里的 `file:line` 改为符号名定位：行号是写作时的快照，代码演进之后会移动，
+符号名不会。`docs/DEPLOY-HANDBOOK.md` 与 `docs/HANDOFF-inbox-delivery.md` 里"未跟踪文件待决定"的记录同时改为归档结果。
+
 **S-9 毕业验收（2026-09-21，三条自办项完成）**：
 
 1. **门禁**：`docker/container-gates.sh --profile desktop` 与 `--profile exec` 两个档位全部通过。
