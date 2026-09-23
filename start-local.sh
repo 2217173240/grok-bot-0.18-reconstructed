@@ -2,8 +2,7 @@
 # grokbot-local — launch the reconstructed Grok Bot in local-admin mode.
 #
 #   start-local.sh [start|stop|status|restart|logs]   (default: start)
-#   GROKBOT_BOX=docker start-local.sh start           # computer = Docker VM
-#                                                     # (default: host process on the Mac)
+#   GROKBOT_BOX=docker start-local.sh start           # computer = Docker VM (default)
 #
 # Principles baked in:
 #   idempotent    — safe to run repeatedly; seeds settings only when absent,
@@ -185,41 +184,23 @@ do_start() {
 
   export SAND_DATA_ROOT="$DATA_ROOT"
   export SAND_USER_DATA_DIR="$PROFILE"
-  # 默认在容器执行；宿主机诊断需要显式指定 GROKBOT_BOX=host。
+  # 本地管理员模式只在容器执行。
   if [ "${GROKBOT_BOX:-docker}" = "docker" ]; then
     resolve_docker_host || die "no Docker socket found (start Colima: colima start)"
     docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST (colima start?)"
     export SAND_LOCAL_ADMIN_BOX=docker
     echo docker > "$DATA_ROOT/box-mode"
     say "computer: Docker VM"
-  elif [ "${GROKBOT_BOX:-}" = "host" ]; then
-    export SAND_LOCAL_ADMIN_BOX=host
-    echo mac-host > "$DATA_ROOT/box-mode"
-    say "computer: Mac host process (forced)"
   else
-    die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker or host)"
+    die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker)"
   fi
   if [ -n "${GROKBOT_IMAGE:-}" ]; then
     export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
     say "image: $GROKBOT_IMAGE (pinned)"
   fi
-  # Turns execute INSIDE the box by default (the agent runs in the sandbox via
-  # the third-party API; its own evidence carries the box's Linux fingerprint).
-  # The second-round flip: the stock transcript-journal defect is pinned off
-  # via SAND_FEATURE_GATE_OVERRIDES in the run plan (env outranks the volume's
-  # statsig bootstrap and cannot be reset by desktop settings sync), the box
-  # carries local-admin semantics, and a FRESH conversation was verified live
-  # end to end (reply persisted via the legacy transcript route). GROKBOT_TURN=mac
-  # opts back to the Mac coordinator plane.
-  if [ "${GROKBOT_TURN:-}" = "mac" ]; then
-    export SAND_LOCAL_ADMIN_TURN=mac
-    say "turns: Mac coordinator plane (GROKBOT_TURN=mac)"
-  elif [ "${GROKBOT_TURN:-host}" = "host" ]; then
-    export SAND_LOCAL_ADMIN_TURN=host
-    say "turns: in-box execution plane (default; GROKBOT_TURN=mac to opt out)"
-  else
-    die "unsupported GROKBOT_TURN: $GROKBOT_TURN (expected host or mac)"
-  fi
+  # Agent turns execute in the container host.
+  export SAND_LOCAL_ADMIN_TURN=host
+  say "turns: in-box execution plane"
   # The desktop plane is the default computer (complete bot; both gate
   # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.
   if [ "${GROKBOT_DESKTOP:-}" = "0" ]; then
@@ -284,7 +265,7 @@ do_stop() {
     resolve_docker_host || true
     if docker info >/dev/null 2>&1; then
       if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
-        say "computer:   left running by design (a GROKBOT_BOX=host start will stop it)"
+        say "computer:   left running by design (use the computer reset action to rebuild it)"
       fi
     else
       say "computer:   docker unreachable — container state untouched"
@@ -342,10 +323,16 @@ do_logs() {
   tail -n 40 -F "$APP_LOG" "$DATA_ROOT/box-logs/sand-host.log" 2>/dev/null
 }
 
+validate_turn_mode() {
+  # Reject the retired Mac selection before start or restart changes any state.
+  [ "${GROKBOT_TURN:-host}" = "host" ] || die "unsupported GROKBOT_TURN: $GROKBOT_TURN (expected host)"
+  [ "${GROKBOT_BOX:-docker}" = "docker" ] || die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker)"
+}
+
 case "${1:-start}" in
-  start)   do_start ;;
+  start)   validate_turn_mode; do_start ;;
   stop)    do_stop ;;
-  restart) do_stop; do_start ;;
+  restart) validate_turn_mode; do_stop; do_start ;;
   status)  do_status ;;
   logs)    do_logs ;;
   *)       die "usage: $0 [start|stop|status|restart|logs]" ;;

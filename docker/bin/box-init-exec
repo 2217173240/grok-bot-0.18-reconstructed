@@ -14,6 +14,10 @@ log "box-init-exec: 桌面面后台 + host 前台"
 # 休眠唤醒/重启会复用可写层，旧的 X 锁还在会让 Xvfb 以为显示被占用。
 rm -f /tmp/.X11-unix/X* /tmp/.X*-lock 2>/dev/null
 mkdir -p "$TOKEN_DIR" "$NOVNC_TOKEN_DIR" "$SUPERVISE_DIR" /home/box/sand-data
+# A restart can reuse the container's writable layer. No fork survives the
+# desktop startup, so revoke every prior owner and view credential before the
+# router or websockify starts accepting connections.
+rm -f "$TOKEN_DIR"/* "$NOVNC_TOKEN_DIR"/*
 # 卷挂载会遮蔽镜像层：chrome-profile 的符号链接目标必须在这里现建（卷对 box 可写），
 # 否则 mkdir -p 穿不过悬空链接、box-chrome 起不来。
 mkdir -p /home/box/sand-data/chrome-profile

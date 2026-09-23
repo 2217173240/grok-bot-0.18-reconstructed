@@ -185,22 +185,18 @@ run_desktop_gates() {
     fail "D4 XTEST motion failed"
   fi
 
-  # D5 — the two desktop-plane daemons stay alive: the window router behind
-  # 1339 (whose port D2 only proves is bound) and the login-state sync guard.
-  # The sync daemon is a single-screen no-op until a second window exists, so
-  # process liveness is the honest probe; its death is otherwise silent. An
-  # unreadable probe fails the gate, so a container that refused the exec is
-  # never reported as having lost its daemons.
-  probe_box_pid sand-window-router.mjs
-  ROUTER_STATUS="$PROBE_STATUS"; ROUTER_PID="$PROBE_OUTPUT"
-  probe_box_pid session-sync.mjs
-  SYNC_STATUS="$PROBE_STATUS"; SYNC_PID="$PROBE_OUTPUT"
-  if [ "$ROUTER_STATUS" != "$PROBE_OK" ] || [ "$SYNC_STATUS" != "$PROBE_OK" ]; then
+  # D5 — 每个桌面进程都只有一个持有者。表达式中的方括号避免计入探测 shell。
+  probe_in_box "pgrep -fc '[s]and-window-router.mjs' 2>&1"
+  ROUTER_STATUS="$PROBE_STATUS"; ROUTER_COUNT="$PROBE_OUTPUT"
+  probe_in_box "pgrep -fc '[s]ession-sync.mjs' 2>&1"
+  SYNC_STATUS="$PROBE_STATUS"; SYNC_COUNT="$PROBE_OUTPUT"
+  if [ "$ROUTER_STATUS" != "$PROBE_OK" ] || [ "$SYNC_STATUS" != "$PROBE_OK" ] ||
+     [[ ! "$ROUTER_COUNT" =~ ^[0-9]+$ ]] || [[ ! "$SYNC_COUNT" =~ ^[0-9]+$ ]]; then
     fail "D5 inconclusive — the container did not report its desktop daemons: ${PROBE_OUTPUT:-empty output}"
-  elif [ -n "$ROUTER_PID" ] && [ -n "$SYNC_PID" ]; then
-    pass "D5 desktop daemons alive: window router (pid $ROUTER_PID), session-sync (pid $SYNC_PID)"
+  elif [ "$ROUTER_COUNT" = "1" ] && [ "$SYNC_COUNT" = "1" ]; then
+    pass "D5 desktop daemons have one owner each: window router and session-sync"
   else
-    fail "D5 desktop daemon missing (router='${ROUTER_PID:-none}' session-sync='${SYNC_PID:-none}')"
+    fail "D5 desktop daemon count differs from one (router=$ROUTER_COUNT session-sync=$SYNC_COUNT)"
   fi
 
   # D6 — the B1 decision asserted: killing the display leaves container and

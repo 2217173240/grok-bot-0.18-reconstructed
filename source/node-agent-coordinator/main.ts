@@ -19,7 +19,6 @@ import { createTransportStageRecorder } from "./telemetry/transport-stage-record
 import { createWebAuthnProvider } from "./webauthn/provider.js";
 import { createSpawnedWebAuthnSigner, resolveWebAuthnSignerPath } from "./webauthn/signer.js";
 import { ClientSideToolV2Relay } from "./client-side-tool-v2-relay.js";
-import { createCoordinatorInferenceRouter } from "./inference-router.js";
 import { installLocalAdminNetworkIntercept } from "../shared/node/local-admin-intercept.js";
 
 export interface McpOAuthPending {
@@ -213,22 +212,12 @@ export async function composeCoordinator(dependencies: ComposeCoordinatorDepende
   }
 
   const gatewayDispatch = createGatewayRequestDispatch(gatewayClient);
-  const inferenceRouter = createCoordinatorInferenceRouter({
-    dataDir: bootstrap.processConfig.dataDir,
-    postEvent: (family, payload) => server.postEvent(family, payload),
-    dispatchRemote: (method, args) => method === "listRoutedMcpTools"
-      ? command(commands, "listRoutedMcpTools", args)
-      : method === "executeRoutedMcpTool"
-        ? command(commands, "executeRoutedMcpTool", args)
-        : gatewayClient.dispatchCommand(method, args),
-  });
   const dispatchRequest = async (method: string, args: unknown, signal: AbortSignal) => {
     if (method === "sendPrompt" && typeof args === "object" && args != null) {
       const { clientNonce, traceparent } = args as Record<string, unknown>;
       recorder.beginSend({ accountSlot: HOST_ACCOUNT_SLOT, clientNonce: typeof clientNonce === "string" ? clientNonce : null, traceparent: typeof traceparent === "string" ? traceparent : null });
     }
-    const routed = await inferenceRouter.dispatch(method, args);
-    return routed.handled ? { status: "ok" as const, value: routed.value } : await gatewayDispatch(method, args, signal);
+    return await gatewayDispatch(method, args, signal);
   };
   server = createRendererPortServer(
     { post: (frame) => carrier.data.post(frame), close: () => carrier.data.close() },
