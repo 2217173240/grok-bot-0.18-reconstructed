@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
-import { jsonSchema, zodSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { APICallError, jsonSchema, zodSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
@@ -702,12 +702,44 @@ function commandCodeExecutor(messages: readonly ProviderMessage[], invocationId:
   return chatCompletionsExecutor("command-code", model, messages, invocationId, definitions, onUsage, signal);
 }
 
+function providerApiError(provider: RoutedProvider, error: unknown): Error {
+  if (!APICallError.isInstance(error)) return error instanceof Error ? error : new Error(String(error));
+  const name = provider === "command-code" ? "Command Code" : "OpenRouter";
+  const status = error.statusCode;
+  if (status === 401) return new Error(`${name} rejected the API key (HTTP 401). Check the key in Settings → Router.`);
+  if (status === 403) return new Error(`${name} denied access (HTTP 403). Check the key and selected model access in Settings → Router.`);
+  if (status === 402) return new Error(`${name} has insufficient credit (HTTP 402). Check the account balance.`);
+  if (status === 429) return new Error(`${name} rate limit reached (HTTP 429). Try again after the provider limit resets.`);
+  return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
+}
+
 function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const tools = toToolSet(definitions);
-  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, ...(signal === undefined ? {} : { abortSignal: signal }) });
-  const extendedUsage = result.usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
-  if (onUsage != null) void extendedUsage.then(onUsage).catch(error => appendLocalIntercept({ kind: "inference-usage", provider, error: error instanceof Error ? error.message : String(error) }));
-  return { fullStream: result.fullStream, response: result.response, usage: result.usage, extendedUsage, providerMetadata: result.providerMetadata, invocationId: Promise.resolve(invocationId) };
+  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
+  const streamFailure = Promise.withResolvers<never>();
+  void streamFailure.promise.catch(() => {});
+  const fullStream = (async function* () {
+    try {
+      for await (const chunk of result.fullStream) {
+        if (chunk.type === "error") throw chunk.error;
+        yield chunk;
+      }
+    } catch (error) {
+      const failure = providerApiError(provider, error);
+      streamFailure.reject(failure);
+      throw failure;
+    }
+  })();
+  const response = Promise.race([result.response, streamFailure.promise]);
+  const usage = Promise.race([result.usage, streamFailure.promise]);
+  const providerMetadata = Promise.race([result.providerMetadata, streamFailure.promise]);
+  const extendedUsage = usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
+  void response.catch(() => {});
+  void usage.catch(() => {});
+  void providerMetadata.catch(() => {});
+  void extendedUsage.catch(() => {});
+  if (onUsage != null) void extendedUsage.then(onUsage, () => {}).catch(error => appendLocalIntercept({ kind: "inference-usage", provider, error: error instanceof Error ? error.message : String(error) }));
+  return { fullStream, response, usage, extendedUsage, providerMetadata, invocationId: Promise.resolve(invocationId) };
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
