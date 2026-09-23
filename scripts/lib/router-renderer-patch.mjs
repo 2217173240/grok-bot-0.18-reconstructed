@@ -135,7 +135,7 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
     schemaVersion: 1,
     mode: "original-renderer-settings-extension",
     chunks: changes,
-    features: ["settings-router-provider", "settings-local-docker-vm", "usage-current-provider", "transcript-entry-text-shape"],
+    features: ["settings-router-provider", "settings-command-code-model", "settings-local-docker-vm", "usage-current-provider", "transcript-entry-text-shape"],
     transformations: ["settings-registry", "router-panel", "usage-panel", "entry-text-extractor"],
   };
   const provenancePath = path.join(stageRoot, "dist", "renderer-router-extension.json");

@@ -60,12 +60,11 @@ function commandCodeCredential(): string {
 // model picked in Settings → Router, then a default every paid plan includes.
 function commandCodeModel(): string {
   const fromEnv = process.env.SAND_COMMANDCODE_MODEL?.trim();
-  if (isCommandCodeModelId(fromEnv)) return fromEnv;
-  try {
-    const fromSettings = new SandSettingsStore(join(getSandRootDir(), "settings.json")).getCommandCodeModel();
-    if (fromSettings !== undefined) return fromSettings;
-  } catch {}
-  return COMMAND_CODE_DEFAULT_MODEL;
+  if (fromEnv !== undefined) {
+    if (!isCommandCodeModelId(fromEnv)) throw new Error("SAND_COMMANDCODE_MODEL must be a valid Command Code model ID.");
+    return fromEnv;
+  }
+  return new SandSettingsStore(join(getSandRootDir(), "settings.json")).getCommandCodeModel() ?? COMMAND_CODE_DEFAULT_MODEL;
 }
 
 function providerPrompt(messages: readonly ProviderMessage[], extraGuidance?: string): string {
