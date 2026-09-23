@@ -58,18 +58,14 @@ export function createProductionCoordinatorGatewayBinding(): Pick<
         issueLocalExecDaemonCredential?: (...args: any[]) => unknown;
       };
       requireFunction(remote?.connect, "generated gateway connector.connect()");
-      requireFunction(
-        remote?.issueLocalExecDaemonCredential,
-        "generated local-exec credential issuer",
-      );
       const wrappedBase: {
         connect(): Promise<BoxConnectionInfo>;
-        issueLocalExecDaemonCredential(...args: any[]): unknown;
+        issueLocalExecDaemonCredential?(...args: any[]): unknown;
         recreate?: (...args: any[]) => unknown;
         forceRecreate?: (...args: any[]) => unknown;
       } = {
         connect: async () => await remote.connect() as BoxConnectionInfo,
-        issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote),
+        ...(remote.issueLocalExecDaemonCredential == null ? {} : { issueLocalExecDaemonCredential: remote.issueLocalExecDaemonCredential.bind(remote) }),
       };
       if (remote.recreate != null) wrappedBase.recreate = remote.recreate.bind(remote);
       if (remote.forceRecreate != null) wrappedBase.forceRecreate = remote.forceRecreate.bind(remote);

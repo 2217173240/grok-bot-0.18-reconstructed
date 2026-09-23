@@ -26,6 +26,7 @@ async function loadPrune() {
     bundle: true,
     format: "esm",
     platform: "node",
+    packages: "external",
     outfile,
     logLevel: "silent",
   });

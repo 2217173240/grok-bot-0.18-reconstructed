@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import type { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { RecreateResult } from "./box-recreate-commands.js";
-import type { SandRemoteHostConnector } from "./box-host-connector.js";
+import { EnvDescriptorHostConnector, type SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
@@ -774,6 +774,7 @@ export function createSettingsRoutedHostConnector(
   remote: SandRemoteHostConnector,
   settings: SandSettingsStore,
 ): SandRemoteHostConnector {
+  if (remote instanceof EnvDescriptorHostConnector) return remote;
   let localHostConsecutiveFailures = 0;
   let localHostLastFailure = "unknown";
   let localHostBreakerOpenUntilMs = 0;

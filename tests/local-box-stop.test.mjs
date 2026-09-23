@@ -27,6 +27,7 @@ async function loadConnector() {
     bundle: true,
     format: "esm",
     platform: "node",
+    packages: "external",
     outfile,
     logLevel: "silent",
   });
