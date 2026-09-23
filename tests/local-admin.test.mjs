@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -309,23 +310,122 @@ test("local admin intercept blocks Cursor production fetches and records them", 
   }
 });
 
-test("docker CLI uses an existing Colima socket when DOCKER_HOST is unset", async () => {
+test("docker CLI finds the project's own Colima profile instead of whichever one exists", async () => {
   const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
-  try {
-    const home = await mkdtemp(path.join(os.tmpdir(), "grok-colima-home-"));
-    const socket = path.join(home, ".colima", "finonelib", "docker.sock");
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
+  const home = await mkdtemp(path.join(repoRoot, ".cache", "c-"));
+  const servers = [];
+  async function listen(socket) {
     await mkdir(path.dirname(socket), { recursive: true });
-    await writeFile(socket, "");
-    // CI runners ship /var/run/docker.sock; the default socket wins by
-    // precedence and Colima discovery is the fallback.
-    const resolved = loaded.module.resolveDockerHost({}, home);
-    if (existsSync("/var/run/docker.sock")) assert.equal(resolved, "unix:///var/run/docker.sock");
-    else assert.equal(resolved, `unix://${socket}`);
-    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///tmp/explicit.sock" }, home);
-    assert.equal(explicit, "unix:///tmp/explicit.sock");
-    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    const server = createServer();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(path.relative(process.cwd(), socket), resolve);
+    });
+    servers.push(server);
+  }
+  try {
+    const own = path.join(home, ".colima", "grokbot", "docker.sock");
+    await listen(own);
+    assert.equal(loaded.module.resolveDockerHost({}, home), `unix://${own}`);
+    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "grokbot" }, home), `unix://${own}`);
+
+    const named = path.join(home, ".colima", "custom-runtime", "docker.sock");
+    await listen(named);
+    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home), `unix://${named}`);
+
+    const file = path.join(home, ".colima", "file", "docker.sock");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "");
+    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "file" }, home), `unix://${file}`);
+
+    const blocked = path.join(home, ".colima", "blocked");
+    await writeFile(blocked, "");
+    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "blocked" }, home), `unix://${path.join(blocked, "docker.sock")}`);
+
+    // 候选顺序不依赖测试主机上的 /var/run/docker.sock。
+    assert.deepEqual(loaded.module.dockerSocketCandidates({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home, ["zzz", "aaa"]), [
+      named,
+      "/var/run/docker.sock",
+      path.join(home, ".colima", "docker.sock"),
+      path.join(home, ".colima", "default", "docker.sock"),
+      path.join(home, ".colima", "aaa", "docker.sock"),
+      path.join(home, ".colima", "zzz", "docker.sock"),
+      path.join(home, ".orbstack", "run", "docker.sock"),
+    ]);
+
+    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///explicit.sock" }, home);
+    assert.equal(explicit, "unix:///explicit.sock");
   } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
+    await rm(home, { recursive: true, force: true });
     await loaded.dispose();
+  }
+});
+
+test("docker CLI uses an existing OrbStack socket when DOCKER_HOST is unset", async () => {
+  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
+  const home = await mkdtemp(path.join(repoRoot, ".cache", "o-"));
+  const servers = [];
+  async function listen(socket) {
+    await mkdir(path.dirname(socket), { recursive: true });
+    const server = createServer();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(path.relative(process.cwd(), socket), resolve);
+    });
+    servers.push(server);
+  }
+  const shell = (systemSocket, dockerHost) => {
+    const result = spawnSync("bash", ["-c", '. "$1"; resolve_docker_host "$2"; printf "%s" "$DOCKER_HOST"', "bash", path.join(repoRoot, "scripts/lib/docker-socket.sh"), systemSocket], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: home, DOCKER_HOST: dockerHost ?? "" },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  try {
+    const socket = path.join(home, ".orbstack", "run", "docker.sock");
+    const absentSystemSocket = path.join(home, "missing-system.sock");
+    await listen(socket);
+    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${socket}`);
+    assert.equal(shell(absentSystemSocket), `unix://${socket}`);
+
+    const otherColima = path.join(home, ".colima", "other", "docker.sock");
+    await listen(otherColima);
+    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${otherColima}`);
+    assert.equal(shell(absentSystemSocket), `unix://${otherColima}`);
+
+    const ownColima = path.join(home, ".colima", "grokbot", "docker.sock");
+    await listen(ownColima);
+    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${ownColima}`);
+    assert.equal(shell(absentSystemSocket), `unix://${ownColima}`);
+
+    const explicit = "unix:///explicit.sock";
+    assert.equal(loaded.module.resolveDockerHost({ DOCKER_HOST: explicit }, home, absentSystemSocket), explicit);
+    assert.equal(shell(absentSystemSocket, explicit), explicit);
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
+    await rm(home, { recursive: true, force: true });
+    await loaded.dispose();
+  }
+});
+
+test("live Docker runtime files do not name another project's Colima context", async () => {
+  const files = ["start-local.sh"];
+  async function collect(relativeDir) {
+    for (const entry of await readdir(path.join(repoRoot, relativeDir), { withFileTypes: true })) {
+      const relative = path.join(relativeDir, entry.name);
+      if (entry.isDirectory()) await collect(relative);
+      else if (/\.(?:sh|mjs|ts|js)$/.test(entry.name) || entry.name.endsWith("Dockerfile")) files.push(relative);
+    }
+  }
+  await Promise.all([collect("scripts"), collect("source"), collect("docker")]);
+  for (const file of files) {
+    const source = await readFile(path.join(repoRoot, file), "utf8");
+    assert.doesNotMatch(source, /colima-finonelib|--context[ \t]+colima-[\w-]+/, file);
   }
 });
 

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, type Dirent } from "node:fs";
+import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -313,21 +313,45 @@ interface CommandResult { readonly ok: boolean; readonly output: string }
 interface InferenceCredential { readonly accessToken: string; readonly backendUrl: string; readonly expiresAtMs: number }
 interface LocalHostBundle { readonly path: string; readonly sha256: string; readonly boxExecDaemonPath: string; readonly boxExecDaemonSha256: string }
 
-export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
-  const configured = env.DOCKER_HOST?.trim();
-  if (configured != null && configured.length > 0) return configured;
-  const sockets = [
-    "/var/run/docker.sock",
+export const DOCKER_PROFILE_ENV = "GROKBOT_COLIMA_PROFILE";
+export const DEFAULT_DOCKER_PROFILE = "grokbot";
+
+// The Colima profile this project uses. Naming it here keeps the choice explicit
+// instead of borrowing whatever profile another project happens to have left on
+// the machine; an operator who keeps their runtime under a different name sets
+// GROKBOT_COLIMA_PROFILE.
+export function colimaProfileName(env: NodeJS.ProcessEnv = process.env): string {
+  const named = env[DOCKER_PROFILE_ENV]?.trim();
+  return named != null && named.length > 0 ? named : DEFAULT_DOCKER_PROFILE;
+}
+
+// 候选顺序与 scripts/lib/docker-socket.sh 一致，独立于主机上的 socket 状态。
+export function dockerSocketCandidates(env: NodeJS.ProcessEnv, homeDir: string, profiles: readonly string[], systemSocket = "/var/run/docker.sock"): string[] {
+  return [
+    join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
+    systemSocket,
     join(homeDir, ".colima", "docker.sock"),
     join(homeDir, ".colima", "default", "docker.sock"),
+    ...[...profiles].sort().map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
+    join(homeDir, ".orbstack", "run", "docker.sock"),
   ];
+}
+
+export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir(), systemSocket = "/var/run/docker.sock"): string | undefined {
+  const configured = env.DOCKER_HOST?.trim();
+  if (configured != null && configured.length > 0) return configured;
+  let profiles: string[] = [];
   try {
-    for (const profile of readdirSync(join(homeDir, ".colima"))) {
-      sockets.push(join(homeDir, ".colima", profile, "docker.sock"));
-    }
+    profiles = readdirSync(join(homeDir, ".colima"));
   } catch {}
-  for (const socket of sockets) {
-    if (existsSync(socket)) return `unix://${socket}`;
+  for (const socket of dockerSocketCandidates(env, homeDir, profiles, systemSocket)) {
+    try {
+      if (statSync(socket).isSocket()) return `unix://${socket}`;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM" || code === "ELOOP") continue;
+      throw error;
+    }
   }
   return undefined;
 }

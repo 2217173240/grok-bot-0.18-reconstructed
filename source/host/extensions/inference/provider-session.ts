@@ -499,7 +499,7 @@ const CLAUDE_LOCAL_ADMIN_DESKTOP_LINES_FROM_MAC = [
   "  launch the browser with `docker exec -d grok-bot-local-vm env DISPLAY=:1 /usr/local/bin/box-chrome` (on demand; the wrapper derives its profile and CDP port from DISPLAY, and `docker exec` starts with an empty environment, so pass it explicitly)",
   "  input via `docker exec -i grok-bot-local-vm python3 /usr/local/bin/xtest-input-local.py :1` with JSON on stdin ({\"action\":\"click\"|\"move\"|\"type\"|\"key\"|\"scroll\", \"x\",\"y\",\"text\",\"key\",\"dir\"}; coordinates 0..1279 x 0..799)",
   "  screenshot with `docker exec grok-bot-local-vm bash -c 'xwd -root -display :1 -silent | convert xwd:- png:-' > shot.png` then Read it",
-  "There is no xdotool — do not look for it. Navigate the browser ONLY with `docker --context colima-finonelib exec grok-bot-local-vm /usr/local/bin/box-navigate <url>` — it refuses private/reserved destinations (with an audit ledger line) before the page ever loads; typing a URL into the address bar yourself bypasses the egress gate and is forbidden.",
+  "There is no xdotool — do not look for it. Navigate the browser ONLY with `docker exec grok-bot-local-vm /usr/local/bin/box-navigate <url>` — it refuses private/reserved destinations (with an audit ledger line) before the page ever loads; typing a URL into the address bar yourself bypasses the egress gate and is forbidden.",
 ];
 
 export function localAdminDesktopPrimitiveLines(env: NodeJS.ProcessEnv = process.env): readonly string[] {

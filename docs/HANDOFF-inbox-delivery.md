@@ -226,9 +226,10 @@ UI 一切正常。盒内投递缝的目标就是复刻这个语义。
   Node 模式启动，二进制拒绝 `--user-data-dir` 并立即退出（日志为
   `bad option: --user-data-dir=...`）。同一个变量还会让 `node` 指向 Electron，使
   `npm test` 里的 asar 相关用例假失败（`ENOTEMPTY`）。启动与测试都要在剔除该变量的环境里执行。
-- **G12 Colima profile 名称**：本机 profile 是 `finonelib`，`colima status` 不带参数时报告
-  "not running"。socket 为 `unix://$HOME/.colima/finonelib/docker.sock`，`start-local.sh` 的 1340
-  守卫需要该 socket 可达才会把端口持有者认成电脑的端口转发；否则拒绝启动。
+- **G12 Docker socket 的发现**：`start-local.sh` 的 1340 守卫需要 Docker socket 可达，才会把端口持有者认成
+  电脑的端口转发；否则拒绝启动。发现顺序是 `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE`（默认 `grokbot`）→
+  通用 socket → 其余 profile 按名称排序，实现在 `scripts/lib/docker-socket.sh`（TS 侧是 `resolveDockerHost`）。
+  仓库不写别的项目的 profile 名。
 
 ---
 
@@ -236,7 +237,7 @@ UI 一切正常。盒内投递缝的目标就是复刻这个语义。
 
 前置：在剔除 `ELECTRON_RUN_AS_NODE` 的环境里执行 `./start-local.sh restart`
 （`env -u ELECTRON_RUN_AS_NODE ./start-local.sh restart`）；
-`export DOCKER_HOST="unix:///Users/xinheyun/.colima/finonelib/docker.sock"`（默认 socket 不存在，见 G12）。
+Docker socket 由脚本自行发现（要固定运行时就在环境里给 `DOCKER_HOST` 或 `GROKBOT_COLIMA_PROFILE`，见 G12）。
 
 1. **发货产物里的补丁**：确认打包后的 renderer 携带提取器补丁——
    `n.status` 无关，直接查 asar：
