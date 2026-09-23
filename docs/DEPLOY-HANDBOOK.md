@@ -160,10 +160,12 @@ env -u ELECTRON_RUN_AS_NODE PATH="/usr/local/bin:$PATH" npm run package
 
 脚本做的事（顺序即依赖序）：回收孤儿 host → 判定 1340 端口持有者（Docker 计算机的端口转发是合法持有者）→ seed settings → 导出环境（见下表）→ 校验 build-stamp ↔ HEAD → **直启 binary**（不走 `open`，否则环境被剥）→ 有界等待 45s 网关健康（`127.0.0.1:1340/health` + Bearer）。
 
-判定的前置条件是 Colima 的 docker socket 可达。本机 profile 名为 `finonelib`，
-`socket` 为 `unix://$HOME/.colima/finonelib/docker.sock`；不带参数的 `colima status` 会报告
-"not running"，`colima list` 才显示真实状态。socket 不可达时脚本无法把 1340 的持有者认成计算机的
-端口转发，会以 `port 1340 is held by something that is not our app or computer` 拒绝启动。
+判定的前置条件是 Docker socket 可达。发现顺序是显式的：`DOCKER_HOST` → 本项目自己的 Colima profile
+（`GROKBOT_COLIMA_PROFILE`，默认 `grokbot`；两个 shell 脚本与连接器共用 `scripts/lib/docker-socket.sh` 的选择逻辑）
+→ 通用的 `~/.colima/docker.sock` 与 `default` → 其余 profile 按名称排序。仓库里不写别的项目的 profile 名，
+换机器只需 `colima start --profile grokbot`，或把 `GROKBOT_COLIMA_PROFILE` 指向已有的运行时，或直接
+`export DOCKER_HOST=…`。socket 不可达时脚本无法把 1340 的持有者认成计算机的端口转发，会以
+`port 1340 is held by something that is not our app or computer` 拒绝启动。
 
 **环境开关表**（`start-local.sh` 识别的）：
 
@@ -208,7 +210,7 @@ scripts/zero-remote-live.sh   # 断言账本零 cursor/xai 出网行
 | `start` 报 missing token | `~/.grokbot-local/anthropic-token` | §5 手工项没做 |
 | App 启动即退出，日志 `bad option: --user-data-dir` | `echo $ELECTRON_RUN_AS_NODE` | 启动 shell 带着该变量；`start-local.sh` 会自行清除它，若仍出现说明调用方不是该脚本 |
 | `npm test` 出现 `ENOTEMPTY`（asar 用例） | `node -e 'console.log(process.versions.electron)'` | `node` 是 Electron 而不是 Node；用真实 Node 运行（`PATH=/usr/local/bin:$PATH`） |
-| `start` 报 port 1340 held by something else | `lsof -nP -iTCP:1340 -sTCP:LISTEN` 与 `colima list` | Colima 的 docker socket 不可达（本机 profile 为 `finonelib`）；脚本自行发现 `~/.colima/*/docker.sock`，也可显式 `export DOCKER_HOST=…` |
+| `start` 报 port 1340 held by something else | `lsof -nP -iTCP:1340 -sTCP:LISTEN` 与 `colima list` | Docker socket 不可达；脚本按 `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE`（默认 `grokbot`）→ 通用 socket 的顺序自行发现，也可显式 `export DOCKER_HOST=…` |
 | UI 出现 “Something went wrong” 且控制台报 `matchAll` | 打包后 asar 是否带 renderer 提取器补丁 | renderer 产物自身的条目字段名与它的转录投影不一致；补丁在 `scripts/lib/router-renderer-patch.mjs`，随 `npm run package` 生效 |
 | 网关 45s 不健康 | `./start-local.sh logs` + `box-logs/sand-host.log` 尾部 | 容器崩溃循环：看 `docker logs grok-bot-local-vm`（历史两案：数据卷 root 属主 EACCES、镜像 pin 过期） |
 | `computer: docker unreachable` | `colima list` | Colima 没起；起后脚本自动发现 `~/.colima/*/docker.sock`（`/var/run/docker.sock` 不存在是常态，别手工造） |
@@ -229,7 +231,8 @@ scripts/zero-remote-live.sh   # 断言账本零 cursor/xai 出网行
 
 ## 10. 源机特异性备忘（新机不需要复制，但要知道差异）
 
-- Colima profile 名 `finonelib` 仅为源机命名，新机 `colima start` 默认 profile 即可——发现逻辑按 `~/.colima/*/docker.sock` 通配
+- Colima profile 名不写进仓库：默认用 `GROKBOT_COLIMA_PROFILE`（缺省 `grokbot`），也可以直接 `export DOCKER_HOST=…`
+  指向已有的运行时。源机当前借用的是别的项目的 profile，运行时按 socket 发现，与 profile 名无关
 - 源机 Clash fake-IP（198.18/15 段）触发了 egress 门的部署级适配；新机无 Clash 则走默认严格模式，行为更纯
 - `docs/LEARNING-PYRAMID.md` 与 `docs/LEARNING-PYRAMID.html` 是分析文档（架构链路与工程取舍的学习材料），随仓库
   一起版本化；部署与运行都不需要读它们，内容以 `.md` 为准，`.html` 是排版版本
