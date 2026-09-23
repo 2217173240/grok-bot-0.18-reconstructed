@@ -560,7 +560,10 @@ export async function buildProductionHostIfSupplied({ outputRoot, manifestPath =
   }
   const outfile = path.join(outputRoot, "dist/host/host-main.cjs");
   await mkdir(path.dirname(outfile), { recursive: true });
-  const external = [...new Set(validated.bindings.filter(binding => !localSourceClassifications.has(binding.classification)).map(binding => binding.resolvedModule))];
+  const external = [...new Set([
+    ...validated.bindings.filter(binding => !localSourceClassifications.has(binding.classification)).map(binding => binding.resolvedModule),
+    "pdfjs-dist/legacy/build/pdf.mjs",
+  ])];
   const result = await esbuild({
     absWorkingDir: repoRoot,
     banner: { js: `// Deterministic clean-source production host; bindings ${validated.manifestSha256}` },
