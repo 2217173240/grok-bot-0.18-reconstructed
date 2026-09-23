@@ -313,19 +313,36 @@ interface CommandResult { readonly ok: boolean; readonly output: string }
 interface InferenceCredential { readonly accessToken: string; readonly backendUrl: string; readonly expiresAtMs: number }
 interface LocalHostBundle { readonly path: string; readonly sha256: string; readonly boxExecDaemonPath: string; readonly boxExecDaemonSha256: string }
 
+export const DOCKER_PROFILE_ENV = "GROKBOT_COLIMA_PROFILE";
+export const DEFAULT_DOCKER_PROFILE = "grokbot";
+
+// The Colima profile this project uses. Naming it here keeps the choice explicit
+// instead of borrowing whatever profile another project happens to have left on
+// the machine; an operator who keeps their runtime under a different name sets
+// GROKBOT_COLIMA_PROFILE.
+export function colimaProfileName(env: NodeJS.ProcessEnv = process.env): string {
+  const named = env[DOCKER_PROFILE_ENV]?.trim();
+  return named != null && named.length > 0 ? named : DEFAULT_DOCKER_PROFILE;
+}
+
+// Order is a decision, not an accident: an explicit DOCKER_HOST wins, then the
+// profile this project owns, then the generic socket, then the profile-less
+// Colima paths, then the remaining profiles sorted by name so the result does
+// not depend on directory order. The shell twin is scripts/lib/docker-socket.sh.
 export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir()): string | undefined {
   const configured = env.DOCKER_HOST?.trim();
   if (configured != null && configured.length > 0) return configured;
+  let profiles: string[] = [];
+  try {
+    profiles = readdirSync(join(homeDir, ".colima")).sort();
+  } catch {}
   const sockets = [
+    join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
     "/var/run/docker.sock",
     join(homeDir, ".colima", "docker.sock"),
     join(homeDir, ".colima", "default", "docker.sock"),
+    ...profiles.map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
   ];
-  try {
-    for (const profile of readdirSync(join(homeDir, ".colima"))) {
-      sockets.push(join(homeDir, ".colima", profile, "docker.sock"));
-    }
-  } catch {}
   for (const socket of sockets) {
     if (existsSync(socket)) return `unix://${socket}`;
   }

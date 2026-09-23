@@ -309,18 +309,39 @@ test("local admin intercept blocks Cursor production fetches and records them", 
   }
 });
 
-test("docker CLI uses an existing Colima socket when DOCKER_HOST is unset", async () => {
+test("docker CLI finds the project's own Colima profile instead of whichever one exists", async () => {
   const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
   try {
     const home = await mkdtemp(path.join(os.tmpdir(), "grok-colima-home-"));
-    const socket = path.join(home, ".colima", "finonelib", "docker.sock");
-    await mkdir(path.dirname(socket), { recursive: true });
-    await writeFile(socket, "");
-    // CI runners ship /var/run/docker.sock; the default socket wins by
-    // precedence and Colima discovery is the fallback.
-    const resolved = loaded.module.resolveDockerHost({}, home);
-    if (existsSync("/var/run/docker.sock")) assert.equal(resolved, "unix:///var/run/docker.sock");
-    else assert.equal(resolved, `unix://${socket}`);
+    // A profile this project owns wins over the generic socket, so the choice
+    // is the same on every machine and does not depend on whatever profile
+    // another project left behind or on directory order.
+    const own = path.join(home, ".colima", "grokbot", "docker.sock");
+    await mkdir(path.dirname(own), { recursive: true });
+    await writeFile(own, "");
+    assert.equal(loaded.module.resolveDockerHost({}, home), `unix://${own}`);
+    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "grokbot" }, home), `unix://${own}`);
+
+    // A named profile other than the default is honoured.
+    const named = path.join(home, ".colima", "custom-runtime", "docker.sock");
+    await mkdir(path.dirname(named), { recursive: true });
+    await writeFile(named, "");
+    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home), `unix://${named}`);
+
+    // Remaining profiles are visited in name order, not readdir order.
+    const ordered = await mkdtemp(path.join(os.tmpdir(), "grok-colima-order-"));
+    for (const profile of ["zzz", "aaa"]) {
+      const socket = path.join(ordered, ".colima", profile, "docker.sock");
+      await mkdir(path.dirname(socket), { recursive: true });
+      await writeFile(socket, "");
+    }
+    assert.equal(
+      loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "absent" }, ordered),
+      `unix://${path.join(ordered, ".colima", "aaa", "docker.sock")}`,
+    );
+    await rm(ordered, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+
+    // An explicit DOCKER_HOST beats every discovered socket.
     const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///tmp/explicit.sock" }, home);
     assert.equal(explicit, "unix:///tmp/explicit.sock");
     await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

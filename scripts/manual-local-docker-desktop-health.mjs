@@ -1,5 +1,7 @@
-// 手动验收：在 colima-finonelib 的独立容器中运行镜像自带的桌面入口。
+// 手动验收：在独立的容器中运行镜像自带的桌面入口。
 // 用法：node scripts/manual-local-docker-desktop-health.mjs <已暂存的 v3 runtime 目录>
+// 使用当前 Docker 端点：DOCKER_HOST 优先，否则取当前 context；start-local.sh 会导出
+// DOCKER_HOST，profile 名由 scripts/lib/docker-socket.sh 与 GROKBOT_COLIMA_PROFILE 决定。
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -13,7 +15,6 @@ import { build } from "esbuild";
 
 const run = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
-const context = "colima-finonelib";
 const image = "grok-bot-exec-box:arm64";
 const runtime = process.argv[2];
 if (runtime == null) throw new Error("Pass the staged v3 runtime directory as the first argument.");
@@ -22,16 +23,19 @@ for (const entry of ["sand-host/host-main.cjs", "box-exec-daemon/main.cjs"]) {
 }
 
 async function docker(...args) {
-  return await run("docker", ["--context", context, ...args], { maxBuffer: 2_000_000 });
+  return await run("docker", args, { maxBuffer: 2_000_000 });
 }
 
 await docker("info", "--format", "{{.ServerVersion}}");
 await docker("image", "inspect", image, "--format", "{{.Id}}");
-const { stdout: endpoint } = await docker("context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}");
-const previousHost = process.env.DOCKER_HOST;
-const previousContext = process.env.DOCKER_CONTEXT;
-process.env.DOCKER_HOST = endpoint.trim();
-process.env.DOCKER_CONTEXT = context;
+// The bundled connector below reads DOCKER_HOST; an operator who set it keeps
+// their choice, otherwise the active context's endpoint is used.
+const configuredEndpoint = process.env.DOCKER_HOST?.trim();
+if (configuredEndpoint == null || configuredEndpoint.length === 0) {
+  const { stdout } = await docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}");
+  process.env.DOCKER_HOST = stdout.trim();
+}
+const previousHost = configuredEndpoint;
 
 await mkdir(path.join(root, ".cache"), { recursive: true });
 const workRoot = await mkdtemp(path.join(root, ".cache", "desktop-health-manual-"));
@@ -110,6 +114,4 @@ try {
   await rm(workRoot, { recursive: true, force: true });
   if (previousHost == null) delete process.env.DOCKER_HOST;
   else process.env.DOCKER_HOST = previousHost;
-  if (previousContext == null) delete process.env.DOCKER_CONTEXT;
-  else process.env.DOCKER_CONTEXT = previousContext;
 }

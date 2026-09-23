@@ -15,16 +15,10 @@ LEDGER="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}/local-intercept.jsonl"
 
 fail() { echo "zero-remote-live: $*" >&2; exit 1; }
 
-# Mirror the connector's Colima discovery so docker CLI works from this shell
-# (same function start-local.sh uses).
-resolve_docker_host() {
-  [ -n "${DOCKER_HOST:-}" ] && return 0
-  for socket in /var/run/docker.sock "$HOME"/.colima/docker.sock "$HOME"/.colima/*/docker.sock; do
-    if [ -S "$socket" ]; then export DOCKER_HOST="unix://$socket"; return 0; fi
-  done
-  return 1
-}
-resolve_docker_host || fail "no Docker socket found (start Colima: colima start)"
+# Docker endpoint discovery is shared with start-local.sh, and it names no
+# Colima profile borrowed from another project.
+. "$REPO/scripts/lib/docker-socket.sh"
+resolve_docker_host || fail "no Docker socket found ($(docker_unreachable_hint))"
 
 echo "== scenario: restart (boot + connect)"
 "$REPO/start-local.sh" restart >/dev/null 2>&1 || fail "app restart failed"
