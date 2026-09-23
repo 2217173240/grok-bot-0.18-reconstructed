@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
 import type { Context } from "../../../packages/context/core.js";
-import type { SandInferenceProvider } from "../../../shared/inference-router.js";
+import { COMMAND_CODE_BASE_URL, COMMAND_CODE_DEFAULT_MODEL, isCommandCodeModelId, type SandInferenceProvider } from "../../../shared/inference-router.js";
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
 import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
@@ -48,6 +48,23 @@ function openRouterCredential(): string {
   const value = process.env.OPENROUTER_API_KEY?.trim() || persistedSecrets().OPENROUTER_API_KEY?.trim();
   if (value == null || value.length === 0) throw new Error("OpenRouter needs OPENROUTER_API_KEY. Add it in Settings → Router.");
   return value;
+}
+
+function commandCodeCredential(): string {
+  const value = process.env.COMMAND_CODE_API_KEY?.trim() || persistedSecrets().COMMAND_CODE_API_KEY?.trim();
+  if (value == null || value.length === 0) throw new Error("Command Code needs COMMAND_CODE_API_KEY. Add it in Settings → Router.");
+  return value;
+}
+
+// The environment wins so a launch script can pin a model; otherwise the
+// model picked in Settings → Router, then a default every paid plan includes.
+function commandCodeModel(): string {
+  const fromEnv = process.env.SAND_COMMANDCODE_MODEL?.trim();
+  if (fromEnv !== undefined) {
+    if (!isCommandCodeModelId(fromEnv)) throw new Error("SAND_COMMANDCODE_MODEL must be a valid Command Code model ID.");
+    return fromEnv;
+  }
+  return new SandSettingsStore(join(getSandRootDir(), "settings.json")).getCommandCodeModel() ?? COMMAND_CODE_DEFAULT_MODEL;
 }
 
 function providerPrompt(messages: readonly ProviderMessage[], extraGuidance?: string): string {
@@ -613,10 +630,19 @@ function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefin
 function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const id = process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   const model: LanguageModelV1 = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", compatibility: "compatible", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id as any);
+  return chatCompletionsExecutor("openrouter", model, messages, invocationId, definitions, onUsage, signal);
+}
+
+function commandCodeExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+  const model: LanguageModelV1 = createOpenAI({ apiKey: commandCodeCredential(), baseURL: COMMAND_CODE_BASE_URL, compatibility: "compatible", name: "command-code" }).chat(commandCodeModel() as any);
+  return chatCompletionsExecutor("command-code", model, messages, invocationId, definitions, onUsage, signal);
+}
+
+function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const tools = toToolSet(definitions);
   const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const extendedUsage = result.usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
-  if (onUsage != null) void extendedUsage.then(onUsage).catch(error => appendLocalIntercept({ kind: "inference-usage", provider: "openrouter", error: error instanceof Error ? error.message : String(error) }));
+  if (onUsage != null) void extendedUsage.then(onUsage).catch(error => appendLocalIntercept({ kind: "inference-usage", provider, error: error instanceof Error ? error.message : String(error) }));
   return { fullStream: result.fullStream, response: result.response, usage: result.usage, extendedUsage, providerMetadata: result.providerMetadata, invocationId: Promise.resolve(invocationId) };
 }
 
@@ -633,11 +659,12 @@ class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
       ...(this.onToolEvent === undefined ? {} : { onToolEvent: this.onToolEvent }),
       signal,
     });
+    if (this.provider === "command-code") return commandCodeExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
     return openRouterExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
   }
 }
 
 export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools; readonly onToolEvent?: (event: ProviderToolEvent) => void }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
-  const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
+  const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "command-code" ? commandCodeModel() : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.mcp, options?.onToolEvent) };
 }

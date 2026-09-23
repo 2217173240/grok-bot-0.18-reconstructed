@@ -10,6 +10,7 @@ import type { SandSettingsStore } from "../../shared/node/settings/sand-settings
 import type { RecreateResult } from "./box-recreate-commands.js";
 import { EnvDescriptorHostConnector, type SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
+import { isCommandCodeModelId } from "../../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
 import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
@@ -728,15 +729,17 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // in the volume, so container replacement keeps it.
     const dataVolume = image !== LOCAL_DOCKER_BOX_IMAGE ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data";
     let provider = "claude-code";
+    let commandCodeModel: string | undefined;
     try {
-      const macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown };
+      const macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown; commandCodeModel?: unknown };
       if (typeof macSettings.inferenceProvider === "string" && macSettings.inferenceProvider.length > 0) provider = macSettings.inferenceProvider;
+      if (isCommandCodeModelId(macSettings.commandCodeModel)) commandCodeModel = macSettings.commandCodeModel;
     } catch {}
     // Force-merge the provider key (the host persists the file itself, and a
     // pre-existing provider-less file from an older boot would survive a
     // write-only-if-absent seed — observed live). The Mac is the source of
     // truth; the merge runs only at container creation.
-    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
+    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
     await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     const authMounts = await localAuthMountArguments();
     // Plugin definitions are the one input the box cannot obtain for itself.

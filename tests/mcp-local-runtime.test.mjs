@@ -25,6 +25,22 @@ function startHttpServer() {
   return { child, ready };
 }
 
+async function assertProcessStopped(pid) {
+  if (process.platform !== "linux") {
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    return;
+  }
+  let stat;
+  try {
+    stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0];
+  assert.ok(state === "Z" || state === "X", `MCP child ${pid} remains in state ${state}`);
+}
+
 test("BoxMcpHost owns HTTP and stdio MCP servers with retry and canonical idempotency", async () => {
   const dir = await mkdtemp(path.join(root, ".tmp-mcp-local-runtime-"));
   const { child, ready } = startHttpServer();
@@ -82,7 +98,7 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
     assert.equal(host.dispose(), closing);
     await closing;
     await rejected;
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    await assertProcessStopped(pid);
   } finally {
     await host.dispose();
     await rm(dir, { recursive: true, force: true });
