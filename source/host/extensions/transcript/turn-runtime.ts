@@ -424,8 +424,10 @@ export class TurnRuntime {
       try {
         const unansweredPrompts =
           this.tm.widgetResponses.collectUnansweredQuestionPrompts(session);
+        const failedUserMessageIds = new Set(session.db.getFailedUserMessageIds());
         const result = await runner.run(prompt, {
           ...options,
+          ...(options.recentUserMessages === undefined ? {} : { recentUserMessages: options.recentUserMessages.filter((message) => !failedUserMessageIds.has(message.id)) }),
           ...unansweredPrompts,
           traceCtx: turnCtx,
           appendReplyReminder: true,
@@ -490,6 +492,7 @@ export class TurnRuntime {
           classifyAgentError(error),
           sandErrorDetail(error),
         );
+        if (options.messageId != null) session.db.recordFailedUserMessageId(options.messageId);
         markTurnTraceError(turnTrace, error);
         if (epoch === this.tm.sendPipeline.currentTurnEpoch(session)) {
           const description = describeAgentRunError(error);

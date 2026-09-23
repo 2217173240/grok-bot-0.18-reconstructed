@@ -59,11 +59,12 @@ export interface AgentDbOptions extends DbRecoveryOptions {
   onBusyError?(operation: string, error: Error): void;
 }
 
+const FAILED_USER_MESSAGE_IDS_MAX = 100;
 const KV = {
   metadata: "metadata", profile: "sandProfile", unread: "unreadState",
   awaiting: "awaitingUserResponse", requestIds: "requestIds", latestRequestId: "latestRequestId",
   episode: "episodePending", memorySnapshot: "memoryPromptSnapshot",
-  profileSnapshot: "agentProfilePromptSnapshot", origin: "origin",
+  profileSnapshot: "agentProfilePromptSnapshot", origin: "origin", failedUserMessageIds: "failedUserMessageIds",
   introduction: "introductionPending", spendGuard: "automationSpendGuardState",
   spendGuardLegacy: "automationSpendGuardNudgedAt", partners: "conversationPartners",
   hiddenRepair: "hiddenEntryRepairVersion", staleRootCleanup: "staleRootCleanupVersion",
@@ -217,6 +218,11 @@ export class SandAgentDb {
 
   getRequestIds(): RequestRecord[] { const records = parseRequestRecords(this.readKv(KV.requestIds)); if (records.length) return records; const legacy = this.readKv(KV.latestRequestId)?.trim(); return legacy ? [{ id: legacy, at: 0 }] : []; }
   recordRequestId(id: string, at = Date.now(), prompt?: string, source?: string): void { const trimmed = id.trim(); if (!trimmed) return; const records = this.getRequestIds(); if (records.at(-1)?.id === trimmed) return; const label = prompt?.trim().slice(0, REQUEST_ID_PROMPT_MAX); const record: RequestRecord = { id: trimmed, at, ...(label ? { prompt: label } : {}), ...(source ? { source } : {}) }; this.writeKv(KV.requestIds, JSON.stringify([...records, record].slice(-REQUEST_ID_HISTORY_MAX))); }
+  // User messages whose turn errored (bad key, no credit, provider down). The
+  // host re-sends unconfirmed messages with the next turn; these are left out
+  // so a later successful turn doesn't answer them after the fact.
+  getFailedUserMessageIds(): string[] { try { const parsed: unknown = JSON.parse(this.readKv(KV.failedUserMessageIds) ?? "[]"); return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string" && id.length > 0) : []; } catch { return []; } }
+  recordFailedUserMessageId(id: string): void { const trimmed = id.trim(); if (!trimmed) return; const ids = this.getFailedUserMessageIds(); if (ids.includes(trimmed)) return; this.writeKv(KV.failedUserMessageIds, JSON.stringify([...ids, trimmed].slice(-FAILED_USER_MESSAGE_IDS_MAX))); }
   getAgentOrigin(): "dev" | "user" { return this.readKv(KV.origin) === "dev" ? "dev" : "user"; }
   setAgentOrigin(origin: "dev" | "user"): void { this.writeKv(KV.origin, origin); }
   getIntroductionPending(): boolean { return this.readKv(KV.introduction) === "1"; }
