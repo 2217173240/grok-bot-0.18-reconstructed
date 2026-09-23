@@ -27,6 +27,16 @@ function startHttpServer() {
 
 async function assertProcessStopped(pid) {
   if (process.platform !== "linux") {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error?.code === "ESRCH") return;
+        throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
     return;
   }
