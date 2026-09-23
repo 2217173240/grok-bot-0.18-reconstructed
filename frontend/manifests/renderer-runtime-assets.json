@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "artifactRoot": "src/app/dist/renderer/assets",
+  "artifactRoot": "frontend/assets",
   "assets": [
     { "file": "app-icon-C7NKj2u7.png", "sha256": "79e6a73e634ce7ad8d1982739e9064bcc9c9ec5106bdd7281d7514ee68169ad2" },
     { "file": "apollo-B0sEgAUH.png", "sha256": "f6f384e4105595e7a65c9fb99d3bb1acf6b1f3a0579114e0499e96217801481a" },
