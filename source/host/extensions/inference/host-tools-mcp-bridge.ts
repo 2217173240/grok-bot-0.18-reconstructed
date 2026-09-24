@@ -40,7 +40,13 @@ export function createHostToolsMcpBridge(definitions: readonly HostToolDefinitio
     try {
       if (signal.aborted) throw signal.reason ?? new Error("Host tool call canceled.");
       const result = await execution.execute({ name: selected.name, args: request.params.arguments ?? {}, toolCallId: randomUUID(), signal });
-      return { content: mcpContent(result.content), isError: result.isError };
+      const content = mcpContent(result.content);
+      if (result.isError) {
+        // Claude SDK 的错误分支只读取第一个文本块，完整正文与边界标记需要放在一起。
+        const text = content.filter(part => part.type === "text").map(part => part.text).join("\n");
+        return { content: [{ type: "text" as const, text }, ...content.filter(part => part.type !== "text")], isError: true };
+      }
+      return { content, isError: false };
     } catch (error) {
       return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
     }
