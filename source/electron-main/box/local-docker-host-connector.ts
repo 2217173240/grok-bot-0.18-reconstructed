@@ -10,7 +10,7 @@ import type { SandSettingsStore } from "../../shared/node/settings/sand-settings
 import type { RecreateResult } from "./box-recreate-commands.js";
 import { EnvDescriptorHostConnector, type SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
-import { isCommandCodeModelId } from "../../shared/inference-router.js";
+import { isCommandCodeModelId, isSandInferenceProvider } from "../../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
 import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
@@ -93,28 +93,45 @@ async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.en
 // guessing one relative depth. No stamp (dev/test bundles) means the pin
 // cannot be verified — the connector then runs the present image rather than
 // guessing staleness.
-let expectedDepsPinRead = false;
-let expectedDepsPinValue: string | undefined;
-async function readExpectedDepsPin(): Promise<string | undefined> {
-  if (!expectedDepsPinRead) {
-    expectedDepsPinRead = true;
-    let directory = dirname(fileURLToPath(import.meta.url));
-    for (let depth = 0; depth < 8; depth += 1) {
-      for (const candidate of [join(directory, "build-stamp.json"), join(directory, "Resources", "build-stamp.json")]) {
-        try {
-          const parsed = JSON.parse(await readFile(candidate, "utf8")) as { depsPin?: unknown };
-          if (typeof parsed.depsPin === "string" && /^[0-9a-f]{64}$/.test(parsed.depsPin)) {
-            expectedDepsPinValue = parsed.depsPin;
-            return expectedDepsPinValue;
-          }
-        } catch {}
+let expectedDepsPinPromise: Promise<string | undefined> | undefined;
+export async function readExpectedDepsPin(): Promise<string | undefined> {
+  const resourcesPath = Reflect.get(process, "resourcesPath");
+  expectedDepsPinPromise ??= readExpectedDepsPinFrom(dirname(fileURLToPath(import.meta.url)), typeof resourcesPath === "string" ? resourcesPath : undefined);
+  return await expectedDepsPinPromise;
+}
+
+export async function readExpectedDepsPinFrom(moduleDirectory: string, resourcesPath: string | undefined): Promise<string | undefined> {
+  const candidates = new Set<string>();
+  if (resourcesPath != null && resourcesPath.length > 0) candidates.add(join(resourcesPath, "build-stamp.json"));
+  let directory = moduleDirectory;
+  for (let depth = 0; depth < 8; depth += 1) {
+    candidates.add(join(directory, "build-stamp.json"));
+    candidates.add(join(directory, "Resources", "build-stamp.json"));
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  let found = false;
+  for (const candidate of candidates) {
+    try {
+      const raw = await readFile(candidate, "utf8");
+      found = true;
+      const parsed = JSON.parse(raw) as { depsPin?: unknown };
+      if (typeof parsed.depsPin !== "string" || !/^[0-9a-f]{64}$/.test(parsed.depsPin)) {
+        throw new Error(`Invalid build stamp at ${candidate}: depsPin must be a 64-character hexadecimal string.`);
       }
-      const parent = dirname(directory);
-      if (parent === directory) break;
-      directory = parent;
+      return parsed.depsPin;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
     }
   }
-  return expectedDepsPinValue;
+  // A packaged Electron app always has a Resources directory. Its stamp is
+  // required; source bundles and tests may legitimately have no stamp.
+  if (resourcesPath != null && resourcesPath.length > 0 && found === false) {
+    throw new Error(`Missing build stamp in packaged resources: ${join(resourcesPath, "build-stamp.json")}`);
+  }
+  return undefined;
 }
 
 export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" {
@@ -655,15 +672,19 @@ export async function stageCurrentHostBundle(settingsPath: string): Promise<Loca
 
 // The Mac's routing choice, read at container creation. An unreadable file
 // keeps the connector's long-standing default provider.
-async function readMacRouting(settingsPath: string): Promise<{ provider: string; commandCodeModel: string | undefined }> {
-  let provider = "claude-code";
-  let commandCodeModel: string | undefined;
+export async function readMacRouting(settingsPath: string): Promise<{ provider: string; commandCodeModel: string | undefined }> {
+  let macSettings: { inferenceProvider?: unknown; commandCodeModel?: unknown };
   try {
-    const macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown; commandCodeModel?: unknown };
-    if (typeof macSettings.inferenceProvider === "string" && macSettings.inferenceProvider.length > 0) provider = macSettings.inferenceProvider;
-    if (isCommandCodeModelId(macSettings.commandCodeModel)) commandCodeModel = macSettings.commandCodeModel;
-  } catch {}
-  return { provider, commandCodeModel };
+    macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown; commandCodeModel?: unknown };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return { provider: "claude-code", commandCodeModel: undefined };
+    throw error;
+  }
+  const provider = macSettings.inferenceProvider;
+  if (provider === undefined) return { provider: "claude-code", commandCodeModel: undefined };
+  if (!isSandInferenceProvider(provider)) throw new Error(`Invalid inference provider in ${settingsPath}.`);
+  if (macSettings.commandCodeModel !== undefined && !isCommandCodeModelId(macSettings.commandCodeModel)) throw new Error(`Invalid commandCodeModel in ${settingsPath}.`);
+  return { provider, commandCodeModel: macSettings.commandCodeModel as string | undefined };
 }
 
 // ~/.claude holds the Claude Code login and its history. Only the Claude Code
