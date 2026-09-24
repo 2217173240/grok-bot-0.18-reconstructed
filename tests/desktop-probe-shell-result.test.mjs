@@ -25,14 +25,15 @@ async function close(server) {
 }
 
 async function startCdp(directory) {
-  const environment = { ...process.env };
+  // Chromium 的 SingletonSocket 使用 TMPDIR；相对路径保留仓库内临时目录并满足 Unix socket 长度限制。
+  const environment = { ...process.env, TMPDIR: "." };
   delete environment.ELECTRON_RUN_AS_NODE;
   const chromium = process.env.DESKTOP_PROBE_CHROMIUM;
   const executable = chromium ?? require("electron");
   const args = chromium == null
     ? [path.join(root, "tests/fixtures/desktop-probe-cdp.cjs"), path.join(directory, "electron-profile")]
     : ["--headless", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${path.join(directory, "chromium-profile")}`, "data:text/html,<title>Desktop probe acceptance</title>"];
-  const child = spawn(executable, args, { env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(executable, args, { cwd: directory, env: environment, stdio: ["ignore", "pipe", "pipe"] });
   const exited = new Promise(resolve => child.once("close", resolve));
   const stop = async () => { if (child.exitCode == null && child.signalCode == null) child.kill("SIGTERM"); await exited; };
   try {
