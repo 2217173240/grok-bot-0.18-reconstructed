@@ -63,11 +63,13 @@ npm run package
 
 ## 运行本地容器计算机
 
-基础镜像是单独审查的构建输入：`docker/build-arm64-box.sh` 先核对不可变 digest，再构建 `grok-bot-exec-box:arm64`。[架构与部署说明](docs/LOCAL-SANDBOX-ARCHITECTURE.md)记录了镜像边界与数据目录。
+基础镜像由独立的 [grok-bot-box-image](https://github.com/2217173240/grok-bot-box-image) 仓库提供。获取脚本先校验 Release 归档再导入 Docker；`docker/build-arm64-box.sh` 随后核对固定镜像与源码 label，再构建 `grok-bot-exec-box:arm64`。[架构与部署说明](docs/LOCAL-SANDBOX-ARCHITECTURE.md)记录了镜像边界与数据目录。
 
 ```sh
 colima start --profile grokbot
 export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
+git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
+node .cache/box-image/scripts/fetch-artifact.mjs base-arm64 --load
 docker/build-arm64-box.sh
 ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Reconstructed.app"
 install -d -m 700 "$HOME/.grokbot-local"

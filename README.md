@@ -63,11 +63,13 @@ The package is written to `dist/Grok Bot 0.18 Reconstructed.app`. `npm run boots
 
 ## Run the local container computer
 
-The base image is a separate, reviewed input: `docker/build-arm64-box.sh` checks its immutable digest before building `grok-bot-exec-box:arm64`. [Architecture and deployment notes](docs/LOCAL-SANDBOX-ARCHITECTURE.md) explain the image boundary and the data paths.
+The base image is a separate, reviewed input distributed by [grok-bot-box-image](https://github.com/2217173240/grok-bot-box-image). Its download helper verifies the Release archive before importing it; `docker/build-arm64-box.sh` then checks the pinned image and source labels before building `grok-bot-exec-box:arm64`. [Architecture and deployment notes](docs/LOCAL-SANDBOX-ARCHITECTURE.md) explain the image boundary and the data paths.
 
 ```sh
 colima start --profile grokbot
 export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
+git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
+node .cache/box-image/scripts/fetch-artifact.mjs base-arm64 --load
 docker/build-arm64-box.sh
 ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Reconstructed.app"
 install -d -m 700 "$HOME/.grokbot-local"

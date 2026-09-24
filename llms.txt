@@ -19,11 +19,16 @@ Container mode:
 
 ```sh
 colima start --profile grokbot
+export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
+git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
+node .cache/box-image/scripts/fetch-artifact.mjs base-arm64 --load
 docker/build-arm64-box.sh
 ./start-local.sh start
 ```
 
 `start-local.sh` also accepts `stop`, `restart`, `logs`, and `status`. It reports an error when the Docker daemon, the pinned image, or the installed app is missing, and does not fall back to another computer. The container's shared workspace is `~/.grokbot-local/box-workspace`.
+
+The independent box-image repository supplies the pinned image Release archive and a unified artifact manifest for the official application installers. Follow the README's installation and model-token setup before starting the app.
 
 ## Docs
 
