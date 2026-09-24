@@ -12,7 +12,7 @@ const workspace = process.env.SAND_AGENT_WORKSPACE;
 if (workspace == null || workspace.length === 0) throw new Error("SAND_AGENT_WORKSPACE is required");
 await mkdir(workspace, { recursive: true });
 const outfile = path.join(workspace, ".provider-live-tool-cancel.mjs");
-await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts")], outfile, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts")], outfile, bundle: true, format: "esm", platform: "node", target: "node22", packages: "external", logLevel: "silent" });
 const { createProviderPromptSession } = await import(outfile);
 const abort = new AbortController();
 const events = [];

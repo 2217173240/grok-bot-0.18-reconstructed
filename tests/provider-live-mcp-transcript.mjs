@@ -11,7 +11,7 @@ const workspace = process.env.SAND_AGENT_WORKSPACE;
 if (workspace == null || workspace.length === 0) throw new Error("SAND_AGENT_WORKSPACE is required");
 await mkdir(workspace, { recursive: true });
 const outfile = path.join(workspace, ".provider-live-mcp-runtime.mjs");
-await build({ entryPoints: [path.join(root, "tests/fixtures/production-mcp-runtime.ts")], outfile, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+await build({ entryPoints: [path.join(root, "tests/fixtures/production-mcp-runtime.ts")], outfile, bundle: true, format: "esm", platform: "node", target: "node22", packages: "external", logLevel: "silent" });
 const runtime = await import(outfile);
 const host = new runtime.BoxMcpHost({ workspaceRoot: workspace });
 const [context, cancel] = runtime.createContext().withTimeoutAndCancel(120_000);

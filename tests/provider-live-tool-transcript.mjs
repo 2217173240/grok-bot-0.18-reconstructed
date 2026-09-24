@@ -11,7 +11,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const workspace = process.env.SAND_AGENT_WORKSPACE;
 if (workspace == null || workspace.length === 0) throw new Error("SAND_AGENT_WORKSPACE is required");
 await mkdir(workspace, { recursive: true });
-await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts"), path.join(root, "source/packages/agent/actions/user-message-action/abstract-user-message-action-handler.ts"), path.join(root, "source/host/runner/conversation-outline.ts")], outdir: workspace, entryNames: ".provider-live-tool-[name]", outExtension: { ".js": ".mjs" }, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts"), path.join(root, "source/packages/agent/actions/user-message-action/abstract-user-message-action-handler.ts"), path.join(root, "source/host/runner/conversation-outline.ts")], outdir: workspace, entryNames: ".provider-live-tool-[name]", outExtension: { ".js": ".mjs" }, bundle: true, format: "esm", platform: "node", target: "node22", packages: "external", logLevel: "silent" });
 const providerFile = path.join(workspace, ".provider-live-tool-provider-session.mjs");
 const actualHandlerFile = path.join(workspace, ".provider-live-tool-abstract-user-message-action-handler.mjs");
 const { createProviderPromptSession } = await import(providerFile);
