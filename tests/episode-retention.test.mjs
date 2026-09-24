@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -82,6 +83,39 @@ test("SQLite写入锁使Episode追加、消费与清空明确失败并保留队�
     db.consumePendingEpisodeTurns(2);
     assert.deepEqual(db.getPendingEpisodeTurns(), []);
   } finally { blocker.close(); db.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("FileMemoryStore evidence写入成功后清空Episode，SQLite关闭或锁定不阻断回合", async () => {
+  const dir = await mkdtemp(join(root, ".cache", "episode-evidence-"));
+  const dbPath = join(dir, "agent.db");
+  let db = new SandAgentDb(dbPath, { busyTimeoutMs: 1 });
+  const blocker = new DatabaseSync(dbPath);
+  const evidencePath = join(dir, "evidence.json");
+  const store = new FileMemoryStore(join(dir, "memory"), createRealDebouncePolicy({ name: "evidence-test", delayMs: 0 }), {
+    isEnabled: () => true,
+    record: evidence => writeFileSync(evidencePath, JSON.stringify(evidence)),
+  });
+  const previous = { ts: 1, user: "previous user", agent: "previous answer" };
+  const exchange = { user: "current user", agent: "current answer" };
+  const run = () => runTurnMemory(store, db, undefined, {}, 2, exchange);
+  try {
+    db.recordEpisodeTurn(previous);
+    await mkdir(evidencePath);
+    await assert.doesNotReject(run);
+    assert.deepEqual(db.getPendingEpisodeTurns(), [previous]);
+    await rm(evidencePath, { recursive: true });
+    blocker.exec("BEGIN IMMEDIATE");
+    await assert.doesNotReject(run);
+    assert.deepEqual(JSON.parse(await readFile(evidencePath, "utf8")), { occurredAt: 2, user: exchange.user, assistant: exchange.agent });
+    assert.deepEqual(db.getPendingEpisodeTurns(), [previous]);
+    blocker.exec("ROLLBACK");
+    db.close();
+    await assert.doesNotReject(run);
+    db = new SandAgentDb(dbPath, { busyTimeoutMs: 1 });
+    assert.deepEqual(db.getPendingEpisodeTurns(), [previous]);
+    await assert.doesNotReject(run);
+    assert.deepEqual(db.getPendingEpisodeTurns(), []);
+  } finally { blocker.close(); db.close(); store.dir.stopWatching(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test("真实HTTP SSE与文件写入：失败保留并追加，成功和NONE只消费本次批次", async () => {

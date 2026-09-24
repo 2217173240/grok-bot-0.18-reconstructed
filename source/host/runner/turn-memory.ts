@@ -49,12 +49,16 @@ export async function runTurnMemory(
   exchange: TurnExchange,
 ): Promise<void> {
   if (memoryStore.recordMemoryEvidence != null) {
-    episodeProgress?.clearPendingEpisodeTurns();
-    memoryStore.recordMemoryEvidence({
-      occurredAt: turnTimestamp,
-      user: exchange.user,
-      assistant: exchange.agent,
-    });
+    try {
+      memoryStore.recordMemoryEvidence({
+        occurredAt: turnTimestamp,
+        user: exchange.user,
+        assistant: exchange.agent,
+      });
+      episodeProgress?.clearPendingEpisodeTurns();
+    } catch (error) {
+      console.error("[turn-memory] evidence maintenance failed:", error);
+    }
     return;
   }
   await runMemoryExtraction(memoryStore, session, context, exchange);
