@@ -12,6 +12,29 @@ node_modules/
 .DS_Store
 *.log
 
+# 运行凭据与浏览器会话只保存在运行数据目录。
+.npmrc
+.netrc
+auth.json
+credentials.json
+user-secrets.json
+box-secrets.json
+anthropic-token
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+*.p12
+*.pfx
+.ssh/
+.claude/
+.codex/
+chrome-profile/
+browser-profile/
+Cookies
+Login Data
+Web Data
+
 # Machine-local harness and inspection scratch.
 /.tmp*/
 /.grok-*/
