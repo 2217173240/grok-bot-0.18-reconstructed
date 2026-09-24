@@ -1,42 +1,49 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { isLocalAdminEnabled } from "../local-admin.js";
 import { getSandRootDir } from "../../../host/host-paths.js";
 
-// Zero-OAuth plugin surface for local admin: MCP server definitions live in a
-// file next to settings.json instead of Cursor's dashboard. The shape mirrors
-// the familiar `{ "mcpServers": { name: { command, args, env } | { url } } }`
-// convention (Claude Code / Cursor style), so existing configs drop in as-is.
+// local-admin 从本地文件读取标准 mcpServers 配置，支持 stdio 与 HTTP 服务。
 
 export interface LocalMcpServerConfig { readonly command?: string; readonly args?: readonly string[]; readonly env?: Readonly<Record<string, string>>; readonly cwd?: string; readonly url?: string; readonly headers?: Readonly<Record<string, string>>; readonly type?: "http" | "sse" }
 export interface LocalMcpRuntimeConfig { readonly mcpServers: Readonly<Record<string, LocalMcpServerConfig>> }
 
 export const LOCAL_MCP_SERVERS_FILENAME = "mcp-servers.json";
-// The file lives in its own folder so the box can bind the folder rather than
-// the file: a single-file bind keeps the old inode, so a save that replaces
-// the file (the writer below, most editors) left the box reading a missing
-// file, and a file created after the container existed was never mounted.
-export const LOCAL_MCP_PLUGINS_DIRNAME = "plugins";
+// 独立配置目录支持原子替换，并让 plugins 目录继续保存 marketplace 数据。
+export const LOCAL_MCP_PLUGINS_DIRNAME = "mcp-config";
 
-// When the plugins folder exists it is the only source; the old location next
-// to settings.json is read only before the one-time move.
 export function localMcpServersPath(sandRootDir: string, filename: string = LOCAL_MCP_SERVERS_FILENAME): string {
-  const pluginsDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
-  return join(existsSync(pluginsDir) ? pluginsDir : sandRootDir, filename);
+  const hostTarget = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME, "shared", filename);
+  if (existsSync(hostTarget)) return hostTarget;
+  const target = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME, filename);
+  return existsSync(target) ? target : join(sandRootDir, filename);
 }
 
-// Creates the plugins folder (owner-only) and moves an existing file from the
-// old location into it once. A file already in the folder wins; the old one
-// is then left alone.
+function prepareDirectory(directory: string, mode: number): void {
+  mkdirSync(directory, { recursive: true, mode });
+  if (!lstatSync(directory).isDirectory()) throw new Error(`MCP configuration directory must be a directory: ${directory}`);
+  chmodSync(directory, mode);
+}
+
+// 私有父目录保护宿主配置；只绑定 shared 目录供容器的 box 用户读取。
 export function prepareLocalMcpPluginsDir(sandRootDir: string): string {
-  const pluginsDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
-  mkdirSync(pluginsDir, { recursive: true, mode: 0o700 });
+  const privateDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
+  prepareDirectory(privateDir, 0o700);
+  const pluginsDir = join(privateDir, "shared");
+  prepareDirectory(pluginsDir, 0o755);
   const legacy = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
   const target = join(pluginsDir, LOCAL_MCP_SERVERS_FILENAME);
   const legacyStat = lstatSync(legacy, { throwIfNoEntry: false });
-  if (legacyStat?.isFile() === true && !existsSync(target)) renameSync(legacy, target);
+  if (legacyStat?.isFile() === true && !existsSync(target)) {
+    parseLocalMcpServersConfig(readFileSync(legacy, "utf8"));
+    renameSync(legacy, target);
+  }
+  const targetStat = lstatSync(target, { throwIfNoEntry: false });
+  if (targetStat != null && !targetStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${target}`);
+  if (existsSync(target)) chmodSync(target, 0o644);
   return pluginsDir;
 }
 
@@ -115,9 +122,13 @@ export interface LocalMcpServersFileWriterDeps {
 
 export function createLocalMcpServersFileWriter(sandRootDir: string, deps: LocalMcpServersFileWriterDeps = {}) {
   const readFileImpl = deps.readFile ?? ((path, encoding) => readFileSync(path, encoding));
-  const writeFileImpl = deps.writeFile ?? ((path, data) => writeFileSync(path, data, { encoding: "utf8", mode: 0o600 }));
+  const writeFileImpl = deps.writeFile ?? ((path, data) => {
+    writeFileSync(path, data, { encoding: "utf8", mode: 0o644 });
+    chmodSync(path, 0o644);
+  });
   const renameImpl = deps.rename ?? renameSync;
   const readConfig = (): LocalMcpRuntimeConfig => {
+    prepareLocalMcpPluginsDir(sandRootDir);
     try { return parseLocalMcpServersConfig(readFileImpl(localMcpServersPath(sandRootDir), "utf8")); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { mcpServers: {} };
       throw error;
@@ -128,7 +139,7 @@ export function createLocalMcpServersFileWriter(sandRootDir: string, deps: Local
     async setConfig(config: { mcpServers?: unknown }) {
       const servers = typeof config.mcpServers === "object" && config.mcpServers != null ? config.mcpServers as Record<string, LocalMcpServerConfig> : {};
       const target = join(prepareLocalMcpPluginsDir(sandRootDir), LOCAL_MCP_SERVERS_FILENAME);
-      const temporary = `${target}.${process.pid}.tmp`;
+      const temporary = `${target}.${randomUUID()}.tmp`;
       writeFileImpl(temporary, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);
       renameImpl(temporary, target);
     },
