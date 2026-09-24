@@ -124,7 +124,7 @@ chmod 600 ~/.grokbot-local/anthropic-token
 **可选迁移（从源机拷）**：`mcp-config/shared/mcp-servers.json` + 对应插件的服务器文件（本地 MCP 插件源，服务器文件的路径按共享工作区写，
 例如 `/workspace/demo-mcp-server.cjs`）、`box-secrets.json`（Saved keys 镜像）。不拷则插件面为空，不影响主线。
 
-`mcp-servers.json` 放在 Mac 数据根的 `mcp-config/shared/` 目录中，该目录总是以只读方式绑定到 `/home/box/sand-data/mcp-config`，即盒内定义源
+`mcp-servers.json` 放在 Mac 数据根的 `mcp-config/shared/` 目录中，该目录总是以只读方式绑定到 `/home/box/sand-data/mcp-config/shared`，即盒内定义源
 读取的位置。目录绑定支持以替换方式保存的改动和容器创建后才新建的文件。`mcp-config/` 权限为 0700，保护宿主访问；`shared/` 权限为 0755，配置文件权限为 0644，允许容器 box 用户读取。
 数据根下的 `mcp-servers.json` 会在下次启动或界面编辑时移入 `mcp-config/shared/`。盒子里的 stdio 插件服务器由盒内
 exec-daemon 启动，日志在容器日志里（`box-exec-daemon: mcp:` 前缀），可以用

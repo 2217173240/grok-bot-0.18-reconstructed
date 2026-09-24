@@ -25,7 +25,7 @@ test("空目录中的旧配置迁移后，界面新增保留已有服务器", as
     const legacy = path.join(directory, "mcp-servers.json");
     const original = { mcpServers: { existing: { command: "node", args: ["server.js"] } } };
     await writeFile(legacy, JSON.stringify(original), { mode: 0o600 });
-    assert.deepEqual(await api.readLocalMcpServersConfig(directory), original);
+    assert.equal(await api.readLocalMcpServersConfig(directory), null);
     const writer = api.createLocalMcpServersFileWriter(directory);
     const { config } = await writer.getConfigForEdit();
     assert.deepEqual(config, original);
@@ -36,6 +36,38 @@ test("空目录中的旧配置迁移后，界面新增保留已有服务器", as
     assert.equal((await stat(path.join(directory, "mcp-config"))).mode & 0o777, 0o700);
     assert.equal((await stat(path.join(directory, "mcp-config", "shared"))).mode & 0o777, 0o755);
     assert.equal((await stat(api.localMcpServersPath(directory))).mode & 0o777, 0o644);
+  });
+});
+
+test("初始化后的配置删除保持为空，旧文件保持原内容", async () => {
+  await withConfig(async (api, directory) => {
+    const writer = api.createLocalMcpServersFileWriter(directory);
+    await writer.setConfig({ mcpServers: { current: { command: "node" } } });
+    const legacy = path.join(directory, "mcp-servers.json");
+    const old = JSON.stringify({ mcpServers: { old: { command: "python3" } } });
+    await writeFile(legacy, old);
+    await rm(api.localMcpServersPath(directory));
+    assert.equal(await api.readLocalMcpServersConfig(directory), null);
+    assert.deepEqual((await writer.getConfigForEdit()).config, { mcpServers: {} });
+    assert.equal(await readFile(legacy, "utf8"), old);
+    api.prepareLocalMcpPluginsDir(directory);
+    assert.equal(await api.readLocalMcpServersConfig(directory), null);
+  });
+});
+
+test("旧配置的符号链接与目录明确报告错误", async () => {
+  await withConfig(async (api, directory) => {
+    const legacy = path.join(directory, "mcp-servers.json");
+    const linked = path.join(directory, "external.json");
+    await writeFile(linked, JSON.stringify({ mcpServers: {} }));
+    await symlink(linked, legacy);
+    await assert.rejects(api.readLocalMcpServersConfig(directory), /must be a regular file/);
+    await assert.rejects(api.createLocalMcpServersFileWriter(directory).getConfigForEdit(), /must be a regular file/);
+    await rm(legacy);
+    await mkdir(legacy);
+    await assert.rejects(api.readLocalMcpServersConfig(directory), /must be a regular file/);
+    await assert.rejects(api.createLocalMcpServersFileWriter(directory).getConfigForEdit(), /must be a regular file/);
+    assert.equal(await readFile(linked, "utf8"), JSON.stringify({ mcpServers: {} }));
   });
 });
 
@@ -61,8 +93,8 @@ test("Docker box 用户读取首次创建及原子替换配置，绑定只读且
     const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
     const run = code => docker("exec", "--user", "box", name, "node", "-e", code);
     try {
-      docker("run", "--detach", "--name", name, "--network", "none", "--user", "box", "--tmpfs", "/home/box/sand-data:mode=1777", "--mount", `type=bind,src=${shared},dst=/home/box/sand-data/mcp-config,readonly`, "--entrypoint", "node", process.env.MCP_DOCKER_IMAGE ?? "grok-bot-exec-box:arm64", "-e", "setInterval(() => {}, 60000)");
-      assert.equal(run("console.log(require('fs').existsSync('/home/box/sand-data/mcp-config/mcp-servers.json'))"), "false");
+      docker("run", "--detach", "--name", name, "--network", "none", "--user", "box", "--tmpfs", "/home/box/sand-data:mode=1777", "--mount", `type=bind,src=${shared},dst=/home/box/sand-data/mcp-config/shared,readonly`, "--entrypoint", "node", process.env.MCP_DOCKER_IMAGE ?? "grok-bot-exec-box:arm64", "-e", "setInterval(() => {}, 60000)");
+      assert.equal(run("console.log(require('fs').existsSync('/home/box/sand-data/mcp-config/shared/mcp-servers.json'))"), "false");
       const writer = api.createLocalMcpServersFileWriter(directory);
       const config = { mcpServers: { first: { command: "node" } } };
       const previousUmask = process.umask(0o077);
@@ -72,7 +104,7 @@ test("Docker box 用户读取首次创建及原子替换配置，绑定只读且
         const json = JSON.stringify(expected);
         // Colima 的文件属性缓存可能短暂保留原子替换前的长度。
         while (true) {
-          const observed = run("import('/home/box/sand-data/mcp-config/reader.mjs').then(async api => console.log(JSON.stringify(await api.readLocalMcpServersConfig('/home/box/sand-data')))).catch(error => console.log(JSON.stringify({error:error.message})))");
+          const observed = run("import('/home/box/sand-data/mcp-config/shared/reader.mjs').then(async api => console.log(JSON.stringify(await api.readLocalMcpServersConfig('/home/box/sand-data')))).catch(error => console.log(JSON.stringify({error:error.message})))");
           if (observed === json) return;
           if (Date.now() >= deadline) assert.equal(observed, json);
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -93,7 +125,10 @@ test("Docker box 用户读取首次创建及原子替换配置，绑定只读且
       assert.equal(await readFile(target, "utf8"), "{broken");
       await writer.setConfig(config);
       await assertVisible(config);
-      assert.equal(run("const fs=require('fs'); for (const p of ['/home/box/sand-data/mcp-config/mcp-servers.json','/home/box/sand-data/mcp-config/extra']) { try {fs.writeFileSync(p,'bad');process.exit(1)} catch(e) {if(e.code!=='EROFS' && e.code!=='EACCES') throw e;} } console.log('readonly')"), "readonly");
+      assert.equal(run("const fs=require('fs'); for (const p of ['/home/box/sand-data/mcp-config/shared/mcp-servers.json','/home/box/sand-data/mcp-config/shared/extra']) { try {fs.writeFileSync(p,'bad');process.exit(1)} catch(e) {if(e.code!=='EROFS' && e.code!=='EACCES') throw e;} } console.log('readonly')"), "readonly");
+      run("require('fs').writeFileSync('/home/box/sand-data/mcp-servers.json', JSON.stringify({mcpServers:{old:{command:'node'}}}))");
+      await rm(target);
+      await assertVisible(null);
       assert.equal(run("const fs=require('fs'); fs.mkdirSync('/home/box/sand-data/plugins/cache',{recursive:true}); fs.writeFileSync('/home/box/sand-data/plugins/cache/test','ok'); console.log(fs.readFileSync('/home/box/sand-data/plugins/cache/test','utf8'))"), "ok");
     } finally {
       const removed = spawnSync("docker", ["rm", "--force", name], { encoding: "utf8" });

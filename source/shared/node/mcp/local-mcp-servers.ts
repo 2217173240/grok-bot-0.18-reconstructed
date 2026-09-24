@@ -16,10 +16,12 @@ export const LOCAL_MCP_SERVERS_FILENAME = "mcp-servers.json";
 export const LOCAL_MCP_PLUGINS_DIRNAME = "mcp-config";
 
 export function localMcpServersPath(sandRootDir: string, filename: string = LOCAL_MCP_SERVERS_FILENAME): string {
-  const hostTarget = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME, "shared", filename);
-  if (existsSync(hostTarget)) return hostTarget;
-  const target = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME, filename);
-  return existsSync(target) ? target : join(sandRootDir, filename);
+  const directory = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME, "shared");
+  if (existsSync(directory)) return join(directory, filename);
+  const legacy = join(sandRootDir, filename);
+  const legacyStat = lstatSync(legacy, { throwIfNoEntry: false });
+  if (legacyStat != null && !legacyStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${legacy}`);
+  return legacy;
 }
 
 function prepareDirectory(directory: string, mode: number): void {
@@ -33,17 +35,19 @@ export function prepareLocalMcpPluginsDir(sandRootDir: string): string {
   const privateDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
   prepareDirectory(privateDir, 0o700);
   const pluginsDir = join(privateDir, "shared");
-  prepareDirectory(pluginsDir, 0o755);
+  const initialized = join(privateDir, ".initialized");
   const legacy = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
   const target = join(pluginsDir, LOCAL_MCP_SERVERS_FILENAME);
   const legacyStat = lstatSync(legacy, { throwIfNoEntry: false });
-  if (legacyStat?.isFile() === true && !existsSync(target)) {
-    parseLocalMcpServersConfig(readFileSync(legacy, "utf8"));
-    renameSync(legacy, target);
-  }
+  if (legacyStat != null && !legacyStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${legacy}`);
   const targetStat = lstatSync(target, { throwIfNoEntry: false });
   if (targetStat != null && !targetStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${target}`);
+  const migrate = !existsSync(initialized) && legacyStat != null && targetStat == null;
+  if (migrate) parseLocalMcpServersConfig(readFileSync(legacy, "utf8"));
+  prepareDirectory(pluginsDir, 0o755);
+  if (migrate) renameSync(legacy, target);
   if (existsSync(target)) chmodSync(target, 0o644);
+  if (!existsSync(initialized)) writeFileSync(initialized, "", { mode: 0o600, flag: "wx" });
   return pluginsDir;
 }
 

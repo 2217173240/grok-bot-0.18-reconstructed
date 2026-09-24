@@ -318,7 +318,7 @@ do_status() {
     say "workspace:   $DATA_ROOT/box-workspace (Mac side of the container's /workspace)"
   fi
   mcp_config="$DATA_ROOT/mcp-config/shared/mcp-servers.json"
-  [ -f "$mcp_config" ] || mcp_config="$DATA_ROOT/mcp-servers.json"
+  [ -d "$DATA_ROOT/mcp-config/shared" ] || mcp_config="$DATA_ROOT/mcp-servers.json"
   if [ -f "$mcp_config" ]; then
     say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$mcp_config") defined in $mcp_config"
   fi
