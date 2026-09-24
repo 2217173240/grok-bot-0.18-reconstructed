@@ -712,6 +712,7 @@ class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
   stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[], streamOptions?: { readonly hostToolExecution?: HostToolExecution }) {
     const signal = (ctx as Context).signal;
     if (this.textOnlyInstructions !== undefined && ((definitions?.length ?? 0) > 0 || streamOptions?.hostToolExecution !== undefined)) throw new Error("Text-only inference cannot receive tools.");
+    if (this.provider === "claude-code" && (definitions?.length ?? 0) > 0 && streamOptions?.hostToolExecution === undefined) throw new Error("Claude tool definitions require the current host executor.");
     // Claude 通过当前回合的 MCP 桥接执行主机工具；其余 provider 将调用交给外层。
     if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal, this.textOnlyInstructions);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {

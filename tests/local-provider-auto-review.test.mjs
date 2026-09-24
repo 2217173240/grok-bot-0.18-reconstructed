@@ -35,6 +35,8 @@ test("Claude 生产回合只暴露当前 host 工具，分类与无工具请求�
   assert.deepEqual(runtime.claudeToolsForRequest({ textOnly: false, hostToolNames }), hostToolNames);
   assert.deepEqual(runtime.claudeToolsForRequest({ textOnly: true, hostToolNames }), []);
   assert.deepEqual(runtime.claudeToolsForRequest({ textOnly: false }), []);
+  const session = runtime.createProviderPromptSession("claude-code");
+  assert.throws(() => session.getExecutor([]).stream(runtime.createContext(), "missing-host", [{ name: "Shell" }]), /require the current host executor/);
 });
 
 test("真实设置文件保留关闭选择，当前 Router 为 cursor 时本地分类拒绝请求", async () => {
