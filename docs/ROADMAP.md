@@ -1,6 +1,6 @@
 # 本地运行维护计划
 
-更新日期：2026-09-24。PR #63、#64 已合入 main。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
+更新日期：2026-09-24。PR #71、#74、#76、#77 已合入 main。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
 
 ## 已交付能力
 
@@ -14,7 +14,7 @@
 
 | 顺序 | 事项 | 需要满足的行为 | 状态 |
 | --- | --- | --- | --- |
-| 优先 | PR #71：local admin 密钥持久化 | 重启后的不完整 Mac 状态不得覆盖 box 已保存密钥；增量添加和删除保留其他键；任意嵌套损坏阻止覆盖原文件 | main 尚未修复；#71 已请求修改，需严格字段验证和真实文件回归测试 |
+| 完成代码修复 | PR #71：local admin 密钥持久化 | 重启后的不完整 Mac 状态不覆盖 box 保存的密钥；增删串行化，写入成功后更新内存；读取和解密失败明确报错 | #71 已合入；真实文件、子进程环境和原生 Electron Keychain 跨进程验证通过，桌面重启验收进行中 |
 | 1 | build-stamp / 依赖 pin 读取 | 区分开发构建无文件与发布包文件损坏；非法 pin、读取错误不得关闭镜像校验；并发读取共享完成结果 | #63 已合入；文件异常、并发测试、CI 和 main 安装包验收通过 |
 | 2 | PR #63：Claude 凭据挂载与 OrbStack 构建 | provider 配置损坏明确报错；缺失配置采用文档规定的 Claude 默认值；保留作者的 OrbStack 支持 | #63 已合入；UI 切换 Command Code/Claude 后确认挂载移除与恢复；构建在 Colima 完成 |
 | 3 | PR #64：失败消息补发状态 | 状态损坏不得返回空集合；失败 ID 保留到会话清理；取消和过期回合不写失败记录 | #64 已合入；SQLite 150 条及损坏测试通过；实际 UI 失败后新回合成功，旧请求副作用未发生 |
@@ -26,6 +26,15 @@
 | 9 | 本地 host 生命周期测试 | 使用测试持有的端口与真实进程；不因生产服务占用 1340 而跳过 | #70 已合入；组合 160 项测试通过，零跳过 |
 | 10 | 默认模型 | `glm-5.2`、`openai/gpt-5.2`、`gpt-5.4`、`deepseek/deepseek-v4-flash` 的可用性由账号及服务端决定；保留显式模型配置和清晰 API 错误 | 已登记；没有有效账号证据时不自动换模型，也不扩展本轮账号验收 |
 | 11 | 厂商虚拟终端路径 | `BOX_TERMINALS_FOLDER` 与 daemon 的 `BOX_TERMINAL_VIRTUAL_PREFIX` 保持一致；逻辑路径映射到实际 terminalsDirectory | 已评审登记；当前保留 renderer/转录兼容路径，修改时需覆盖历史终端引用与路径边界测试 |
+| 12 | provider 重连同步 | 连接恢复时发送明确保存的 provider/model；没有选择时保留 host；显式选择 cursor 会同步 | #74 已合入；六项真实 HTTP、生产 dispatcher 和持久化测试通过 |
+| 13 | Electron renderer sandbox | 主窗口、Dev Controls 和所有 webview 启用 sandbox，保留 preload 与 IPC 权限检查 | #76 已合入；0c0b5cf 安装包主窗口加载成功，进程包含 enable-sandbox；noVNC 验收受下述桌面 URL 缺陷阻止 |
+| 14 | Router 凭据可见性 | 读取、保存和删除错误在界面显示；同步未确认时保留重试入口 | #77 已合入；真实 UI 验收进行中 |
+| 15 | MCP 配置目录挂载 | 编辑前迁移，目录挂载支持原子替换与首次安装，配置和可写插件缓存分开 | #75 修订中；隔离 Docker 测试已验证读取、只读限制、损坏后恢复及 Colima 传播延迟 |
+| 16 | 通用 provider MCP 工具 | 将工具发现、执行、状态和审批资源接入生产回合，保留子代理范围限制 | 修复分支已提交；真实 stdio、工具装配、错误与取消测试通过，组合验收待完成 |
+| 17 | 本地桌面连接 | desktop 模式返回当前启动签发的 noVNC URL，exec-only 保持无桌面 | 实际 UI 显示无独立桌面；已定位 standalone ensureReady 清空 URL，修复进行中 |
+| 18 | Computer Task 结果 | 前台 Computer 子任务完成后返回结果与附件 | 0c0b5cf 实际回合返回空结果，尚未获得本轮 Computer 成功证据，正在检查生产调用路径 |
+
+`0c0b5cf` 已完成打包、构件验证、安装与环境启动。实际 UI 回合完成 Linux 文件写入、读取、SHA-256 和 demo_echo MCP 调用；Computer 与嵌入桌面仍按上述事项处理。本次应用、lockfile 与镜像的 deps pin 均为 `6a9093c70512188e963f645ac98c02ef21b4758952d7c5836f4fe4040e71809f`，当前镜像包含 smol-toml。
 
 `1eaa2ed` 的完整 main 构建、安装、重启、exec/desktop 容器门禁和真实 UI 文件/MCP/Computer 回合已完成，证据见架构文档。OrbStack 没有在本机安装，本轮实际镜像构建使用默认 Colima；其可选来源和构建参数由源码测试验证。
 
@@ -49,7 +58,7 @@
 
 ## 保留的验收条件
 
-- local admin 的通用密钥存储当前仍有 #71 所述重启覆盖缺陷。此前 Claude 使用独立 token 文件的成功回合，不覆盖 Settings 中通用密钥的重启持久化；该项在修复验收前保持未完成。
+- Settings 通用密钥的实际桌面重启、增删与错误提示单独验收；Claude 使用独立 token 文件的成功回合不能替代这组验证。#71 的代码修复和真实 Keychain 验证已经完成。
 - 运行凭据、浏览器 cookie/profile、用户数据卷不得进入 Git 或构建上下文。两个仓库分别执行历史秘密扫描，报告全量遮蔽匹配内容；源码发布检查拒绝已跟踪的凭据与会话路径。扫描通过只覆盖对应规则与输入，不能作为任意内容安全的证明。
 
 - OpenRouter、Command Code 有效账号回合仍需用户提供已配置账号；Command Code 的真实无效密钥路径已验证。
