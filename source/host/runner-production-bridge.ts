@@ -12,6 +12,7 @@ import {
   type TurnToolsetHost,
   type TurnToolsetHostFactoryProvider,
   type TurnToolsetTurnInput,
+  type TurnMcpMetaToolFactoryInput,
 } from "./runner/tools/turn-toolset.js";
 import type { TurnMcpProjectionInput } from "./runner/turn-agent-composition.js";
 import type { AutoReviewModes } from "./runner/auto-review-gate.js";
@@ -154,6 +155,7 @@ export interface ProductionTurnModelInfo {
  * sessions across turns.
  */
 export interface ProductionTurnToolInputs {
+  readonly mcpTools?: ReturnType<TurnMcpMetaToolFactoryInput["getMcpTools"]>;
   readonly resourceAccessor: ProductionTurnResourceAccessor;
   readonly stateHandler: ProductionTurnStateHandler;
   readonly toolSession: ProductionTurnToolSession;
@@ -392,6 +394,7 @@ export function createProductionTurnToolInputs(
     fencedToolSet: input.fencedToolSet,
     staticTools: input.staticTools,
     dynamicTools: input.dynamicTools,
+    ...(input.mcpTools === undefined ? {} : { mcpTools: input.mcpTools }),
     ...(projections?.webSearch === undefined
       ? input.webSearch === undefined ? {} : { webSearch: input.webSearch }
       : { webSearch: projections.webSearch }),

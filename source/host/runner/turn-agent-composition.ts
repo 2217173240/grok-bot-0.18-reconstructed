@@ -529,10 +529,11 @@ export function createTurnAgentToolsHandoff(input: {
   return {
     toolsGenerator: props => {
       const enrichedProps: TurnToolsetBuildProps =
-        turn.parentModelInfo === undefined && turn.subagentModels === undefined
+        turn.parentModelInfo === undefined && turn.subagentModels === undefined && turn.mcp === undefined
           ? props
           : {
               ...props,
+              ...(turn.mcp === undefined ? {} : { mcp: turn.mcp }),
               ...(turn.parentModelInfo === undefined
                 ? {}
                 : { parentModelInfo: turn.parentModelInfo }),

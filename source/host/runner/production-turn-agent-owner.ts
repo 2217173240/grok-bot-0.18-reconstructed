@@ -209,8 +209,9 @@ export async function createProductionTurnAgentOwner(
   try {
     const baseResourceAccessor = await input.createResourceAccessor(input.context);
     const remoteBoxResourceAccessor = await input.createRemoteBoxResourceAccessor(input.context);
+    const localResourceInput = input.createTurnLocalResourceProjectionInput(baseResourceAccessor);
     const turnLocalResourceProjection = createTurnLocalResourceProjection({
-      ...input.createTurnLocalResourceProjectionInput(baseResourceAccessor),
+      ...localResourceInput,
       baseAccessor: baseResourceAccessor,
     });
     const resourceAccessor = turnLocalResourceProjection.resourceAccessor;
@@ -218,6 +219,7 @@ export async function createProductionTurnAgentOwner(
       ...input.turn,
       remoteBoxResourceAccessor,
       toolSession: runContext.toolSession,
+      ...(localResourceInput.mcp === undefined ? {} : { mcp: localResourceInput.mcp }),
     };
     const summarizationSession = input.summarizationSession
       ?? runContext.summarizationSession;
