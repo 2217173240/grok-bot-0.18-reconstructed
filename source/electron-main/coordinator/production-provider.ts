@@ -168,6 +168,9 @@ export interface ProductionCoordinatorPorts<Status extends ProductionCoordinator
     getLocalToolPermission(): unknown;
     getWebauthnProxyEnabled(): unknown;
     getFeatureFlagOverrides(): unknown;
+    // The provider and model the user last chose on the Mac, if any. A switch
+    // made while the box was unreachable only reaches it through this.
+    getInferenceRouting?(): { readonly inferenceProvider?: string; readonly commandCodeModel?: string };
     pushBoxSecrets(): Promise<unknown>;
     onHostSettingsTransportConnected(): void;
     onHostSettingsTransportDown(): void;
