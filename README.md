@@ -83,7 +83,7 @@ Put your model provider's token in `anthropic-token` as a single line; the file 
 
 `./start-local.sh` also takes `stop`, `restart`, and `logs`. Local admin mode executes turns inside the container, and `start` fails loudly when the image or the installed app is missing.
 
-To add a local MCP server, create `~/.grokbot-local/mcp-servers.json` with the standard `mcpServers` object. The [extension guide](docs/EXTENSIBILITY.md) lists the provider, tool, and plugin integration points.
+To add a local MCP server, create `~/.grokbot-local/mcp-config/shared/mcp-servers.json` with the standard `mcpServers` object. A file at `~/.grokbot-local/mcp-servers.json` is moved there on the next start or UI edit. The private `mcp-config` directory protects host access; its `shared` subdirectory is mounted read-only in the container and supports atomic saves and files created after startup. The [extension guide](docs/EXTENSIBILITY.md) lists the provider, tool, and plugin integration points.
 
 ## Inference providers
 

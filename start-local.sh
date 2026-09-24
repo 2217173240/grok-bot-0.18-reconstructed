@@ -317,8 +317,10 @@ do_status() {
   if [ "$(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo auto)" != "mac-host" ] && [ -d "$DATA_ROOT/box-workspace" ]; then
     say "workspace:   $DATA_ROOT/box-workspace (Mac side of the container's /workspace)"
   fi
-  if [ -f "$DATA_ROOT/mcp-servers.json" ]; then
-    say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$DATA_ROOT/mcp-servers.json") defined in mcp-servers.json"
+  mcp_config="$DATA_ROOT/mcp-config/shared/mcp-servers.json"
+  [ -d "$DATA_ROOT/mcp-config/shared" ] || mcp_config="$DATA_ROOT/mcp-servers.json"
+  if [ -f "$mcp_config" ]; then
+    say "mcp plugins: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("mcpServers", {})))' "$mcp_config") defined in $mcp_config"
   fi
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
   if ! resolve_docker_host 2>/dev/null || ! docker info >/dev/null 2>&1; then

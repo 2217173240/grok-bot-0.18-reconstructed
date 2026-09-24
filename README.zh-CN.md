@@ -83,7 +83,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 
 `./start-local.sh` 还提供 `stop`、`restart` 与 `logs`。本地管理员模式在容器内执行回合；镜像或已安装应用缺失时，`start` 会明确报错。
 
-添加本地 MCP 服务时，在 `~/.grokbot-local/mcp-servers.json` 中写入标准的 `mcpServers` 对象。[扩展说明](docs/EXTENSIBILITY.md)列出 provider、工具与插件的接入位置。
+添加本地 MCP 服务时，在 `~/.grokbot-local/mcp-config/shared/mcp-servers.json` 中写入标准的 `mcpServers` 对象。`~/.grokbot-local/mcp-servers.json` 的文件会在下次启动或界面编辑时移入该目录。私有的 `mcp-config` 目录保护宿主访问权限；内部 `shared` 目录以只读方式绑定到容器，支持原子替换及启动后创建配置文件。[扩展说明](docs/EXTENSIBILITY.md)列出 provider、工具与插件的接入位置。
 
 ## 模型服务（provider）
 

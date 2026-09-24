@@ -13,7 +13,7 @@ import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 import { isCommandCodeModelId, isSandInferenceProvider } from "../../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
-import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
+import { LOCAL_MCP_PLUGINS_DIRNAME, prepareLocalMcpPluginsDir } from "../../shared/node/mcp/local-mcp-servers.js";
 import { SAND_BOX_DATA_ROOT } from "../../host/host-paths.js";
 import { stopLocalAdminHost } from "./local-admin-host.js";
 
@@ -160,11 +160,13 @@ export function localDockerRunPlan(options: {
   readonly inferenceCredential?: InferenceCredential;
   readonly inferenceFileDir?: string;
   /**
-   * The user's plugin definitions. Bound rather than copied so the computer
-   * always sees the current file: the config push compares the parsed payload,
-   * and a stale copy would silently diverge from what the operator edited.
+   * The folder holding the user's plugin definitions. Bound rather than copied
+   * so the computer always sees the current file: the config push compares
+   * the parsed payload, and a stale copy would silently diverge from what the
+   * operator edited. The folder, not the file, so replaced or later-created
+   * files are seen too.
    */
-  readonly mcpServersHostPath?: string;
+  readonly pluginsHostDir?: string;
 }): LocalDockerRunPlan {
   const image = options.image ?? LOCAL_DOCKER_BOX_IMAGE;
   const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
@@ -226,7 +228,7 @@ export function localDockerRunPlan(options: {
     "--publish", "127.0.0.1:1340:1340",
     "--mount", `type=bind,src=${options.workspaceHostPath},dst=/workspace`,
     "--volume", `${dataVolume}:/home/box/sand-data`,
-    ...(options.mcpServersHostPath == null ? [] : ["--mount", `type=bind,src=${options.mcpServersHostPath},dst=${SAND_BOX_DATA_ROOT}/${LOCAL_MCP_SERVERS_FILENAME},readonly`]),
+    ...(options.pluginsHostDir == null ? [] : ["--mount", `type=bind,src=${options.pluginsHostDir},dst=${SAND_BOX_DATA_ROOT}/${LOCAL_MCP_PLUGINS_DIRNAME}/shared,readonly`]),
     "--mount", `type=bind,src=${options.hostMainPath},dst=/home/box/sand-host,readonly`,
     "--mount", `type=bind,src=${options.boxExecDaemonDir},dst=/home/box/box-exec-daemon,readonly`,
     ...(options.inferenceFileDir == null ? [] : ["--mount", `type=bind,src=${options.inferenceFileDir},dst=/run/grok-bot,readonly`]),
@@ -453,9 +455,9 @@ export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcess
   return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; hasPluginsMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, hasPluginsMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> }; Mounts?: readonly { Destination?: unknown }[] };
     return {
@@ -468,6 +470,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       hasCodexAuthMount: value.Mounts?.some(mount => mount.Destination === "/root/.codex") === true,
       hasClaudeAuthMount: value.Mounts?.some(mount => mount.Destination === "/root/.claude") === true,
+      hasPluginsMount: value.Mounts?.some(mount => mount.Destination === `${SAND_BOX_DATA_ROOT}/${LOCAL_MCP_PLUGINS_DIRNAME}/shared`) === true,
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
       desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
@@ -746,7 +749,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // reporting itself current, and staged-runtime pruning may then delete the
   // directory it is still reading.
   const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || !inspected.hasPluginsMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
@@ -776,10 +779,9 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     const authMounts = localClaudeMountArguments(claudeMount);
     // Plugin definitions are the one input the box cannot obtain for itself.
-    // Binding the user's file means the computer always reads the current
-    // version, and an installation that never wrote one simply has no mount.
-    const mcpServersCandidate = join(dirname(settingsPath), LOCAL_MCP_SERVERS_FILENAME);
-    const mcpServersHostPath = (await stat(mcpServersCandidate).catch(() => null))?.isFile() === true ? mcpServersCandidate : undefined;
+    // The folder is always bound, so a first plugin added later needs no
+    // container change; an empty folder means no plugins.
+    const pluginsHostDir = prepareLocalMcpPluginsDir(dirname(settingsPath));
     const plan = localDockerRunPlan({
       image,
       hostMainPath: hostBundle.path,
@@ -795,7 +797,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
       authMounts,
       ...(inferenceCredential == null ? {} : { inferenceCredential }),
       ...(inferenceFile == null ? {} : { inferenceFileDir: dirname(inferenceFile) }),
-      ...(mcpServersHostPath == null ? {} : { mcpServersHostPath }),
+      pluginsHostDir,
     });
     const created = await runDocker(plan.args);
     if (!created.ok) throw new Error(`Could not create the local Docker VM: ${created.output}`);

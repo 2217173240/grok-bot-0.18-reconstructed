@@ -121,13 +121,15 @@ chmod 600 ~/.grokbot-local/anthropic-token
 
 `local-docker-runtime/` 的保留规则：每次宿主 bundle 变化都会生成一个新的 `v<layout>-<hostSha>-<daemonSha>` 目录，App 在 staging 之后保留最新 3 个并删除更早的（含旧 layout 版本的目录）。容器挂载的总是最新那一个，因此清理不会碰到在用目录。同一规则可重复执行，第二次不再删除任何内容；不需要人工清理。
 
-**可选迁移（从源机拷）**：`mcp-servers.json` + 对应插件的服务器文件（本地 MCP 插件源，服务器文件的路径按共享工作区写，
+**可选迁移（从源机拷）**：`mcp-config/shared/mcp-servers.json` + 对应插件的服务器文件（本地 MCP 插件源，服务器文件的路径按共享工作区写，
 例如 `/workspace/demo-mcp-server.cjs`）、`box-secrets.json`（Saved keys 镜像）。不拷则插件面为空，不影响主线。
 
-`mcp-servers.json` 会被只读挂进容器：Mac 数据根的同名文件绑定到 `/home/box/sand-data/mcp-servers.json`，即盒内定义源
-读取的位置，因此操作者改动后盒子立即读到当前内容；文件不存在时不加这个挂载。盒子里的 stdio 插件服务器由盒内
+`mcp-servers.json` 放在 Mac 数据根的 `mcp-config/shared/` 目录中，该目录总是以只读方式绑定到 `/home/box/sand-data/mcp-config/shared`，即盒内定义源
+读取的位置。目录绑定支持以替换方式保存的改动和容器创建后才新建的文件。`mcp-config/` 权限为 0700，保护宿主访问；`shared/` 权限为 0755，配置文件权限为 0644，允许容器 box 用户读取。
+数据根下的 `mcp-servers.json` 会在下次启动或界面编辑时移入 `mcp-config/shared/`。盒子里的 stdio 插件服务器由盒内
 exec-daemon 启动，日志在容器日志里（`box-exec-daemon: mcp:` 前缀），可以用
 `docker logs grok-bot-local-vm | grep "box-exec-daemon: mcp"` 看每个插件的启动、工具列举与每次调用。
+Colima 共享文件系统的属性缓存可能让容器在原子保存后短暂读取到不完整的 JSON；配置读取会报告错误并保留文件，缓存更新后重新加载即可。
 新增依赖 `@modelcontextprotocol/sdk`，因此依赖 pin 变化后必须用 `docker/build-arm64-box.sh` 重建盒子镜像。
 
 **可选挂载**：`~/.codex`、`~/.claude` 存在即被只读挂进容器（`/root/.codex`、`/root/.claude`）。自建镜像以 `box`
