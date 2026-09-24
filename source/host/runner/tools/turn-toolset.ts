@@ -218,6 +218,7 @@ type StreamingTurnTool = TurnTool & {
 export type TurnToolsetBuildProps = ProductionTurnToolInputs;
 
 export interface TurnToolsetTurnInput {
+  readonly mcp?: ProductionTurnToolInputs["mcp"];
   /** The exact owner-scoped update relay installed for this prepared turn. */
   readonly emitUpdate?: (update: ForwardedUpdate) => void;
   readonly remoteBoxResourceAccessor?: ProductionTurnToolInputs["resourceAccessor"];

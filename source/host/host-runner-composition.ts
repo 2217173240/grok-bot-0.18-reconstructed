@@ -78,6 +78,10 @@ import { listenerPlatformsInTrigger } from "./automations/listener-integrations.
 import { resolveSharedRoomBoxToolsEnabled } from "./groups/xuser.js";
 import { boxAgentWindowIndex, boxSupportsMultiWindow } from "./box/box-capabilities.js";
 import { createAutoReviewGate } from "./runner/auto-review-gate.js";
+import { createProductionMcpForTurn, createProductionMcpToolInputs } from "./runner/production-mcp-projection.js";
+import type { createTurnObservation } from "./runner/turn-observation.js";
+import { boundedConnectorTag } from "../shared/observability/connector-auth-telemetry.js";
+import { mcpErrorClassOf, takeMcpExecErrorClass, reportMcpHostEdgeDegraded } from "../shared/node/mcp/mcp-diagnostics.js";
 import {
   sandAutoReviewApprovalExpiryPolicy,
   SandAutoReviewController,
@@ -256,6 +260,7 @@ export function createPerTurnResourceAccessor(
 }
 
 export interface ProductionSessionBoundRunner {
+  readonly observation: Pick<ReturnType<typeof createTurnObservation>, "beginMcpExecObservation">;
   readonly subagents: {
     readonly sessions: Map<string, SubagentSession>;
     isRunning(agentId: string): boolean;
@@ -2370,6 +2375,19 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
         turn: baseTurn,
         factoryProvider: {
           ...createTurnToolsetFactoryProvider(hostDependencies()),
+          ...(mcp.mcp == null ? {} : {
+            createMcpMetaToolInputs: (_turn, props) => {
+              const userInstructions = turnAutoReviewGate.userInstructions();
+              return createProductionMcpToolInputs({
+                resourceAccessor: props.resourceAccessor as Parameters<typeof createProductionMcpToolInputs>[0]["resourceAccessor"],
+                getMcpTools: () => props.mcpTools ?? [],
+                mode: turnAutoReviewGate.currentModes().mcp,
+                agentId,
+                ...(autoReviewController === undefined ? {} : { controller: autoReviewController }),
+                ...(userInstructions === undefined ? {} : { userInstructions }),
+              });
+            },
+          } satisfies Pick<TurnToolsetHostFactoryProvider, "createMcpMetaToolInputs">),
           ...(isComputerUse
             ? {
                 createComputerToolInputs: (turn, props) => {
@@ -2618,6 +2636,31 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                 },
                 actionAuditor: projectedActionAuditor,
                 agentId,
+                ...(mcp.mcp == null ? {} : {
+                  mcp: {
+                    mcpForTurn: createProductionMcpForTurn(mcp.mcp),
+                    persistImage: hooks.persistImage,
+                    textSpiller: promptGlue.createMcpTextSpiller(),
+                    isSubagentRunner: isSubagent,
+                    beginObservation: args => runner.observation.beginMcpExecObservation({
+                      toolCallId: args.toolCallId,
+                      connector: args.connector,
+                      ...(args.requestId === undefined ? {} : { requestId: args.requestId }),
+                    }),
+                    boundedConnectorTag,
+                    mcpErrorClassOf,
+                    takeMcpExecErrorClass,
+                    emitConnectorCard: emission => emitUpdate({
+                      type: "send-message",
+                      message: connectorCardEmissionToMessage({ ...emission, connector: emission.connector ?? emission.serverId }),
+                      timestampMs: Date.now(),
+                    }),
+                    ...(runOptions.ackToken === undefined ? {} : { ackToken: runOptions.ackToken }),
+                    cancelThisRun,
+                    reportDiagnostic: event => reportMcpHostEdgeDegraded(event.kind, event.errorClass),
+                    errorLogTag: mcpErrorClassOf,
+                  },
+                }),
               };
             },
             blobStore: getAgentBlobStore(
