@@ -194,7 +194,7 @@ export interface MainBrowserWindowOptions {
     readonly contextIsolation: true;
     readonly nodeIntegration: false;
     readonly preload: string;
-    readonly sandbox: false;
+    readonly sandbox: true;
     readonly webviewTag: true;
   };
 }
@@ -246,7 +246,6 @@ export function startElectronMain(deps: ElectronMainDependencies): ElectronMainR
   deps.startup.bootstrapBeforeSingleInstance();
 
   deps.app.disableHardwareAcceleration();
-  deps.app.commandLine.appendSwitch("no-sandbox");
   deps.app.commandLine.appendSwitch("disable-gpu");
   if (isLocalAdminEnabled(env)) {
     // One Chromium safe-storage backend. Keychain ACL prompts per secret are a lie of many parts.
@@ -314,7 +313,7 @@ export function startElectronMain(deps: ElectronMainDependencies): ElectronMainR
         contextIsolation: true,
         nodeIntegration: false,
         preload: deps.preloadPath,
-        sandbox: false,
+        sandbox: true,
         webviewTag: true,
       },
     });
