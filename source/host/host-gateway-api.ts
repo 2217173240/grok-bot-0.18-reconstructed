@@ -659,8 +659,8 @@ export function createHostGatewayApi(
     completeMcpOAuth: async () => undefined,
     requestWebAuthnCeremony: (args: any) =>
       method(deps.extensions.api("webauthn-proxy"), "requestCeremony")(args),
-    setBoxSecrets: ({ secrets }: any) =>
-      method(deps.extensions.api("secrets"), "set")({ secrets }),
+    setBoxSecrets: ({ secrets, merge, removeKeys }: any) =>
+      method(deps.extensions.api("secrets"), "set")({ secrets, merge: merge === true, removeKeys: Array.isArray(removeKeys) ? removeKeys.filter((key: unknown) => typeof key === "string") : [] }),
     getBoxSecretsStatus: () =>
       method(deps.extensions.api("secrets"), "getStatus")()
   };

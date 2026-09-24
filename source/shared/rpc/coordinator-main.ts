@@ -6,6 +6,7 @@ export const COORDINATOR_MAIN_METHOD_TABLE = {
   getHostSettings: { args: "none" },
   setHostSettings: { args: "object" },
   setBoxSecrets: { args: "object" },
+  getBoxSecretsStatus: { args: "none" },
   refreshMcp: { args: "object" },
   listBoxMcpServers: { args: "object" },
   updateForeverBox: { args: "object" },
