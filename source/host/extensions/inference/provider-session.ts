@@ -714,7 +714,7 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
   return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
 }
 
-function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const tools = toToolSet(definitions);
   const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const streamFailure = Promise.withResolvers<never>();
