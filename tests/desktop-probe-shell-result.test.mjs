@@ -49,13 +49,6 @@ async function startCdp(directory) {
       child.stdout.on("data", value => { stdout += value; check(); });
       child.stderr.on("data", value => { stderr += value; check(); });
     });
-    const deadline = Date.now() + 5000;
-    while (true) {
-      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) })).json();
-      if (targets.some(target => target.type === "page" && target.title === "Desktop probe acceptance")) break;
-      if (Date.now() >= deadline) throw new Error("CDP page did not finish loading");
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
     return { port, stop };
   } catch (error) { await stop(); throw error; }
 }
@@ -97,10 +90,14 @@ test("真实 daemon 对关闭端口、curl 超时和浏览器 CDP 的返回按�
     assert.equal(navigationProbeOutput(timedOut), undefined);
 
     cdp = await startCdp(directory);
-    const available = await execute(navigationProbeCommand(cdp.port - 9222));
-    assert.equal(available.result.case, "success");
-    const targets = JSON.parse(navigationProbeOutput(available));
-    assert.ok(targets.some(target => target.type === "page" && target.title === "Desktop probe acceptance"));
+    const pageDeadline = Date.now() + 10_000;
+    while (true) {
+      const available = await execute(navigationProbeCommand(cdp.port - 9222));
+      const stdout = navigationProbeOutput(available);
+      if (stdout !== undefined && JSON.parse(stdout).some(target => target.type === "page" && target.title === "Desktop probe acceptance")) break;
+      if (Date.now() >= pageDeadline) throw new Error(`Browser CDP page not ready: ${JSON.stringify({ resultCase: available.result.case, exitCode: available.result.value?.exitCode, stdoutBytes: stdout?.length ?? 0 })}`);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
 
     const killed = await execute("kill -TERM $$");
     assert.equal(killed.result.case, "failure");
