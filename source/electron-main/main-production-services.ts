@@ -621,6 +621,7 @@ export function createElectronMainProductionComposition(bindings: ElectronMainPr
             const applied = Reflect.get(response, "isApplied");
             return typeof applied === "boolean" ? { isApplied: applied } : {};
           },
+          getBoxSecretsStatus: () => coordinatorLegs.legs.getBoxSecretsStatus!(),
         },
       );
       const backendClientOptions = {

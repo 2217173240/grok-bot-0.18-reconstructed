@@ -41,10 +41,16 @@ export interface BoxSecretsPushReport {
   readonly errorClass?: "keychain_locked" | "other" | "host_unreachable" | "box_unreachable";
 }
 
+// merge=true: the Mac only knows this session's edits, so the host applies them
+// on top of its saved copy instead of replacing it.
+export type BoxSecretsRequest =
+  | { readonly secrets: Record<string, string> }
+  | { readonly secrets: Record<string, string>; readonly merge: true; readonly removeKeys: readonly string[] };
+
 export function createBoxSecretsPush(deps: {
   readonly userSecretsStore: Pick<UserSecretsStore, "exportSnapshot">;
   readonly isAccountDeparting: () => boolean;
-  readonly setBoxSecrets: (request: { readonly secrets: Record<string, string> }) => Promise<{ readonly isApplied?: boolean }>;
+  readonly setBoxSecrets: (request: BoxSecretsRequest) => Promise<{ readonly isApplied?: boolean }>;
   readonly report: (report: BoxSecretsPushAttempt) => void;
   readonly macSecretsPath?: string;
 }): {
@@ -61,6 +67,19 @@ export function createBoxSecretsPush(deps: {
       return { ok: false, error };
     }
     const sentCount = Object.keys(snapshot.secrets).length;
+    if (snapshot.complete === false) {
+      // Never replace the box copy from a partial view; with no edits there is
+      // nothing to send, and no partial Mac mirror is written.
+      if (sentCount === 0 && snapshot.removed.length === 0) return { ok: true };
+      try {
+        const status = await deps.setBoxSecrets({ secrets: snapshot.secrets, merge: true, removeKeys: snapshot.removed });
+        deps.report({ outcome: "ok", trigger, accountScope: snapshot.accountScope, departing, secretCount: sentCount, applied: status.isApplied === true });
+        return { ok: true };
+      } catch (error) {
+        deps.report({ outcome: "failed", trigger, scope: { accountScope: snapshot.accountScope }, errorClass: "box_unreachable", secretCount: sentCount });
+        return { ok: false, error };
+      }
+    }
     const macSecretsPath = deps.macSecretsPath ?? join(getSandRootDir(), BOX_SECRETS_FILENAME);
     // Mac coordinator reads ~/.grokbot/box-secrets.json. Persist before the box
     // push so Saved keys survive a down box; never roll back that Mac snapshot.
@@ -127,6 +146,7 @@ export function registerSecretsIpc(deps: {
   readonly stores: {
     readonly userSecretsStore: Pick<UserSecretsStore, "listKeys" | "isPersistent" | "reveal" | "upsert" | "remove">;
     readonly clientPersistenceStore: Pick<SandClientPersistenceStore, "read" | "write" | "remove" | "listKeys" | "migrateFromLocalStorage">;
+    readonly listBoxSecretKeys?: () => Promise<readonly string[]>;
   };
   readonly pushBoxSecrets: () => Promise<boolean>;
 }): void {
@@ -134,7 +154,9 @@ export function registerSecretsIpc(deps: {
   const { userSecretsStore, clientPersistenceStore } = deps.stores;
   ipcMain.handle("sand:secrets-list", async (event) => {
     guards.assertTrustedSecretsSender(event);
-    return { keys: await userSecretsStore.listKeys(), isPersistent: userSecretsStore.isPersistent() };
+    // Without OS secure storage the Mac keeps no saved copy; the box does.
+    const boxKeys = userSecretsStore.isPersistent() ? [] : await deps.stores.listBoxSecretKeys?.().catch(() => []) ?? [];
+    return { keys: await userSecretsStore.listKeys(boxKeys), isPersistent: userSecretsStore.isPersistent() };
   });
   ipcMain.handle("sand:secrets-reveal", async (event, request) => {
     guards.assertTrustedSecretsSender(event);
@@ -186,10 +208,12 @@ export function createSecretsStores(
     readonly reportTelemetry: (level: "info" | "warn", metadata: Readonly<Record<string, string>>) => void;
     readonly isSignedIn: () => boolean;
     readonly isAccountDeparting: () => boolean;
-    readonly setBoxSecrets: (request: { readonly secrets: Record<string, string> }) => Promise<{ readonly isApplied?: boolean }>;
+    readonly setBoxSecrets: (request: BoxSecretsRequest) => Promise<{ readonly isApplied?: boolean }>;
+    readonly getBoxSecretsStatus?: () => Promise<unknown>;
   },
 ): {
   readonly userSecretsStore: SandUserSecretsStore;
+  readonly listBoxSecretKeys: () => Promise<readonly string[]>;
   readonly clientPersistenceStore: SandClientPersistenceStore;
   readonly pushBoxSecrets: ReturnType<typeof createBoxSecretsPush>;
   readonly pushTelemetry: ReturnType<typeof createBoxSecretsPushTelemetry>;
@@ -209,5 +233,10 @@ export function createSecretsStores(
       report: pushTelemetry.record,
     }),
     pushTelemetry,
+    listBoxSecretKeys: async () => {
+      const status: unknown = await push.getBoxSecretsStatus?.();
+      const keys = typeof status === "object" && status != null ? Reflect.get(status, "keys") : undefined;
+      return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : [];
+    },
   };
 }
