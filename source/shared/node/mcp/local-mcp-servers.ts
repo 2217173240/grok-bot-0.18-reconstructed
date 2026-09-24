@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,6 +14,31 @@ export interface LocalMcpServerConfig { readonly command?: string; readonly args
 export interface LocalMcpRuntimeConfig { readonly mcpServers: Readonly<Record<string, LocalMcpServerConfig>> }
 
 export const LOCAL_MCP_SERVERS_FILENAME = "mcp-servers.json";
+// The file lives in its own folder so the box can bind the folder rather than
+// the file: a single-file bind keeps the old inode, so a save that replaces
+// the file (the writer below, most editors) left the box reading a missing
+// file, and a file created after the container existed was never mounted.
+export const LOCAL_MCP_PLUGINS_DIRNAME = "plugins";
+
+// When the plugins folder exists it is the only source; the old location next
+// to settings.json is read only before the one-time move.
+export function localMcpServersPath(sandRootDir: string, filename: string = LOCAL_MCP_SERVERS_FILENAME): string {
+  const pluginsDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
+  return join(existsSync(pluginsDir) ? pluginsDir : sandRootDir, filename);
+}
+
+// Creates the plugins folder (owner-only) and moves an existing file from the
+// old location into it once. A file already in the folder wins; the old one
+// is then left alone.
+export function prepareLocalMcpPluginsDir(sandRootDir: string): string {
+  const pluginsDir = join(sandRootDir, LOCAL_MCP_PLUGINS_DIRNAME);
+  mkdirSync(pluginsDir, { recursive: true, mode: 0o700 });
+  const legacy = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
+  const target = join(pluginsDir, LOCAL_MCP_SERVERS_FILENAME);
+  const legacyStat = lstatSync(legacy, { throwIfNoEntry: false });
+  if (legacyStat?.isFile() === true && !existsSync(target)) renameSync(legacy, target);
+  return pluginsDir;
+}
 
 function parseServerEntry(value: unknown): LocalMcpServerConfig | undefined {
   if (typeof value !== "object" || value == null) return undefined;
@@ -59,7 +84,7 @@ export async function readLocalMcpServersConfig(
   filename: string = LOCAL_MCP_SERVERS_FILENAME,
 ): Promise<LocalMcpRuntimeConfig | null> {
   try {
-    const raw = await readFileImpl(join(sandRootDir, filename), "utf8");
+    const raw = await readFileImpl(localMcpServersPath(sandRootDir, filename), "utf8");
     return parseLocalMcpServersConfig(raw);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -92,9 +117,8 @@ export function createLocalMcpServersFileWriter(sandRootDir: string, deps: Local
   const readFileImpl = deps.readFile ?? ((path, encoding) => readFileSync(path, encoding));
   const writeFileImpl = deps.writeFile ?? ((path, data) => writeFileSync(path, data, { encoding: "utf8", mode: 0o600 }));
   const renameImpl = deps.rename ?? renameSync;
-  const target = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
   const readConfig = (): LocalMcpRuntimeConfig => {
-    try { return parseLocalMcpServersConfig(readFileImpl(target, "utf8")); } catch (error) {
+    try { return parseLocalMcpServersConfig(readFileImpl(localMcpServersPath(sandRootDir), "utf8")); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { mcpServers: {} };
       throw error;
     }
@@ -103,6 +127,7 @@ export function createLocalMcpServersFileWriter(sandRootDir: string, deps: Local
     async getConfigForEdit() { return { config: readConfig(), serverIdsByName: {} as Readonly<Record<string, bigint>> }; },
     async setConfig(config: { mcpServers?: unknown }) {
       const servers = typeof config.mcpServers === "object" && config.mcpServers != null ? config.mcpServers as Record<string, LocalMcpServerConfig> : {};
+      const target = join(prepareLocalMcpPluginsDir(sandRootDir), LOCAL_MCP_SERVERS_FILENAME);
       const temporary = `${target}.${process.pid}.tmp`;
       writeFileImpl(temporary, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);
       renameImpl(temporary, target);

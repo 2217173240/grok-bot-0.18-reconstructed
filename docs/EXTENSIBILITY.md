@@ -53,7 +53,7 @@
 
 stdio 插件服务器由本地计算机托管：`source/box-exec-daemon/mcp-host.ts` 用官方 SDK 启动配置里的每个服务器，盒内
 轮次通过 `source/shared/node/mcp/routed-mcp-bridge.ts` 的回环桥把工具交给 CLI 子进程，插件清单位于
-`/home/box/sand-data/mcp-servers.json`（Mac 数据根同名文件的只读绑定）。local-admin 下 HTTP 服务器也由容器内的官方 MCP SDK 直接连接；远程账号模式保留 backend 路由。
+`/home/box/sand-data/plugins/mcp-servers.json`（Mac 数据根 `plugins/` 目录的只读绑定）。local-admin 下 HTTP 服务器也由容器内的官方 MCP SDK 直接连接；远程账号模式保留 backend 路由。
 
 | 要做的事 | 位置 |
 | --- | --- |

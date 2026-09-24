@@ -19,7 +19,7 @@ test("真实 MCP 配置文件保留 HTTP headers，损坏内容禁止作为空�
     await writer.setConfig(configuration);
     assert.deepEqual(await api.readLocalMcpServersConfig(directory), configuration);
     assert.deepEqual((await writer.getConfigForEdit()).config, configuration);
-    const target = path.join(directory, "mcp-servers.json");
+    const target = path.join(directory, "plugins", "mcp-servers.json");
     await writeFile(target, "{broken");
     await assert.rejects(api.readLocalMcpServersConfig(directory), /not valid JSON/);
     await assert.rejects(writer.getConfigForEdit(), /not valid JSON/);
