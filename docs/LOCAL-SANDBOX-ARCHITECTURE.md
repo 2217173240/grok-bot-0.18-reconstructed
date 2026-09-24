@@ -74,6 +74,8 @@ flowchart TD
 
 ## 生命周期和幂等规则
 
+local admin 的通用密钥持久化仍由未合并的 PR #71 处理：Mac 的会话内存为空时，目前可能覆盖 box 保存的集合。该 PR 还需要拒绝嵌套字段损坏并补充持久化回归测试。用户密钥只能保存在运行时存储或受控只读挂载中，不能进入主仓库、镜像仓库、构建层或发布附件。
+
 读取失败与持久状态保留的维护范围见 [ROADMAP.md](ROADMAP.md)。PR #63、#64、#65、#70 已合入 main：build-stamp 和 provider 配置异常明确报错，失败消息 ID 保留到会话清理，Codex TOML 使用统一解析器，审计与 Episode 待处理状态按确认结果消费。160 项测试覆盖真实 SQLite、文件故障、HTTP 流和子进程；实际安装包验收另行记录。
 
 1. 回合拥有自己的 Context 和 MCP bridge。取消信号传到 Claude abortController、AI SDK abortSignal、Codex fetch、MCP HTTP 请求、盒内 Connect RPC 与 stdio MCP 客户端；bridge 随流关闭。已经发生的外部副作用不会因取消而撤销。
