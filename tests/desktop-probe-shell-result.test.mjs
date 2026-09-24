@@ -27,27 +27,39 @@ async function close(server) {
 async function startCdp(directory) {
   const environment = { ...process.env };
   delete environment.ELECTRON_RUN_AS_NODE;
-  const child = spawn(require("electron"), [path.join(root, "tests/fixtures/desktop-probe-cdp.cjs"), path.join(directory, "electron-profile")], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
-  const exited = new Promise(resolve => child.once("exit", resolve));
+  const chromium = process.env.DESKTOP_PROBE_CHROMIUM;
+  const executable = chromium ?? require("electron");
+  const args = chromium == null
+    ? [path.join(root, "tests/fixtures/desktop-probe-cdp.cjs"), path.join(directory, "electron-profile")]
+    : ["--headless", "--no-first-run", "--no-default-browser-check", "--remote-debugging-port=0", `--user-data-dir=${path.join(directory, "chromium-profile")}`, "data:text/html,<title>Desktop probe acceptance</title>"];
+  const child = spawn(executable, args, { env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise(resolve => child.once("close", resolve));
   const stop = async () => { if (child.exitCode == null && child.signalCode == null) child.kill("SIGTERM"); await exited; };
   try {
     const port = await new Promise((resolve, reject) => {
       let stdout = "", stderr = "";
-      const timer = setTimeout(() => { reject(new Error("Electron CDP startup timed out")); }, 15_000);
+      const timer = setTimeout(() => { reject(new Error("Browser CDP startup timed out")); }, 15_000);
       const check = () => {
         const match = stderr.match(/DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)\//);
-        if (match != null && stdout.includes("desktop-probe-ready")) { clearTimeout(timer); resolve(Number(match[1])); }
+        if (match != null && (chromium != null || stdout.includes("desktop-probe-ready"))) { clearTimeout(timer); resolve(Number(match[1])); }
       };
       child.once("error", error => { clearTimeout(timer); reject(error); });
-      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Electron exited before readiness: ${code ?? signal}\n${stderr.slice(-1500)}`)); });
+      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Browser exited before readiness: ${code ?? signal}\n${stderr.slice(-1500)}`)); });
       child.stdout.on("data", value => { stdout += value; check(); });
       child.stderr.on("data", value => { stderr += value; check(); });
     });
+    const deadline = Date.now() + 5000;
+    while (true) {
+      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) })).json();
+      if (targets.some(target => target.type === "page" && target.title === "Desktop probe acceptance")) break;
+      if (Date.now() >= deadline) throw new Error("CDP page did not finish loading");
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     return { port, stop };
   } catch (error) { await stop(); throw error; }
 }
 
-test("真实 daemon 对关闭端口、curl 超时和 Electron CDP 的返回按协议分类", { timeout: 40_000 }, async () => {
+test("真实 daemon 对关闭端口、curl 超时和浏览器 CDP 的返回按协议分类", { timeout: 40_000 }, async () => {
   await mkdir(path.join(root, ".cache"), { recursive: true });
   const directory = await mkdtemp(path.join(root, ".cache/desktop-probe-"));
   const output = path.join(directory, "runtime.mjs");
