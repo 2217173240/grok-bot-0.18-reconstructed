@@ -30,6 +30,12 @@ async function electronCheck(phase, directory) {
       assert.deepEqual((await store.exportSnapshot()).secrets, values);
       assert.deepEqual(await store.listKeys(), Object.keys(values).sort());
       assert.equal(await store.reveal("DISPOSABLE_KEY"), values.DISPOSABLE_KEY);
+      await fs.chmod(directory, 0o500);
+      try {
+        await assert.rejects(() => store.upsert({ FAILED_KEY: randomUUID() }), { code: "EACCES" });
+        await assert.rejects(() => store.remove(["OTHER_KEY"]), { code: "EACCES" });
+      } finally { await fs.chmod(directory, 0o700); }
+      assert.deepEqual((await store.exportSnapshot()).secrets, values);
       const legacyPath = path.join(directory, "legacy.json");
       await fs.writeFile(legacyPath, JSON.stringify({ version: 1, secrets: { LEGACY_KEY: safeStorage.encryptString(values.DISPOSABLE_KEY).toString("base64") } }), { mode: 0o600 });
       const legacy = new SandUserSecretsStore(legacyPath, () => "disposable-account");
@@ -43,6 +49,14 @@ async function electronCheck(phase, directory) {
       await assert.rejects(() => unreadable.exportSnapshot(), SandUserSecretsUnreadableError);
       await assert.rejects(() => unreadable.upsert(values), SandUserSecretsUnreadableError);
       assert.equal(await fs.readFile(damagedPath, "utf8"), damaged);
+      const ciphertextPath = path.join(directory, "invalid-ciphertext.json");
+      const invalidCiphertext = JSON.stringify({ version: 2, accounts: { "disposable-account": { BROKEN_KEY: "invalid-ciphertext" } } });
+      await fs.writeFile(ciphertextPath, invalidCiphertext, { mode: 0o600 });
+      const invalid = new SandUserSecretsStore(ciphertextPath, () => "disposable-account");
+      await assert.rejects(() => invalid.reveal("BROKEN_KEY"), SandUserSecretsUnreadableError);
+      await assert.rejects(() => invalid.exportSnapshot(), SandUserSecretsUnreadableError);
+      await assert.rejects(() => invalid.upsert(values), SandUserSecretsUnreadableError);
+      assert.equal(await fs.readFile(ciphertextPath, "utf8"), invalidCiphertext);
     }
     console.log(JSON.stringify({ result: "pass", phase, electron: process.versions.electron, platform: process.platform }));
   } finally { app.quit(); }
