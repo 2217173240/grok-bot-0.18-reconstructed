@@ -105,6 +105,7 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
     const deadline = Date.now() + 3_000;
     while (!existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
     const pid = Number(await readFile(marker, "utf8"));
+    assert.ok(Number.isInteger(pid) && pid > 0, `MCP startup marker contains invalid pid ${pid}`);
     const closing = host.dispose();
     assert.equal(host.dispose(), closing);
     await closing;
