@@ -1,12 +1,13 @@
 import { Buffer } from "node:buffer";
 import { detectImageMimeType } from "../../../packages/agent/tools/core/read/image-utils.js";
 import { buildHostShellArgs } from "../../box/box-shell-command.js";
-import { navigationProbeCommand } from "../sand-action-audit.js";
+import { navigationProbeCommand, navigationProbeOutput } from "../sand-action-audit.js";
 import { SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE } from "../../ports/box.js";
 import { shellExecutorResource } from "../../../packages/agent-exec/shell.js";
 import type { ResourceAccessor } from "../../../packages/agent-exec/resource-provider.js";
 import type { RemoteExecManager } from "../../../packages/agent-exec/remote.js";
 import type { Context } from "../../../packages/context/core.js";
+import type { ShellResult } from "../../../packages/proto/generated/agent/v1/shell_exec_pb.js";
 import { z } from "zod";
 import {
   isSandComputerAutoReviewBypassAction,
@@ -204,9 +205,9 @@ async function captureComputerDisplayStateIdentity(
     );
   }
   if (displayNumber === undefined) throw new SandComputerAutoReviewBlockedError(SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE);
-  let result: any;
+  let stdout: string | undefined;
   try {
-    result = await (resourceAccessor.get(shellExecutorResource) as { execute(ctx: Context, args: unknown): Promise<any> }).execute(
+    const result: ShellResult = await resourceAccessor.get(shellExecutorResource).execute(
       ctx,
       buildHostShellArgs({
         command: navigationProbeCommand(displayNumber),
@@ -215,12 +216,12 @@ async function captureComputerDisplayStateIdentity(
         toolCallId: `${toolCallId}:auto-review-state`,
       }),
     );
+    stdout = navigationProbeOutput(result);
   } catch {
     throw new SandComputerAutoReviewBlockedError("Computer Auto-review could not capture the current page state.");
   }
-  if (result?.result?.case !== "success") throw new SandComputerAutoReviewBlockedError("Computer Auto-review could not capture the current page state.");
-  if (result.result.value.exitCode !== 0) return SAND_COMPUTER_PAGE_STATE_CHROME_UNREACHABLE;
-  return computeSandComputerPageStateIdentity(result.result.value.stdout ?? "");
+  if (stdout === undefined) return SAND_COMPUTER_PAGE_STATE_CHROME_UNREACHABLE;
+  return computeSandComputerPageStateIdentity(stdout);
 }
 
 export async function executeAndPersistComputerUse<Context>(context: Context, deps: ComputerToolDependencies<Context>, args: Parameters<ComputerToolDependencies<Context>["execute"]>[1]): Promise<ComputerUseResult> {
