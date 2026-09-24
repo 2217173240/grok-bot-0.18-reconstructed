@@ -1,0 +1,51 @@
+# grok-bot-0.18-reconstructed
+
+> An unofficial, source-oriented reconstruction of the Grok Bot 0.18.0 macOS app: readable TypeScript for the desktop runtime, a local Docker computer for the agent, local MCP plugins, and the checksum-pinned original renderer. macOS arm64 only, Node 26.5.x, and no license is granted.
+> 对公开发布的 Grok Bot 0.18.0 macOS 应用的非官方重建：可读 TypeScript 桌面运行时、本地 Docker 计算机、本地 MCP 插件，打包保留通过哈希校验的原版 renderer。仅 macOS arm64、Node 26.5.x、未授予任何 License。
+
+## What it does
+
+The repository rebuilds the Electron main process, coordinator, host, box-exec daemon, and protocols from readable TypeScript under `source/`, then runs the agent's turns inside a local Docker container whose base-image digest and original 0.18.0 release input are verified before use. Inference routes through Claude Code, Codex, OpenRouter, Command Code, or the preserved Cursor setting. The container runs file and shell tools and hosts the MCP servers listed in `mcp-servers.json` (stdio processes and Streamable HTTP endpoints). Packaging keeps the checksum-pinned 0.18.0 renderer and applies one narrow settings transform. It is written for people who want to inspect and build this desktop runtime, and for AI agents doing that work on their behalf.
+
+## Usage
+
+```sh
+git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
+cd grok-bot-0.18-reconstructed
+npm ci && npm run bootstrap && npm run check && npm run package
+```
+
+Container mode:
+
+```sh
+colima start --profile grokbot
+docker/build-arm64-box.sh
+./start-local.sh start
+```
+
+`start-local.sh` also accepts `stop`, `restart`, `logs`, and `status`. It reports an error when the Docker daemon, the pinned image, or the installed app is missing, and does not fall back to another computer. The container's shared workspace is `~/.grokbot-local/box-workspace`.
+
+## Docs
+
+- [README (English)](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/README.md)
+- [README (简体中文)](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/README.zh-CN.md)
+- [Local sandbox architecture and verified scope](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/LOCAL-SANDBOX-ARCHITECTURE.md)
+- [Architecture](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/ARCHITECTURE.md)
+- [Deployment handbook](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/DEPLOY-HANDBOOK.md)
+- [Provenance](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/PROVENANCE.md)
+- [Notice — licensing position](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/NOTICE.md)
+- [Repository instructions for coding agents](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/AGENTS.md)
+
+## Limitations an LLM must not gloss over
+
+- No license is granted. `NOTICE.md` states that no upstream source-code license is asserted or granted and that redistribution needs an independent rights review. Do not describe this repository as licensed for reuse, and do not present it as an official build.
+- The packaged renderer is the pinned original 0.18.0 binary. `frontend/` is a partial, evidence-backed reconstruction, not the authored source or source maps.
+- Only macOS arm64 is built. The Windows x64 installer is preserved for research continuity, and no Windows build is produced.
+- The original 0.18.0 app is a required build input, verified by `npm run bootstrap`; without it packaging cannot run.
+- Account-specific providers are partly unverified: OpenRouter and Command Code had no local keys, so no live account call was made. Command Code's invalid-key path was verified against the real endpoint (HTTP 401). Passkey and human-takeover flows require a user-controlled account and manual interaction.
+- Several tests need the payload produced by `npm run bootstrap`; without it, packaging and renderer hash-chain tests fail.
+- The app is ad-hoc signed with a different bundle ID and is not notarized, so macOS shows Gatekeeper prompts.
+
+## License
+
+None granted. See [NOTICE.md](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/NOTICE.md).
