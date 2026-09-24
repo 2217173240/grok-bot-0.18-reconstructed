@@ -41,9 +41,8 @@ docker/build-arm64-box.sh
 - No license is granted. `NOTICE.md` states that no upstream source-code license is asserted or granted and that redistribution needs an independent rights review. Do not describe this repository as licensed for reuse, and do not present it as an official build.
 - The packaged renderer is the pinned original 0.18.0 binary. `frontend/` is a partial, evidence-backed reconstruction, not the authored source or source maps.
 - Only macOS arm64 is built. The Windows x64 installer is preserved for research continuity, and no Windows build is produced.
-- The original 0.18.0 app is a required build input, verified by `npm run bootstrap`; without it packaging cannot run.
+- The original 0.18.0 app is a required build input: `npm run bootstrap` obtains and verifies it, and `npm run package` plus `npm run verify` need it. The test suite runs on a fresh checkout without it, the way CI does.
 - Account-specific providers are partly unverified: OpenRouter and Command Code had no local keys, so no live account call was made. Command Code's invalid-key path was verified against the real endpoint (HTTP 401). Passkey and human-takeover flows require a user-controlled account and manual interaction.
-- Several tests need the payload produced by `npm run bootstrap`; without it, packaging and renderer hash-chain tests fail.
 - The app is ad-hoc signed with a different bundle ID and is not notarized, so macOS shows Gatekeeper prompts.
 
 ## License

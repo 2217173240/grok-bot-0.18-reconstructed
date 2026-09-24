@@ -111,11 +111,10 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 1. **没有授予任何 License。**[NOTICE.md](NOTICE.md) 明确说明这里不主张也不授予上游源码许可，并且发布或分发本仓库前需要自行完成版权、商标、第三方依赖与服务条款的审查。因此 GitHub 显示本仓库没有 License，默认按保留所有权利处理。
 2. **打包使用的 renderer 是固定的原版产物。** 原版 0.18.0 renderer 是优化后的产物，不含作者源码与 source map；`frontend/` 只是基于证据的部分重建，打包时保留原版 renderer，只做一处有记录的设置页面改动。
 3. **只构建 macOS arm64。** 仓库为研究连续性保存了 Windows x64 安装包，但不产出 Windows 构建。
-4. **原版 0.18.0 应用是构建输入。** bootstrap 负责获取与校验；缺少它（或无法联网获取）时无法打包。
+4. **原版 0.18.0 应用是构建输入。** `npm run bootstrap` 负责获取与校验，`npm run package` 与 `npm run verify` 都依赖它；测试套件本身在没有它的全新检出上可以直接运行，CI 就是这么做的。
 5. **需要账号的 provider 只有部分经过验证。** OpenRouter 与 Command Code 当时没有本地密钥，因此没有真实账号调用；passkey 与真人接管流程需要测试账号与用户操作。
 6. **应用使用临时签名与不同的 bundle 标识。** 没有公证，也不携带上游签名，macOS 会给出 Gatekeeper 提示。
-7. **部分测试需要 bootstrap 产物。** 未执行 `npm run bootstrap` 的检出上，打包与 renderer 哈希链测试会失败。
-8. **只针对一个固定发布版本。** 更换模型服务、更换 macOS 版本或换用更新版本的 Grok Bot 都未经验证。
+7. **只针对一个固定发布版本。** 更换模型服务、更换 macOS 版本或换用更新版本的 Grok Bot 都未经验证。
 
 ## 常见问题
 

@@ -111,11 +111,10 @@ The exact scope, per-flow evidence, and the account-specific items still open ar
 1. **No license is granted.** [NOTICE.md](NOTICE.md) states that no upstream source-code license is asserted or granted, and that publishing or distributing the repository needs an independent review of copyright, trademark, dependency, and service-terms obligations. GitHub therefore reports no license, which means the default all-rights-reserved terms apply.
 2. **The packaged renderer is the pinned original.** The shipped 0.18.0 renderer contains optimized bundles without authored source or source maps, so `frontend/` is a partial evidence-backed reconstruction and packaged builds keep the original renderer with a narrow settings transform.
 3. **macOS arm64 only.** The repository preserves the Windows x64 installer for research continuity and produces no Windows build.
-4. **The original 0.18.0 app is a build input.** Bootstrap obtains and verifies it; without it (or without network access to it) packaging cannot run.
+4. **The original 0.18.0 app is a build input.** `npm run bootstrap` obtains and verifies it, and `npm run package` plus `npm run verify` need it. The test suite itself runs on a fresh checkout without it, the way CI does.
 5. **Account-specific providers are partly unverified.** OpenRouter and Command Code had no local keys, so no live account call was made; passkey and human-takeover flows need a user-controlled account and manual interaction.
 6. **The app is ad-hoc signed with a different bundle ID.** It is not notarized, does not carry the upstream signature, and macOS will show Gatekeeper prompts.
-7. **Several tests need the bootstrapped payload.** Packaging and renderer hash-chain tests fail on a checkout that has not run `npm run bootstrap`.
-8. **One pinned release.** Behaviour against other model services, other macOS versions, or a newer Grok Bot release is untested.
+7. **One pinned release.** Behaviour against other model services, other macOS versions, or a newer Grok Bot release is untested.
 
 ## FAQ
 
