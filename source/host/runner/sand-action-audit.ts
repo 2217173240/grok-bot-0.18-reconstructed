@@ -79,6 +79,15 @@ export function navigationProbeCommand(displayNumber: number): string {
   return `curl -sf --max-time 2 "http://127.0.0.1:${port}/json/list"`;
 }
 
+export function navigationProbeOutput(result: ShellResult): string | undefined {
+  const outcome = result.result;
+  if (outcome.case === "success" && outcome.value.exitCode === 0) return outcome.value.stdout;
+  // curl 的连接失败与请求超时表示 CDP 不可达；执行中止和其他错误继续报告失败。
+  if (outcome.case === "failure" && !outcome.value.aborted && outcome.value.signal.length === 0
+    && (outcome.value.exitCode === 7 || outcome.value.exitCode === 28)) return undefined;
+  throw new Error("Navigation probe did not complete successfully.");
+}
+
 export function normalizeNavigationUrl(rawUrl: string): string | undefined {
   const trimmed = rawUrl.trim();
   if (trimmed.length === 0) return undefined;
