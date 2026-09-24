@@ -74,7 +74,7 @@ flowchart TD
 
 ## 生命周期和幂等规则
 
-读取失败与持久状态截断的最新复核、PR #63–65 处理顺序见 [ROADMAP.md](ROADMAP.md)。截至 `f87850a`，build-stamp、Codex 配置和审计 outbox 的错误处理仍有待修复项；已有容器与 UI 验收不覆盖这些异常条件。
+读取失败与持久状态保留的维护范围见 [ROADMAP.md](ROADMAP.md)。PR #63、#64、#65、#70 已合入 main：build-stamp 和 provider 配置异常明确报错，失败消息 ID 保留到会话清理，Codex TOML 使用统一解析器，审计与 Episode 待处理状态按确认结果消费。160 项测试覆盖真实 SQLite、文件故障、HTTP 流和子进程；实际安装包验收另行记录。
 
 1. 回合拥有自己的 Context 和 MCP bridge。取消信号传到 Claude abortController、AI SDK abortSignal、Codex fetch、MCP HTTP 请求、盒内 Connect RPC 与 stdio MCP 客户端；bridge 随流关闭。已经发生的外部副作用不会因取消而撤销。
 2. daemon 拥有 MCP client 与 stdio 子进程。回合结束关闭代理 bridge，插件生命周期由 daemon 配置与关闭操作决定。
@@ -145,6 +145,11 @@ flowchart TD
 Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和验证标准足以支持本次目标，整体引入第二套服务会增加生命周期和数据同步负担。
 
 ## 执行证据与边界
+
+- 2026-09-24 从远端 main `1eaa2ed63bb8a72ece6f8953ab3315e735c7128b` 完成依赖安装、完整 package/verify、桌面应用安装和 `start-local.sh` 启动。160 项测试与两项类型检查通过，零跳过；14 个可执行源码运行模块、原生依赖、签名和 ASAR 组成校验通过。安装后 ASAR SHA-256 为 `b2a723d33e541c32f606397d8e24ca3cd6aa96a2e8d9c6ff2e4bc52b6c531cd6`，应用和镜像 deps pin 均为 `6a9093c70512188e963f645ac98c02ef21b4758952d7c5836f4fe4040e71809f`。
+- 同次真实桌面 UI 直接进入 local admin；Claude 路由在容器返回 Linux、文件 SHA-256 `d6df65cd1aea483bf9042aaf18bda9c72386e03125ecc8fccb0466644c96c8f9`、MCP echo 和前台 Computer Task 结果。独立读取文件核对摘要，并读取截图 PNG 头确认 1280×800、11047 字节。
+- UI 切换到未配置密钥的 Command Code 后明确显示 `Command Code needs COMMAND_CODE_API_KEY`，容器的 `/root/.claude` 挂载同时移除。恢复 Claude 后，新消息收到 `RECOVERED-1eaa2ed`；失败消息要求创建的文件仍不存在，Claude 挂载恢复。测试没有新增或修改 API key，也没有挂载 Codex 账号。
+- 新镜像的 exec 与 desktop 门禁全部通过，涵盖真实 daemon RPC、noVNC 正反鉴权、XTEST/截图、桌面服务归属及桌面退出后的状态报告。隔离的无网络、无凭据容器在 Node 22.23.2 上验证 Codex TOML 有效配置读取及非法配置拒绝。
 
 - 显式 `SAND_HOST_GATEWAY_URL` 使用 `EnvDescriptorHostConnector`，保留指定地址和鉴权。local-exec credential issuer 为可选能力；默认 Docker 选择与不可用时报错的行为继续保留。
 - 本地模式不查询官方 Slack/GitHub dashboard 连接状态，连接入口明确报告不支持；用户提供的自定义 dashboard 实现保留自己的连接能力。

@@ -16,7 +16,7 @@ git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
 cd grok-bot-0.18-reconstructed
 npm ci
 npm run bootstrap      # 校验固定的 0.18.0 发布构件
-npm run check          # 类型检查 + 121 项回归测试
+npm run check          # 类型检查与回归测试
 npm run package        # → dist/Grok Bot 0.18 Reconstructed.app
 ```
 
@@ -99,7 +99,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 
 | 检查项 | 结果 |
 | --- | --- |
-| `main` 与 PR 上的 CI | TypeScript 检查、**121 项测试全部通过**、可读前端构建、Git 归档检查 |
+| `main` 与 PR 上的 CI | TypeScript 检查、回归测试、可读前端构建、Git 归档检查；2026-09-24 可靠性更新的 **160 项测试全部通过** |
 | macOS 包 | 仓库测试、包体校验，以及原生 `arm64` 容器的执行与桌面门禁 |
 | 本地管理员界面（实测） | 真实 GLM 对话、容器文件写入与读取、MCP echo 调用、图片附件分析 |
 | Computer 平面（实测） | `Task` → `computerUse` → `Computer` 鼠标移动，以及 1280×800 PNG 截图 |
