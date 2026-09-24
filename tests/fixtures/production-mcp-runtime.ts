@@ -13,3 +13,5 @@ export { mcpExecutorResource, mcpStateExecutorResource } from "../../source/pack
 export { RegistryResourceAccessor } from "../../source/packages/agent-exec/resource-provider.js";
 export { createContext } from "../../source/packages/context/core.js";
 export { InteractionHandler } from "../../source/packages/agent/interaction-handler.js";
+export { createProviderPromptSession } from "../../source/host/extensions/inference/provider-session.js";
+export { SimplePromptToolExecutor } from "../../source/packages/agent/tool-stream-executor.js";

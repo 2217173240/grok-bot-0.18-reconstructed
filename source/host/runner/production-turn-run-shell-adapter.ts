@@ -170,7 +170,6 @@ export function createProductionTurnRunShellHostInput(
       requestId,
       cancelThisRun,
       emitUpdate,
-      ...(mcp === undefined ? {} : { mcp }),
     }),
     createRunInput: async ({ owner, runContext, prompt, options }) =>
       createProductionTurnAgentRunInput({

@@ -117,24 +117,27 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(providers, /You are Grok Bot, a warm, concise desktop assistant/);
   assert.match(providers, /recordRoutedUsage\(provider, usage\)/);
   assert.match(providers, /queryClaude/);
-  // Routed Claude Code turns must carry real, audited local tools — never the
-  // stock empty tool list that made the model fabricate command output.
-  assert.match(providers, /tools: \[\.\.\.CLAUDE_LOCAL_TOOLS,/);
+  // Claude 使用当前 host 工具，并应用执行权限。
+  assert.match(providers, /tools: availableTools,/);
   assert.match(providers, /canUseTool: async \(toolName, input\)/);
   assert.match(providers, /claudeToolPermission\(toolName, input, options\?\.localToolPermission\)/);
-  assert.match(providers, /mac-permission-denied/);
+  assert.match(providers, /host-permission-denied/);
   // Local tool access set to "Never" must reach the in-box CLI child: the box
   // workspace is bind-mounted from the user's machine, so those tools act there.
-  assert.match(providers, /localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS\.has\(toolName\)/);
-  // The in-box CLI child reaches plugin tools through a loopback bridge, so
-  // the tools must be advertised and the bridge closed with the stream.
-  assert.match(providers, /maxTurns: 24/);
+  assert.match(providers, /localToolPermission === "never" && !readonly/);
+  assert.match(providers, /!toolName\.startsWith\(CLAUDE_HOST_TOOL_PREFIX\)/);
+  // host 工具桥随流关闭；纯文本请求只运行一个回合。
+  assert.match(providers, /maxTurns: hosted \? 24 : 1/);
+  assert.match(providers, /grok_bot_host_tools: hostBridge\.config/);
+  assert.match(providers, /await hostBridge\?\.close\(\)/);
+  assert.doesNotMatch(providers, /grok_bot_plugins|standaloneTools/);
   assert.match(providers, /use Task to delegate browserUse or computerUse/);
   assert.match(providers, /do not fall back to curl/);
   // Sensitive-input discipline (C2): typed desktop input is redacted in the
   // ledger copy, the ledger is 0600, and the agent never handles credentials.
   assert.match(providers, /Never handle credentials yourself/);
-  assert.match(providers, /display notification/);
+  assert.match(providers, /request_box_help/);
+  assert.doesNotMatch(providers, /osascript|display notification|const CLAUDE_LOCAL_TOOLS =/);
   assert.match(await readFile(path.join(repoRoot, "source/shared/node/local-admin-intercept.ts"), "utf8"), /redactTypedDesktopInput/);
   // profile 的持久目录由基础镜像提供，实际路径由容器门禁验证。
   assert.match(await readFile(path.join(repoRoot, "docker", "bin", "box-init-exec"), "utf8"), /session-sync\.mjs/);
@@ -157,7 +160,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   // The human-handoff contract (C1): the identity teaches the ask protocol
   // with the staleness note; the box gate wraps shell/stream/computer use.
   assert.match(providers, /ask-human\.json/);
-  assert.match(providers, /it dies with a container restart/);
+  assert.match(providers, /Do not remove handoff state yourself/);
   const awaiting = await readFile(path.join(repoRoot, "source", "host", "box", "awaiting-human.ts"), "utf8");
   assert.match(awaiting, /AWAITING_HUMAN_DEFAULT_TIMEOUT_MS = 15 \* 60 \* 1000/);
   assert.match(awaiting, /REPEATED ask while awaiting must NOT/);
