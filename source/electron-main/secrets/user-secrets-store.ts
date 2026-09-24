@@ -51,9 +51,13 @@ function warnInMemoryOnce(): void {
   captureSandSentryWarning("[sand] OS secure storage (keychain/keyring) is unavailable; box secrets are kept in memory for this session only and will NOT persist across restart.");
 }
 
+// Both readers reject the whole record when any member is invalid, so a
+// damaged file is reported as unreadable instead of loading as fewer secrets.
 export function readEncryptedSecrets(value: unknown): EncryptedSecrets | undefined {
   if (!isRecord(value)) return undefined;
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const entries = Object.entries(value);
+  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return undefined;
+  return Object.fromEntries(entries);
 }
 
 export function readEncryptedSecretsByAccount(value: unknown): EncryptedSecretsByAccount | undefined {
@@ -61,7 +65,8 @@ export function readEncryptedSecretsByAccount(value: unknown): EncryptedSecretsB
   const entries: Array<[string, EncryptedSecrets]> = [];
   for (const [accountSlot, secretsValue] of Object.entries(value)) {
     const secrets = readEncryptedSecrets(secretsValue);
-    if (secrets !== undefined) entries.push([accountSlot, secrets]);
+    if (secrets === undefined) return undefined;
+    entries.push([accountSlot, secrets]);
   }
   return Object.fromEntries(entries);
 }
