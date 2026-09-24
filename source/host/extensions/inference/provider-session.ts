@@ -12,6 +12,7 @@ import type { Context } from "../../../packages/context/core.js";
 import { COMMAND_CODE_BASE_URL, COMMAND_CODE_DEFAULT_MODEL, isCommandCodeModelId, type SandInferenceProvider } from "../../../shared/inference-router.js";
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
+import { readCodexConfiguration } from "../../../shared/node/codex-config.js";
 import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
@@ -236,22 +237,7 @@ function codexAuthenticatedFetch(initial: CodexCredentials): typeof fetch {
 }
 
 function configuredCodexModel(): string {
-  const selected = process.env.SAND_CODEX_MODEL?.trim();
-  if (selected) return selected;
-  try {
-    const config = readFileSync(join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "config.toml"), "utf8");
-    return /^\s*model\s*=\s*["']([^"']+)["']/m.exec(config)?.[1]?.trim() || "gpt-5.4";
-  } catch { return "gpt-5.4"; }
-}
-
-function configuredCodexReasoningEffort(): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
-  const selected = process.env.SAND_CODEX_REASONING_EFFORT?.trim();
-  if (selected === "minimal" || selected === "low" || selected === "medium" || selected === "high" || selected === "xhigh") return selected;
-  try {
-    const config = readFileSync(join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "config.toml"), "utf8");
-    const value = /^\s*model_reasoning_effort\s*=\s*["']([^"']+)["']/m.exec(config)?.[1]?.trim();
-    return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh" ? value : undefined;
-  } catch { return undefined; }
+  return readCodexConfiguration().model;
 }
 
 export function routedToolSchema(definition: Loose) {
@@ -306,7 +292,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
-  const model = configuredCodexModel();
+  const { model, reasoningEffort } = readCodexConfiguration();
   const tools = codexTools(definitions);
   const fullStream = (async function* () {
     let text = "";
@@ -316,7 +302,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         fetch: codexAuthenticatedFetch(credentials),
         endpoint: "https://chatgpt.com/backend-api/codex/responses",
         model,
-        ...(configuredCodexReasoningEffort() == null ? {} : { reasoningEffort: configuredCodexReasoningEffort()! }),
+        ...(reasoningEffort == null ? {} : { reasoningEffort }),
         instructions: GROK_ROUTER_SYSTEM_PROMPT,
         input: codexInput(messages),
         ...(tools == null ? {} : { tools }),

@@ -1,3 +1,5 @@
+import { EPISODE_PENDING_MAX } from "../extensions/session/agent-db-serde.js";
+
 export const MEMORY_RECENT_PROMPT_LIMIT = 30;
 export const MEMORY_RECENT_PROMPT_CHAR_BUDGET = 4_000;
 export const MEMORY_PROFILE_PROMPT_LIMIT = 100;
@@ -40,8 +42,9 @@ export function resolveFrozenMemoryPrompt(args: {
 export function getEpisodeInterval(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.SAND_MEMORY_EPISODE_INTERVAL;
   if (raw == null) return DEFAULT_EPISODE_INTERVAL;
-  const parsed = Number.parseInt(raw.trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_EPISODE_INTERVAL;
+  const parsed = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > EPISODE_PENDING_MAX) throw new RangeError(`SAND_MEMORY_EPISODE_INTERVAL must be an integer from 1 to ${EPISODE_PENDING_MAX}`);
+  return parsed;
 }
 
 const TRIVIAL_EXCHANGES = new Set(["hi", "hey", "hello", "yo", "sup", "thanks", "thank you", "ty", "thx", "ok", "okay", "k", "kk", "cool", "nice", "great", "awesome", "perfect", "yes", "yep", "yeah", "no", "nope", "sure", "got it", "gotcha", "lol", "haha", "np", "done", "good", "bye"]);
@@ -235,7 +238,8 @@ export async function summarizeEpisode(args: { executor: TextExecutor; ctx: unkn
   if (args.turns.length === 0) return null;
   args.executor.appendMessages([{ role: "system", content: buildEpisodeSystemPrompt() }, { role: "user", content: buildEpisodeUserPrompt(args.turns) }]);
   const narrative = normalizeMemoryContent(await collectExecutorText(args.executor, args.ctx));
-  return narrative.length === 0 || narrative.toUpperCase() === MEMORY_EXTRACTION_NONE_SENTINEL ? null : narrative;
+  if (narrative.length === 0) throw new Error("Episode summarization returned no output");
+  return narrative.toUpperCase() === MEMORY_EXTRACTION_NONE_SENTINEL ? null : narrative;
 }
 
 export interface ProvenancedMemory extends MemoryRecord { readonly via: string }

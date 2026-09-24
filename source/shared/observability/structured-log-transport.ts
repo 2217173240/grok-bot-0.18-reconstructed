@@ -37,7 +37,7 @@ export class StructuredLogTransport {
   private eagerFlushQueued = false; private eagerDrainRequested = false; private submitTimeoutStreakActive = false;
   constructor(private readonly options: StructuredLogTransportOptions) {
     this.platformTags = cleanStructuredLogMetadata(options.platformTags); this.dropCounterId = options.initialCheckpoint?.counterId ?? createDropCounterId(); this.dropCounters = options.initialCheckpoint ? cloneDropCounters(options.initialCheckpoint.counters) : emptyDropCounters();
-    this.buffer = (options.initialCheckpoint?.records ?? []).slice(-MAX_BUFFER_SIZE).map((record) => ({ ...record, metadata: { ...record.metadata } })); this.flushHeldForIdentity = options.holdForIdentity === true;
+    this.buffer = (options.initialCheckpoint?.records ?? []).map((record) => ({ ...record, metadata: { ...record.metadata } })); this.dropBufferOverflow(); this.flushHeldForIdentity = options.holdForIdentity === true;
     if (this.flushHeldForIdentity) {
       if (options.identityHoldExpiry === undefined) throw new TypeError("identityHoldExpiry is required when holdForIdentity is true");
       this.identityHoldHandle = options.identityHoldExpiry.arm("structured-log-host-identity", () => this.releaseIdentityHold());

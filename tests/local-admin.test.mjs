@@ -429,13 +429,34 @@ test("live Docker runtime files do not name another project's Colima context", a
   }
 });
 
-async function loopbackPortBusy(port) {
-  const net = await import("node:net");
-  return await new Promise((resolve) => {
-    const socket = net.createConnection({ host: "127.0.0.1", port });
-    socket.once("connect", () => { socket.destroy(); resolve(true); });
-    socket.once("error", () => resolve(false));
+async function reserveLoopbackPort(port = 0) {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
   });
+  return {
+    port: server.address().port,
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+async function hostLifecyclePorts() {
+  let defaultGateway;
+  try {
+    defaultGateway = await reserveLoopbackPort(1340);
+  } catch (error) {
+    if (error.code !== "EADDRINUSE") throw error;
+  }
+  const gateway = await reserveLoopbackPort();
+  const daemon = await reserveLoopbackPort();
+  await gateway.close();
+  await daemon.close();
+  return {
+    gatewayPort: gateway.port,
+    execDaemonPort: daemon.port,
+    dispose: async () => { await defaultGateway?.close(); },
+  };
 }
 
 test("docker image selection annotates the QEMU fallback instead of hiding it", async () => {
@@ -483,10 +504,10 @@ test("docker image selection annotates the QEMU fallback instead of hiding it", 
   }
 });
 
-test("local admin host failure carries the child exit code and output tail", async (t) => {
-  if (await loopbackPortBusy(1340)) return t.skip("port 1340 is already bound");
+test("local admin host failure carries the child exit code and output tail with port 1340 occupied", async () => {
   const loaded = await loadModule("source/electron-main/box/local-admin-host.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-local-host-fail-"));
+  const ports = await hostLifecyclePorts();
   try {
     const hostScript = path.join(root, "host-fail.cjs");
     await writeFile(hostScript, 'console.log("BOOT_LINE"); console.error("ERR_LINE"); process.exit(7);\n');
@@ -500,6 +521,8 @@ test("local admin host failure carries the child exit code and output tail", asy
         execPath: process.execPath,
         env: { SAND_DATA_ROOT: root },
         deps: {},
+        gatewayPort: ports.gatewayPort,
+        execDaemonPort: ports.execDaemonPort,
       }),
       (error) => {
         assert.match(error.message, /exited before the gateway was ready \(code 7\)/);
@@ -510,16 +533,22 @@ test("local admin host failure carries the child exit code and output tail", asy
       },
     );
   } finally {
+    await loaded.module.stopLocalAdminHost();
+    await ports.dispose();
     await loaded.dispose();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
-test("local admin host resolves when the gateway answers and passes deps + inert backend env", async (t) => {
-  if (await loopbackPortBusy(1340)) return t.skip("port 1340 is already bound");
+test("local admin host resolves and closes its HTTP child with port 1340 occupied", async () => {
   const loaded = await loadModule("source/electron-main/box/local-admin-host.ts");
   const root = await mkdtemp(path.join(os.tmpdir(), "grok-local-host-ready-"));
+  const ports = await hostLifecyclePorts();
   try {
+    const nodeDeps = path.join(root, "node-deps");
+    const treeSitterDeps = path.join(root, "deps");
+    await mkdir(nodeDeps);
+    await mkdir(treeSitterDeps);
     const hostScript = path.join(root, "host-gateway.cjs");
     await writeFile(hostScript, [
       'const http = require("node:http");',
@@ -527,10 +556,9 @@ test("local admin host resolves when the gateway answers and passes deps + inert
       '  if (req.url === "/health" && req.headers.authorization === "Bearer " + process.env.SAND_GATEWAY_TOKEN) { res.writeHead(200); res.end("ok"); }',
       '  else { res.writeHead(401); res.end(); }',
       "});",
-      'server.listen(1340, "127.0.0.1", () => {',
-      '  console.log("FAKE_GATEWAY_READY nodePath=" + (process.env.NODE_PATH || "") + " ts=" + (process.env.SAND_TREE_SITTER_NODE_DEPS || "") + " backend=" + (process.env.SAND_BACKEND_URL || ""));',
+      'server.listen(Number(process.env.SAND_HOST_PORT), "127.0.0.1", () => {',
+      '  console.log(JSON.stringify({ pid: process.pid, nodePath: process.env.NODE_PATH, treeSitterDeps: process.env.SAND_TREE_SITTER_NODE_DEPS, backend: process.env.SAND_BACKEND_URL }));',
       "});",
-      "setInterval(() => {}, 1000);",
     ].join("\n"));
     const settingsPath = path.join(root, "settings.json");
     await writeFile(settingsPath, "{}\n");
@@ -541,15 +569,26 @@ test("local admin host resolves when the gateway answers and passes deps + inert
       token,
       execPath: process.execPath,
       env: { SAND_DATA_ROOT: root },
-      deps: { nodePath: "/fake/deps:/fake/node-deps", treeSitterDeps: "/fake/deps" },
+      deps: { nodePath: `${treeSitterDeps}:${nodeDeps}`, treeSitterDeps },
+      gatewayPort: ports.gatewayPort,
+      execDaemonPort: ports.execDaemonPort,
     });
-    assert.equal(connection.baseUrl, "http://127.0.0.1:1340");
+    assert.equal(connection.baseUrl, `http://127.0.0.1:${ports.gatewayPort}`);
     assert.equal(connection.token, token);
-    loaded.module.stopLocalAdminHost();
+    const health = await fetch(`${connection.baseUrl}/health`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(await health.text(), "ok");
+    await loaded.module.stopLocalAdminHost();
     const log = await readFile(path.join(root, "box-logs", "sand-host.log"), "utf8");
-    assert.match(log, /FAKE_GATEWAY_READY nodePath=\/fake\/deps:\/fake\/node-deps ts=\/fake\/deps backend=http:\/\/127\.0\.0\.1:9/);
+    const childState = JSON.parse(log.trim());
+    assert.equal(childState.nodePath, `${treeSitterDeps}:${nodeDeps}`);
+    assert.equal(childState.treeSitterDeps, treeSitterDeps);
+    assert.equal(childState.backend, "http://127.0.0.1:9");
+    assert.throws(() => process.kill(childState.pid, 0), { code: "ESRCH" });
+    const released = await reserveLoopbackPort(ports.gatewayPort);
+    await released.close();
   } finally {
-    loaded?.module?.stopLocalAdminHost?.();
+    await loaded.module.stopLocalAdminHost();
+    await ports.dispose();
     await loaded.dispose();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
