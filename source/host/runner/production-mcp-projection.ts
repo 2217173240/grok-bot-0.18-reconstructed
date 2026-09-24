@@ -53,6 +53,7 @@ export function createProductionMcpForTurn(mcp: TurnMcpForTurn): TurnMcpForTurn 
     createExecutor: (persistImage, spillLargeText, auditIdentity) => {
       const executor = mcp.createExecutor(persistImage, spillLargeText, auditIdentity);
       return {
+        // 执行名称与禁用工具判定都使用服务器工具名；原始 ToolCall 保留组合名称。
         execute: (context, args, options) => executor.execute(context, new McpArgs({
           ...args,
           name: args.toolName,

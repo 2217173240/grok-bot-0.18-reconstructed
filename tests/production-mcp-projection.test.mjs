@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 import test from "node:test";
 import { build } from "esbuild";
 
@@ -91,6 +92,7 @@ test("生产 MCP 工具通过真实 stdio 服务器完成发现、调用、错�
     cancel(new Error("test cancellation"));
     await assert.rejects(call.execute(canceled, interaction, stream({ server: "fixture", toolName: "echo", arguments: { text: "canceled" } }), { toolCallId: "call-canceled" }), /abort|cancel/i);
     assert.ok(recorded.some(row => row.id === "call-cold"));
+    assert.match(inspect(recorded.find(row => row.id === "call-cold"), { depth: null }), /fixture-echo/);
     assert.ok(updates.length >= 4);
     const review = runtime.createProductionMcpToolInputs({ resourceAccessor, getMcpTools: () => [], mode: "enforce", agentId: "test-agent", controller });
     assert.equal(review.callOptions.smartModeClassifierMode, true);
