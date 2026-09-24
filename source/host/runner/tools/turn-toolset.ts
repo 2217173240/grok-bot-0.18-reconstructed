@@ -1,3 +1,4 @@
+import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import {
   SAND_HIDDEN_PROMPT_MARKER,
   SAND_TRUSTED_AUTOMATION_PROMPT_MARKER,
@@ -1271,6 +1272,10 @@ export interface TurnToolsetHost {
 
 export type TurnToolsetInput = TurnToolsetTurnInput;
 
+export function filterTurnToolsForLocalMode<T extends { readonly name: string }>(tools: readonly T[], localAdmin: boolean): readonly T[] {
+  return localAdmin ? tools.filter(tool => tool.name !== "WebSearch" && tool.name !== "WebFetch") : tools;
+}
+
 export function extractSandAutoReviewClassifierContext(
   messages: readonly { readonly role: string; readonly content: string }[],
 ): readonly { readonly role: string; readonly content: string }[] {
@@ -1498,9 +1503,10 @@ export function buildTurnTools(
     ? tools
     : tools.filter((tool) => sharedRoomAllowed.has(tool.name));
 
+  const available = filterTurnToolsForLocalMode(offered, isLocalAdminEnabled());
   const placed = dynamicToolsEnabled
-    ? offered.map(withDynamicToolPlacement)
-    : offered;
+    ? available.map(withDynamicToolPlacement)
+    : available;
   const guarded = placed.map((tool) => {
     if (
       dynamicInvocationRegistry !== undefined

@@ -20,7 +20,6 @@ import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
-import { createRoutedMcpBridge } from "../../../shared/node/mcp/routed-mcp-bridge.js";
 import { createHostToolsMcpBridge, type HostToolExecution, type HostToolDefinition } from "./host-tools-mcp-bridge.js";
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 
@@ -286,7 +285,7 @@ function codexTools(definitions: readonly Loose[] | undefined): CodexDirectTool[
   return tools.length === 0 ? undefined : tools;
 }
 
-function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions = GROK_ROUTER_SYSTEM_PROMPT) {
   const credentials = codexCredentials();
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
@@ -303,7 +302,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
         endpoint: "https://chatgpt.com/backend-api/codex/responses",
         model,
         ...(reasoningEffort == null ? {} : { reasoningEffort }),
-        instructions: GROK_ROUTER_SYSTEM_PROMPT,
+        instructions,
         input: codexInput(messages),
         ...(tools == null ? {} : { tools }),
         maxSteps: 1,
@@ -344,24 +343,8 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
-// --- Local tool execution for routed Claude Code turns ---------------------
-// The stock options (tools: [], maxTurns: 1, no permission callback) left the
-// model with zero real tools, which it papered over by fabricating command
-// output. These paths give it real, audited tools on this machine instead.
-
-const CLAUDE_LOCAL_TOOLS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"] as const;
-const CLAUDE_READ_ONLY_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch"]);
-// Tools that cannot change anything the user owns. They stay available while the
-// box waits for a human, and while local tool access is set to "Never".
-const CLAUDE_BOX_READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch", "TodoWrite"]);
-
-// The plugin tools of this computer, as the CLI child needs them: a way to list
-// the definitions it may call and a way to perform each call. The daemon owns
-// the MCP servers; these two functions are the host's half of that path.
-export interface HostMcpTools {
-  listTools(signal: AbortSignal): Promise<unknown>;
-  callTool(tool: { readonly name: string; readonly providerIdentifier: string; readonly toolName: string; readonly args: unknown; readonly toolCallId: string; readonly signal: AbortSignal }): Promise<unknown>;
-}
+const CLAUDE_HOST_TOOL_PREFIX = "mcp__grok_bot_host_tools__";
+const CLAUDE_HOST_READ_TOOLS = new Set(["Read", "ExternalRead", "Screenshot", "GetMcpTools"]);
 
 export function resolveAgentWorkspace(): string {
   const override = process.env.SAND_AGENT_WORKSPACE?.trim();
@@ -379,12 +362,6 @@ export function resolveAgentWorkspace(): string {
   return root;
 }
 
-// The awaiting-human gate, enforced at the Mac permission layer. The box-side
-// gate covers the box executors, but the taught desktop primitives run from
-// THIS Mac via docker exec — without this seam the agent could keep driving
-// the box (typing into the very screen the human is taking over) during a
-// handoff. While the ask file exists, only the hand-back itself (removing the
-// ask file) and reads pass; everything else gets the waiting message.
 export function awaitingHumanAskFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
   const root = env.SAND_WORKSPACE_ROOT?.trim() || resolveAgentWorkspace();
   if (root.length === 0) return null;
@@ -401,34 +378,26 @@ function allowUnchanged(input?: unknown): PermissionResult {
 }
 
 export function claudeToolPermission(toolName: string, input?: unknown, localToolPermission?: SandLocalToolPermission): PermissionResult {
+  if (!toolName.startsWith(CLAUDE_HOST_TOOL_PREFIX)) return { behavior: "deny", message: "Only the current Grok Bot host tools are available." };
+  const hostToolName = toolName.slice(CLAUDE_HOST_TOOL_PREFIX.length);
+  const readonly = CLAUDE_HOST_READ_TOOLS.has(hostToolName);
   if (isLocalAdminEnabled()) {
     const askPath = awaitingHumanAskFilePath();
     if (askPath != null && existsSync(askPath)) {
-      const command = typeof (input as { command?: unknown } | undefined)?.command === "string" ? (input as { command: string }).command : "";
-      const isHandBack = toolName === "Bash" && [
-        `rm ${askPath}`,
-        `unlink ${askPath}`,
-        "rm .grokbot/ask-human.json",
-        "unlink .grokbot/ask-human.json",
-      ].includes(command.trim());
-      if (isHandBack) {
-        appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-handback-allowed", tool: toolName });
+      if (readonly) {
         return allowUnchanged(input);
       }
-      if (CLAUDE_BOX_READ_TOOLS.has(toolName)) {
-        return allowUnchanged(input);
-      }
-      appendLocalIntercept({ kind: "awaiting-human", event: "mac-permission-denied", tool: toolName });
+      appendLocalIntercept({ kind: "awaiting-human", event: "host-permission-denied", tool: toolName });
       return {
         behavior: "deny",
-        message: "The box is awaiting a human handoff (ask-human.json present): box-driving tools are paused so the human has the screen. Pass the takeover URL from .grokbot/novnc-url to the user, then wait. Resume by removing the ask file (rm .grokbot/ask-human.json) once the human confirms, or let the deadline reclaim the box.",
+        message: "The box is awaiting a human handoff. Wait for the user to return control before starting another action.",
       };
     }
     // The box workspace is bind-mounted from the user's machine, so a command or
     // a write inside the box acts on the user's computer. "Never" therefore
     // applies here, exactly as it does to the Mac-side tools. Reading stays open
     // because it cannot change anything the user owns.
-    if (localToolPermission === "never" && !CLAUDE_BOX_READ_TOOLS.has(toolName)) {
+    if (localToolPermission === "never" && !readonly) {
       appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
       return {
         behavior: "deny",
@@ -438,7 +407,7 @@ export function claudeToolPermission(toolName: string, input?: unknown, localToo
     }
     return allowUnchanged(input);
   }
-  if (CLAUDE_READ_ONLY_TOOLS.has(toolName)) return allowUnchanged(input);
+  if (readonly) return allowUnchanged(input);
   appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-denied", tool: toolName });
   return {
     behavior: "deny",
@@ -462,29 +431,17 @@ function recordClaudeToolTraffic(message: SDKMessage): void {
 }
 
 const CLAUDE_LOCAL_TOOLS_PROMPT_LINES = [
-  "You have real local tools (Bash, file read/write/edit, search) for this machine's workspace — your current working directory.",
+  "Use the current Grok Bot host tools: Shell for commands and file editing/search, Read for files and images, GetMcpTools and CallMcpTool for plugins.",
   "When asked to run a command, inspect files, or check this machine, actually call the tools and report their real output.",
   "Never simulate, guess, or invent command output or file contents. If a tool call is denied or fails, say so plainly and show the real error.",
 ];
 
-// Local admin runs with no cloud behind it. Without this block the assistant
-// inherits the stock cloud-centric self-image and answers sandbox questions
-// by probing remote endpoints as if they were its backend (observed live:
-// asked to "check the cloud sandbox", it verified connectivity to the very
-// endpoints this deployment is independent of).
-//
-// The desktop primitives differ per execution plane, so the block is split.
-// SAND_HOST_IN_BOX=1 means this process runs inside the box: the primitives at
-// /usr/local/bin are directly executable there, and the box has no docker CLI
-// at all (a prompt that said `docker exec` from inside it made the model loop
-// on `docker: command not found` for twenty minutes, observed live). The
-// Mac-side plane reaches the same primitives through `docker exec`.
 const CLAUDE_LOCAL_ADMIN_IDENTITY_LINES = [
   "This deployment is fully local: your computer IS the sandbox — an isolated Linux box running on this Mac, with its workspace at your current working directory. There is no cloud sandbox behind you.",
   "Remote cursor / x.ai endpoints are not your backend and are blocked by design. Never describe cloud connectivity as your dependency, never suggest signing in or reconnecting to them, and never present them as your infrastructure.",
   "When asked about your environment, the sandbox, or where you run, answer from this local reality — you are the sandbox.",
-  "When you hit a login, captcha, or payment wall you cannot pass yourself: STOP driving the box, write .grokbot/ask-human.json in the workspace with {\"reason\":\"auth|captcha|payment|other\",\"instruction\":\"what the human should do\"}, give the user the takeover URL from .grokbot/novnc-url (it dies with a container restart — if it does not open, ask again for a fresh one), then wait. Box actions stay blocked until the file is removed (hand-back) or the deadline reclaims the box; your local file tools keep working so you can finish the hand-back.",
-  "Never handle credentials yourself: a password, OTP, or card number is exactly the handoff case — the human types it in the noVNC takeover. Never ask the user to paste secrets into chat; if they do, tell them to use the takeover instead and never repeat the secret back. When you write ask-human.json, also fire a Mac notification so the user notices: osascript -e 'display notification \"需要人工接管盒子\" with title \"Grok Bot\"'.",
+  "For login, captcha, or payment, request human help with the available request_box_help tool and wait for the user to return control. Do not remove handoff state yourself.",
+  "Never handle credentials yourself: the human enters passwords, OTPs, and card numbers in the takeover UI. Never ask the user to paste secrets into chat or repeat them back.",
   "For web UI tasks, use Task to delegate browserUse or computerUse when Task is available. In a subagent turn, use the provided Browser or Computer tool. These actions are visible on the box desktop; do not fall back to curl or shell-driven GUI commands.",
 ];
 
@@ -506,13 +463,21 @@ export function claudeLocalToolsPrompt(env: NodeJS.ProcessEnv = process.env): st
 }
 
 interface ClaudeExecutorOptions {
+  readonly textOnlyInstructions?: string;
   readonly onUsage?: (usage: UsageRecord) => void;
-  /** Plugin tools this executor exposes through its own bridge, closed with the stream. */
-  readonly mcp?: HostMcpTools;
   readonly localToolPermission?: SandLocalToolPermission;
   readonly signal?: AbortSignal;
   readonly onToolEvent?: (event: ProviderToolEvent) => void;
   readonly hostTools?: { readonly definitions: readonly HostToolDefinition[]; readonly execution: HostToolExecution };
+}
+
+export function claudeToolsForRequest(input: {
+  readonly textOnly: boolean;
+  readonly hostToolNames?: readonly string[];
+}): string[] {
+  if (input.textOnly) return [];
+  if (input.hostToolNames !== undefined) return [...input.hostToolNames];
+  return [];
 }
 
 export interface ProviderToolEvent {
@@ -561,11 +526,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
-    // The CLI child speaks MCP over HTTP itself, so the plugin tools reach it
-    // through a loopback bridge that exists for exactly this stream. The bridge
-    // is closed with the stream, which keeps a crashed turn from leaving a
-    // listener behind or holding a tool call open.
-    let bridge: { url: string; close(): Promise<void> } | undefined;
+    // 每次请求只持有当前 host 工具桥，关闭流时释放桥接资源。
     let hostBridge: ReturnType<typeof createHostToolsMcpBridge> | undefined;
     const pendingTools = new Map<string, string>();
     const recordedMessages: Array<{ role: string; content: Loose[] }> = [];
@@ -574,10 +535,9 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     if (options?.signal?.aborted === true) abort();
     else options?.signal?.addEventListener("abort", abort, { once: true });
     try {
-      const mcp = options?.mcp;
-      if (mcp != null) bridge = await createRoutedMcpBridge({ listTools: signal => mcp.listTools(signal), callTool: tool => mcp.callTool(tool) });
-      const mcpServerUrl = bridge?.url;
-      const hostTools = options?.hostTools;
+      const textOnly = options?.textOnlyInstructions !== undefined;
+      const hosted = !textOnly && options?.hostTools !== undefined;
+      const hostTools = textOnly ? undefined : options?.hostTools;
       const hostToolNames = new Set(hostTools?.definitions.map(definition => `mcp__grok_bot_host_tools__${definition.name}`) ?? []);
       const hostPermission = (toolName: string, input: unknown): PermissionResult => {
         if (!hostToolNames.has(toolName)) return { behavior: "deny", message: `Host tool is not visible in this turn: ${toolName}` };
@@ -594,21 +554,28 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       let final: SDKResultMessage | undefined;
       let streamedText = "";
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
-      try { for await (const message of queryClaude({ prompt: claudePrompt(messages, claudeLocalToolsPrompt()), options: {
+      const availableTools = claudeToolsForRequest({ textOnly, ...(hosted ? { hostToolNames: [...hostToolNames] } : {}) });
+      const toolGuidance = hosted
+        ? `${claudeLocalToolsPrompt()}\nCurrently available tools: ${[...hostToolNames].join(", ")}. Tool actions use Grok Bot approvals.`
+        : "This request has no tools. Respond from the supplied conversation.";
+      try { for await (const message of queryClaude({ prompt: textOnly ? JSON.stringify(messages) : claudePrompt(messages, toolGuidance), options: {
         pathToClaudeCodeExecutable: executable,
         cwd: resolveAgentWorkspace(),
-        tools: [...CLAUDE_LOCAL_TOOLS, ...(mcpServerUrl == null ? [] : ["mcp__grok_bot_plugins__*"]), ...(hostBridge == null ? [] : ["mcp__grok_bot_host_tools__*"])],
-        ...((mcpServerUrl == null && hostBridge == null) ? {} : { mcpServers: { ...(mcpServerUrl == null ? {} : { grok_bot_plugins: { type: "http" as const, url: mcpServerUrl } }), ...(hostBridge == null ? {} : { grok_bot_host_tools: hostBridge.config }) }, strictMcpConfig: true }),
+        tools: availableTools,
+        settingSources: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        ...(textOnly ? { systemPrompt: options!.textOnlyInstructions! } : {}),
+        ...(hostBridge === undefined ? {} : { mcpServers: { grok_bot_host_tools: hostBridge.config } }),
         permissionMode: "default",
         canUseTool: async (toolName, input) => {
+          if (!hosted) return { behavior: "deny", message: "This inference request has no tools." };
           // 桥接层只暴露当前回合可见工具，执行前会再次按名称检查。
-          const decision = hostToolNames.has(toolName)
-            ? hostPermission(toolName, input)
-            : claudeToolPermission(toolName, input, options?.localToolPermission);
+          const decision = hostPermission(toolName, input);
           if (decision.behavior === "allow") appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "permission-allowed", tool: toolName, input: redactTypedDesktopInput(JSON.stringify(input ?? {}).slice(0, 200)) });
           return decision;
         },
-        maxTurns: 24,
+        maxTurns: hosted ? 24 : 1,
         includePartialMessages: true,
         persistSession: false,
         abortController,
@@ -622,6 +589,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
           yield { type: "text-delta" as const, textDelta: delta };
           continue;
         }
+        if (textOnly && message.type === "assistant" && message.message.content.some((block: { readonly type: string }) => block.type === "tool_use")) throw new Error("Text-only inference returned a tool call.");
         recordClaudeToolTraffic(message);
         const recorded = claudeRecordedMessage(message, pendingTools, options?.onToolEvent);
         if (recorded != null) recordedMessages.push(recorded);
@@ -652,9 +620,11 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       }
       throw error;
     } finally {
-      // Closed with the stream: a crashed turn must not leave the loopback
-      // listener behind or hold a tool call open.
-      await bridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "mcp-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
+      abortController.abort();
+      for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
+        settled.reject(new Error("Claude stream closed before completing its result."));
+        settled.promise.catch(() => undefined);
+      }
       await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
       options?.signal?.removeEventListener("abort", abort);
     }
@@ -678,15 +648,15 @@ function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefin
   return Object.keys(tools).length === 0 ? undefined : tools;
 }
 
-function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const id = process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
   const model: LanguageModelV1 = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", compatibility: "compatible", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id as any);
-  return chatCompletionsExecutor("openrouter", model, messages, invocationId, definitions, onUsage, signal);
+  return chatCompletionsExecutor("openrouter", model, messages, invocationId, definitions, onUsage, signal, instructions);
 }
 
-function commandCodeExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+function commandCodeExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const model: LanguageModelV1 = createOpenAI({ apiKey: commandCodeCredential(), baseURL: COMMAND_CODE_BASE_URL, compatibility: "compatible", name: "command-code" }).chat(commandCodeModel() as any);
-  return chatCompletionsExecutor("command-code", model, messages, invocationId, definitions, onUsage, signal);
+  return chatCompletionsExecutor("command-code", model, messages, invocationId, definitions, onUsage, signal, instructions);
 }
 
 function providerApiError(provider: RoutedProvider, error: unknown): Error {
@@ -700,9 +670,9 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
   return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
 }
 
-export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions = GROK_ROUTER_SYSTEM_PROMPT) {
   const tools = toToolSet(definitions);
-  const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
+  const result = streamText({ model, system: instructions, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const streamFailure = Promise.withResolvers<never>();
   void streamFailure.promise.catch(() => {});
   const fullStream = (async function* () {
@@ -738,21 +708,22 @@ export function chatCompletionsExecutor(provider: RoutedProvider, model: Languag
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
-  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly mcp?: HostMcpTools, readonly onToolEvent?: (event: ProviderToolEvent) => void) { super(new BasePromptBuilder(initialMessages)); }
+  constructor(readonly provider: RoutedProvider, initialMessages?: readonly ProviderMessage[], readonly onUsage?: (usage: UsageRecord) => void, readonly localToolPermission?: SandLocalToolPermission, readonly onToolEvent?: (event: ProviderToolEvent) => void, readonly textOnlyInstructions?: string) { super(new BasePromptBuilder(initialMessages)); }
   stream(ctx: unknown, invocationId = crypto.randomUUID(), definitions?: readonly Loose[], streamOptions?: { readonly hostToolExecution?: HostToolExecution }) {
     const signal = (ctx as Context).signal;
+    if (this.textOnlyInstructions !== undefined && ((definitions?.length ?? 0) > 0 || streamOptions?.hostToolExecution !== undefined)) throw new Error("Text-only inference cannot receive tools.");
     // Claude 通过当前回合的 MCP 桥接执行主机工具；其余 provider 将调用交给外层。
-    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
+    if (this.provider === "codex") return codexExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal, this.textOnlyInstructions);
     if (this.provider === "claude-code") return claudeExecutor(this.getMessages(), invocationId, {
       ...(this.onUsage === undefined ? {} : { onUsage: this.onUsage }),
       ...(this.localToolPermission === undefined ? {} : { localToolPermission: this.localToolPermission }),
-      ...(this.mcp === undefined ? {} : { mcp: this.mcp }),
       ...(this.onToolEvent === undefined ? {} : { onToolEvent: this.onToolEvent }),
       ...(streamOptions?.hostToolExecution === undefined ? {} : { hostTools: { definitions: hostToolDefinitions(definitions), execution: streamOptions.hostToolExecution } }),
       signal,
+      ...(this.textOnlyInstructions === undefined ? {} : { textOnlyInstructions: this.textOnlyInstructions }),
     });
-    if (this.provider === "command-code") return commandCodeExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
-    return openRouterExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal);
+    if (this.provider === "command-code") return commandCodeExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal, this.textOnlyInstructions);
+    return openRouterExecutor(this.getMessages(), invocationId, definitions, this.onUsage, signal, this.textOnlyInstructions);
   }
 }
 
@@ -765,7 +736,7 @@ function hostToolDefinitions(definitions: readonly Loose[] | undefined): HostToo
   });
 }
 
-export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly mcp?: HostMcpTools; readonly onToolEvent?: (event: ProviderToolEvent) => void }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
+export function createProviderPromptSession(provider: RoutedProvider, options?: { readonly localToolPermission?: SandLocalToolPermission; readonly onToolEvent?: (event: ProviderToolEvent) => void; readonly textOnlyInstructions?: string }): { getModelId(): string; getExecutor(state?: unknown): PromptExecutor } {
   const modelId = provider === "codex" ? configuredCodexModel() : provider === "claude-code" ? "claude-code" : provider === "command-code" ? commandCodeModel() : process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.mcp, options?.onToolEvent) };
+  return { getModelId: () => modelId, getExecutor: state => new ProviderPromptExecutor(provider, Array.isArray(state) ? state as ProviderMessage[] : undefined, usage => recordRoutedUsage(provider, usage), options?.localToolPermission, options?.onToolEvent, options?.textOnlyInstructions) };
 }
