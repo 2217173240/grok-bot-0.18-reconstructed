@@ -31,6 +31,7 @@ import type {
 } from "./loopback-sand-box.js";
 import { resolveExecDaemonAuthTokenFromEnv } from "./loopback-sand-box.js";
 import { localDesktopComputerUseEnabled } from "./local-computer-use.js";
+import { readLocalDesktopUrl } from "./local-desktop-url.js";
 import { createAwaitingHumanState, type AwaitingHumanState } from "./awaiting-human.js";
 import { computerUseExecutorResource } from "../../packages/agent-exec/computer-use.js";
 import { shellExecutorResource } from "../../packages/agent-exec/shell.js";
@@ -99,16 +100,18 @@ function createStandaloneProductionBoxInner<
   Accessor extends ShellAccessor & FileTransferAccessor
 >(
   loopback: ReturnType<typeof createSandBox<Accessor>>,
-  withNoMonitorComputerUse: (accessor: Accessor) => Accessor
+  withComputerUse: (accessor: Accessor) => Accessor,
+  desktopEnabled: boolean
 ): ProductionBoxInner {
   // The awaiting-human gate is host-side and lazily created once: box-facing
   // executors refuse while a handoff is pending (the ask/hand-back files
   // live in the shared workspace, so the agent's Mac-side tools can still
   // resolve the handoff — no deadlock).
   let gate: AwaitingHumanState | undefined;
+  const workspaceRoot = process.env.SAND_WORKSPACE_ROOT?.trim() || join(getSandRootDir(), "box-workspace");
   const awaitingHumanGate = (): AwaitingHumanState => {
     gate ??= createAwaitingHumanState({
-      root: join(process.env.SAND_WORKSPACE_ROOT?.trim() || join(getSandRootDir(), "box-workspace"), ".grokbot"),
+      root: join(workspaceRoot, ".grokbot"),
     });
     return gate;
   };
@@ -147,10 +150,11 @@ function createStandaloneProductionBoxInner<
   return {
     ensureReady: async (ctx, agentId) => {
       const primary = await loopback.ensureReady(ctx, agentId);
+      const vncUrl = await readLocalDesktopUrl(desktopEnabled, workspaceRoot);
       return {
         ...primary,
-        remoteAccessor: withAwaitingHuman(withNoMonitorComputerUse(primary.remoteAccessor)),
-        vncUrl: "",
+        remoteAccessor: withAwaitingHuman(withComputerUse(primary.remoteAccessor)),
+        vncUrl,
       };
     },
     runState: () => loopback.runState(),
@@ -270,11 +274,13 @@ export function createProductionBoxInner<
     // The desktop opt-in replaces the no-monitor stub with the real plane:
     // XTEST input plus desktop-level screenshots, executed by this host
     // process inside the box (DISPLAY is exported by box-init-exec).
+    const desktopEnabled = localDesktopComputerUseEnabled();
     return createStandaloneProductionBoxInner(
       loopback,
-      localDesktopComputerUseEnabled()
+      desktopEnabled
         ? (accessor => generated.withLocalDesktopComputerUse(accessor))
-        : (accessor => generated.withNoMonitorComputerUse(accessor))
+        : (accessor => generated.withNoMonitorComputerUse(accessor)),
+      desktopEnabled
     );
   }
 
