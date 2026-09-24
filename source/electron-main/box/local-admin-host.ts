@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 
-const LOCAL_ADMIN_GATEWAY_URL = "http://127.0.0.1:1340";
+const LOCAL_ADMIN_GATEWAY_PORT = 1340;
 const BOX_EXEC_DAEMON_PORT = 1337;
 
 const READY_TIMEOUT_MS = 30_000;
@@ -16,7 +16,7 @@ const OUTPUT_TAIL_LIMIT_BYTES = 8_192;
 const INERT_BACKEND_URL = "http://127.0.0.1:9";
 
 let child: ChildProcess | undefined;
-let logStream: ReturnType<typeof createWriteStream> | undefined;
+let childClosed: Promise<void> | undefined;
 
 export function localAdminHostLogPath(settingsPath: string): string {
   return join(dirname(settingsPath), "box-logs", "sand-host.log");
@@ -94,23 +94,28 @@ export async function ensureLocalAdminHost(options: {
   readonly env?: NodeJS.ProcessEnv;
   readonly fetchImpl?: typeof fetch;
   readonly deps?: LocalAdminHostDeps;
+  readonly gatewayPort?: number;
+  readonly execDaemonPort?: number;
 }): Promise<GatewayConnection> {
+  const gatewayPort = options.gatewayPort ?? LOCAL_ADMIN_GATEWAY_PORT;
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
+  const execDaemonPort = options.execDaemonPort ?? BOX_EXEC_DAEMON_PORT;
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const deps = options.deps ?? resolveLocalAdminHostDeps();
   const logPath = localAdminHostLogPath(options.settingsPath);
   await mkdir(dirname(logPath), { recursive: true });
-  if (await gatewayReady(options.token, fetchImpl)) {
+  if (await gatewayReady(gatewayUrl, options.token, fetchImpl)) {
     appendLocalIntercept({ kind: "local-host", event: "already-ready", logPath }, env);
-    return { baseUrl: LOCAL_ADMIN_GATEWAY_URL, token: options.token };
+    return { baseUrl: gatewayUrl, token: options.token };
   }
-  const healed = await healOrphanedBoxExecDaemon();
-  if (healed === "reaped-orphan") appendLocalIntercept({ kind: "local-host", event: "reaped-orphan-daemon", port: BOX_EXEC_DAEMON_PORT }, env);
-  stopLocalAdminHost();
-  logStream = createWriteStream(logPath, { flags: "a" });
+  const healed = await healOrphanedBoxExecDaemon(execDaemonPort);
+  if (healed === "reaped-orphan") appendLocalIntercept({ kind: "local-host", event: "reaped-orphan-daemon", port: execDaemonPort }, env);
+  await stopLocalAdminHost();
+  const outputLog = createWriteStream(logPath, { flags: "a" });
   let outputTail = "";
   const capture = (chunk: Buffer): void => {
-    logStream?.write(chunk);
+    outputLog.write(chunk);
     outputTail = (outputTail + String(chunk)).slice(-OUTPUT_TAIL_LIMIT_BYTES);
   };
   let exit: HostExit | undefined;
@@ -120,7 +125,7 @@ export async function ensureLocalAdminHost(options: {
     SAND_HOST_IN_BOX: "0",
     SAND_BOX_LOG_SHIP_DISABLED: "1",
     SAND_GATEWAY_BIND_HOST: "127.0.0.1",
-    SAND_HOST_PORT: "1340",
+    SAND_HOST_PORT: String(gatewayPort),
     SAND_GATEWAY_TOKEN: options.token,
     SAND_GATEWAY_REQUIRE_AUTH: "1",
     SAND_DATA_ROOT: join(dirname(options.settingsPath), "box-data"),
@@ -135,32 +140,37 @@ export async function ensureLocalAdminHost(options: {
   };
   const execPath = options.execPath ?? process.execPath;
   child = spawn(execPath, [options.hostMainPath], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+  const spawned = child;
   child.stdout?.on("data", capture);
   child.stderr?.on("data", capture);
-  child.once("exit", (code, signal) => {
-    exit = { code, signal };
-    appendLocalIntercept({ kind: "local-host", event: "exit", code, signal, outputTail, logPath }, env);
+  childClosed = new Promise((resolve) => {
+    spawned.once("close", (code, signal) => {
+      exit = { code, signal };
+      appendLocalIntercept({ kind: "local-host", event: "exit", code, signal, outputTail, logPath }, env);
+      outputLog.end(resolve);
+    });
   });
   appendLocalIntercept({ kind: "local-host", event: "spawn", pid: child.pid, hostMainPath: options.hostMainPath, logPath }, env);
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (await gatewayReady(options.token, fetchImpl)) return { baseUrl: LOCAL_ADMIN_GATEWAY_URL, token: options.token };
+    if (await gatewayReady(gatewayUrl, options.token, fetchImpl)) return { baseUrl: gatewayUrl, token: options.token };
     if (exit != null) throw new Error(`Local admin host exited before the gateway was ready (code ${exit.code}${exit.signal == null ? "" : `, signal ${exit.signal}`}). Last output:\n${outputTail.trim()}\nFull log: ${logPath}`);
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
   }
-  throw new Error(`Local admin host did not expose ${LOCAL_ADMIN_GATEWAY_URL} within 30s. Last output:\n${outputTail.trim()}\nFull log: ${logPath}`);
+  throw new Error(`Local admin host did not expose ${gatewayUrl} within 30s. Last output:\n${outputTail.trim()}\nFull log: ${logPath}`);
 }
 
-export function stopLocalAdminHost(): void {
+export async function stopLocalAdminHost(): Promise<void> {
+  const closed = childClosed;
   if (child != null && child.exitCode == null) child.kill("SIGTERM");
   child = undefined;
-  logStream?.end();
-  logStream = undefined;
+  await closed;
+  if (childClosed === closed) childClosed = undefined;
 }
 
-async function gatewayReady(token: string, fetchImpl: typeof fetch): Promise<boolean> {
+async function gatewayReady(gatewayUrl: string, token: string, fetchImpl: typeof fetch): Promise<boolean> {
   try {
-    const response = await fetchImpl(`${LOCAL_ADMIN_GATEWAY_URL}/health`, {
+    const response = await fetchImpl(`${gatewayUrl}/health`, {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(800),
     });

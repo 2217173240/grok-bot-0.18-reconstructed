@@ -28,6 +28,7 @@ export interface EpisodeProgress {
   clearPendingEpisodeTurns(): void;
   recordEpisodeTurn(turn: EpisodeTurn): void;
   getPendingEpisodeTurns(): readonly EpisodeTurn[];
+  consumePendingEpisodeTurns(count: number): void;
 }
 
 export interface MemorySession {
@@ -48,12 +49,16 @@ export async function runTurnMemory(
   exchange: TurnExchange,
 ): Promise<void> {
   if (memoryStore.recordMemoryEvidence != null) {
-    episodeProgress?.clearPendingEpisodeTurns();
-    memoryStore.recordMemoryEvidence({
-      occurredAt: turnTimestamp,
-      user: exchange.user,
-      assistant: exchange.agent,
-    });
+    try {
+      memoryStore.recordMemoryEvidence({
+        occurredAt: turnTimestamp,
+        user: exchange.user,
+        assistant: exchange.agent,
+      });
+      episodeProgress?.clearPendingEpisodeTurns();
+    } catch (error) {
+      console.error("[turn-memory] evidence maintenance failed:", error);
+    }
     return;
   }
   await runMemoryExtraction(memoryStore, session, context, exchange);
@@ -64,27 +69,16 @@ export async function runTurnMemory(
       user: exchange.user,
       agent: exchange.agent,
     });
+    const interval = getEpisodeInterval();
     const pending = episodeProgress.getPendingEpisodeTurns();
-    if (pending.length < getEpisodeInterval()) return;
-    try {
-      const narrative = await summarizeEpisode({
-        executor: session.getExecutor(),
-        ctx: context,
-        turns: pending,
-      });
-      if (narrative != null) {
-        const latestTimestamp = pending[pending.length - 1]?.ts ?? turnTimestamp;
-        memoryStore.addMemory(
-          `${MEMORY_EPISODE_PREFIX}${narrative}`,
-          latestTimestamp,
-          "log",
-        );
-      }
-    } finally {
-      episodeProgress.clearPendingEpisodeTurns();
-    }
-  } catch {
-    // Memory maintenance must never fail the user-visible turn.
+    if (pending.length < interval) return;
+    const batch = pending.slice(0, interval);
+    const narrative = await summarizeEpisode({ executor: session.getExecutor(), ctx: context, turns: batch });
+    const latestTimestamp = batch[batch.length - 1]?.ts ?? turnTimestamp;
+    if (narrative != null) memoryStore.addMemory(`${MEMORY_EPISODE_PREFIX}${narrative}`, latestTimestamp, "log");
+    episodeProgress.consumePendingEpisodeTurns(batch.length);
+  } catch (error) {
+    console.error("[turn-memory] episode maintenance failed:", error);
   }
 }
 

@@ -1,13 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 
 const startupMarker = process.argv.indexOf("--startup-marker");
 const ignoreTermination = process.argv.includes("--ignore-sigterm");
 if (ignoreTermination) process.on("SIGTERM", () => {});
 if (startupMarker >= 0) {
-  await writeFile(process.argv[startupMarker + 1], String(process.pid));
+  const marker = process.argv[startupMarker + 1];
+  const pendingMarker = `${marker}.${process.pid}.tmp`;
+  await writeFile(pendingMarker, String(process.pid));
+  await rename(pendingMarker, marker);
   await new Promise(resolve => setTimeout(resolve, ignoreTermination ? 6_000 : 2_000));
 }
 

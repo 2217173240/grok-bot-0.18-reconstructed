@@ -6,7 +6,6 @@ import { branchReplyCounts, threadDescendants } from "../../../shared/transcript
 import {
   EMPTY_SPEND_GUARD_STATE,
   EMPTY_UNREAD_STATE,
-  EPISODE_PENDING_MAX,
   EPISODE_TURN_TEXT_CAP,
   REQUEST_ID_HISTORY_MAX,
   REQUEST_ID_PROMPT_MAX,
@@ -277,8 +276,9 @@ export class SandAgentDb {
   deleteTranscriptEntry(id: string): boolean { const committed = this.runWrite("deleteTranscriptEntry", () => { this.statements.deleteTranscriptEntry!.run(id); }); if (committed) publishTranscriptMutation({ kind: "entry-deleted", agentId: this.agentDirName, entryId: id }); return committed; }
 
   getPendingEpisodeTurns() { return parsePendingEpisodeTurns(this.readKv(KV.episode)); }
-  recordEpisodeTurn(turn: { ts: number; user: string; agent: string }): void { const capped = { ts: turn.ts, user: turn.user.slice(0, EPISODE_TURN_TEXT_CAP), agent: turn.agent.slice(0, EPISODE_TURN_TEXT_CAP) }; this.writeKv(KV.episode, JSON.stringify([...this.getPendingEpisodeTurns(), capped].slice(-EPISODE_PENDING_MAX))); }
-  clearPendingEpisodeTurns(): void { this.deleteKv(KV.episode); }
+  recordEpisodeTurn(turn: { ts: number; user: string; agent: string }): void { this.assertOpen(); const capped = { ts: turn.ts, user: turn.user.slice(0, EPISODE_TURN_TEXT_CAP), agent: turn.agent.slice(0, EPISODE_TURN_TEXT_CAP) }; if (!this.writeKv(KV.episode, JSON.stringify([...this.getPendingEpisodeTurns(), capped]))) throw new Error("Failed to persist Episode turn"); }
+  consumePendingEpisodeTurns(count: number): void { this.assertOpen(); if (!Number.isSafeInteger(count) || count < 0) throw new RangeError("Episode consumption count must be a non-negative integer"); const pending = this.getPendingEpisodeTurns(); if (count > pending.length) throw new RangeError("Episode consumption count exceeds pending turns"); const remaining = pending.slice(count); const committed = remaining.length === 0 ? this.deleteKv(KV.episode) : this.writeKv(KV.episode, JSON.stringify(remaining)); if (!committed) throw new Error("Failed to persist Episode consumption"); }
+  clearPendingEpisodeTurns(): void { if (!this.deleteKv(KV.episode)) throw new Error("Failed to clear pending Episode turns"); }
   getMemoryPromptSnapshot() { return parseMemoryPromptSnapshot(this.readKv(KV.memorySnapshot)); }
   setMemoryPromptSnapshot(snapshot: unknown): void { this.writeKv(KV.memorySnapshot, JSON.stringify(snapshot)); }
   clearMemoryPromptSnapshot(): void { this.deleteKv(KV.memorySnapshot); }
