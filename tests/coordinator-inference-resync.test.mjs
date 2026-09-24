@@ -143,6 +143,22 @@ test("只保存 Command Code model 时保留 host 的 provider", { timeout: 1500
   assert.deepEqual(f.completed[0].failedSteps, []);
 });
 
+test("显式改回默认 cursor provider 后重新连接仍然发送选择", { timeout: 15000 }, async t => {
+  const f = await fixture(t);
+  f.settings.setInferenceProvider("command-code");
+  await f.chain.onTransportConnected();
+  f.settings.setInferenceProvider("cursor");
+  await f.chain.onTransportConnected();
+  assert.deepEqual(f.routingRequests(), [
+    { inferenceProvider: "command-code" },
+    { inferenceProvider: "cursor" },
+  ]);
+  assert.equal(f.settings.load().inferenceProvider, "cursor");
+  assert.equal(f.persistedHost().inferenceProvider, "cursor");
+  assert.equal(f.persistedHost().commandCodeModel, "deepseek/deepseek-v4-flash");
+  assert.deepEqual(f.completed.map(({ failedSteps }) => failedSteps), [[], []]);
+});
+
 test("HTTP 失败报告 inference_router 并继续执行，重新连接恢复同步", { timeout: 15000 }, async t => {
   const f = await fixture(t);
   f.settings.setInferenceProvider("command-code");
