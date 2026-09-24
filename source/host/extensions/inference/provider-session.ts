@@ -700,7 +700,7 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
   return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
 }
 
-function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
+export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal) {
   const tools = toToolSet(definitions);
   const result = streamText({ model, system: GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const streamFailure = Promise.withResolvers<never>();
@@ -720,7 +720,15 @@ function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV
   const response = Promise.race([result.response, streamFailure.promise]);
   const usage = Promise.race([result.usage, streamFailure.promise]);
   const providerMetadata = Promise.race([result.providerMetadata, streamFailure.promise]);
-  const extendedUsage = usage.then(value => ({ inputTokens: value.promptTokens, outputTokens: value.completionTokens, cacheReadTokens: 0, cacheWriteTokens: 0, maxTokens: 0 }));
+  // Chat-completions providers count cached prompt tokens inside
+  // prompt_tokens and report them separately as cached_tokens (the AI SDK
+  // surfaces that as openai.cachedPromptTokens). Split them out so input
+  // means the same as for Claude Code: uncached input, cache reads apart.
+  const extendedUsage = Promise.all([usage, providerMetadata.catch(() => undefined)]).then(([value, metadata]) => {
+    const reported = Number(metadata?.openai?.cachedPromptTokens);
+    const cacheReadTokens = Number.isFinite(reported) && reported > 0 ? Math.min(reported, value.promptTokens) : 0;
+    return { inputTokens: value.promptTokens - cacheReadTokens, outputTokens: value.completionTokens, cacheReadTokens, cacheWriteTokens: 0, maxTokens: 0 };
+  });
   void response.catch(() => {});
   void usage.catch(() => {});
   void providerMetadata.catch(() => {});
