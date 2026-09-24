@@ -90,32 +90,30 @@ async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.en
 // The connector's compiled location varies by layout (bundled inside
 // app.asar/dist/electron-main, mirrored in app.asar.unpacked, or a bare
 // esbuild output during tests), so search upward for the stamp instead of
-// guessing one relative depth. No stamp (dev/test bundles) means the pin
-// cannot be verified — the connector then runs the present image rather than
-// guessing staleness.
+// 开发和测试 bundle 可以没有 stamp；发布资源必须包含有效 stamp。
 let expectedDepsPinPromise: Promise<string | undefined> | undefined;
 export async function readExpectedDepsPin(): Promise<string | undefined> {
   const resourcesPath = Reflect.get(process, "resourcesPath");
   expectedDepsPinPromise ??= readExpectedDepsPinFrom(dirname(fileURLToPath(import.meta.url)), typeof resourcesPath === "string" ? resourcesPath : undefined);
-  return await expectedDepsPinPromise;
+  try { return await expectedDepsPinPromise; } catch (error) { expectedDepsPinPromise = undefined; throw error; }
 }
 
 export async function readExpectedDepsPinFrom(moduleDirectory: string, resourcesPath: string | undefined): Promise<string | undefined> {
   const candidates = new Set<string>();
   if (resourcesPath != null && resourcesPath.length > 0) candidates.add(join(resourcesPath, "build-stamp.json"));
-  let directory = moduleDirectory;
-  for (let depth = 0; depth < 8; depth += 1) {
-    candidates.add(join(directory, "build-stamp.json"));
-    candidates.add(join(directory, "Resources", "build-stamp.json"));
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
+  else {
+    let directory = moduleDirectory;
+    for (let depth = 0; depth < 8; depth += 1) {
+      candidates.add(join(directory, "build-stamp.json"));
+      candidates.add(join(directory, "Resources", "build-stamp.json"));
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
   }
-  let found = false;
   for (const candidate of candidates) {
     try {
       const raw = await readFile(candidate, "utf8");
-      found = true;
       const parsed = JSON.parse(raw) as { depsPin?: unknown };
       if (typeof parsed.depsPin !== "string" || !/^[0-9a-f]{64}$/.test(parsed.depsPin)) {
         throw new Error(`Invalid build stamp at ${candidate}: depsPin must be a 64-character hexadecimal string.`);
@@ -128,7 +126,7 @@ export async function readExpectedDepsPinFrom(moduleDirectory: string, resources
   }
   // A packaged Electron app always has a Resources directory. Its stamp is
   // required; source bundles and tests may legitimately have no stamp.
-  if (resourcesPath != null && resourcesPath.length > 0 && found === false) {
+  if (resourcesPath != null && resourcesPath.length > 0) {
     throw new Error(`Missing build stamp in packaged resources: ${join(resourcesPath, "build-stamp.json")}`);
   }
   return undefined;
@@ -680,8 +678,8 @@ export async function readMacRouting(settingsPath: string): Promise<{ provider: 
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return { provider: "claude-code", commandCodeModel: undefined };
     throw error;
   }
-  const provider = macSettings.inferenceProvider;
-  if (provider === undefined) return { provider: "claude-code", commandCodeModel: undefined };
+  if (macSettings === null || typeof macSettings !== "object" || Array.isArray(macSettings)) throw new Error(`Invalid routing settings in ${settingsPath}: expected an object.`);
+  const provider = macSettings.inferenceProvider === undefined ? "claude-code" : macSettings.inferenceProvider;
   if (!isSandInferenceProvider(provider)) throw new Error(`Invalid inference provider in ${settingsPath}.`);
   if (macSettings.commandCodeModel !== undefined && !isCommandCodeModelId(macSettings.commandCodeModel)) throw new Error(`Invalid commandCodeModel in ${settingsPath}.`);
   return { provider, commandCodeModel: macSettings.commandCodeModel as string | undefined };
