@@ -63,7 +63,7 @@ const KV = {
   metadata: "metadata", profile: "sandProfile", unread: "unreadState",
   awaiting: "awaitingUserResponse", requestIds: "requestIds", latestRequestId: "latestRequestId",
   episode: "episodePending", memorySnapshot: "memoryPromptSnapshot",
-  profileSnapshot: "agentProfilePromptSnapshot", origin: "origin",
+  profileSnapshot: "agentProfilePromptSnapshot", origin: "origin", failedUserMessageIds: "failedUserMessageIds",
   introduction: "introductionPending", spendGuard: "automationSpendGuardState",
   spendGuardLegacy: "automationSpendGuardNudgedAt", partners: "conversationPartners",
   hiddenRepair: "hiddenEntryRepairVersion", staleRootCleanup: "staleRootCleanupVersion",
@@ -217,6 +217,31 @@ export class SandAgentDb {
 
   getRequestIds(): RequestRecord[] { const records = parseRequestRecords(this.readKv(KV.requestIds)); if (records.length) return records; const legacy = this.readKv(KV.latestRequestId)?.trim(); return legacy ? [{ id: legacy, at: 0 }] : []; }
   recordRequestId(id: string, at = Date.now(), prompt?: string, source?: string): void { const trimmed = id.trim(); if (!trimmed) return; const records = this.getRequestIds(); if (records.at(-1)?.id === trimmed) return; const label = prompt?.trim().slice(0, REQUEST_ID_PROMPT_MAX); const record: RequestRecord = { id: trimmed, at, ...(label ? { prompt: label } : {}), ...(source ? { source } : {}) }; this.writeKv(KV.requestIds, JSON.stringify([...records, record].slice(-REQUEST_ID_HISTORY_MAX))); }
+  // 失败记录与会话一起保留，后续恢复未确认消息时排除这些消息。
+  getFailedUserMessageIds(): string[] {
+    this.assertOpen();
+    const raw = this.readKv(KV.failedUserMessageIds);
+    if (raw == null) return [];
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); }
+    catch (cause) { throw new Error("Invalid failedUserMessageIds JSON", { cause }); }
+    if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string" && id.length > 0 && id === id.trim())) {
+      throw new Error("Invalid failedUserMessageIds: expected non-empty message IDs");
+    }
+    return [...new Set(parsed as string[])];
+  }
+  recordFailedUserMessageId(id: string): void {
+    const ids = this.getFailedUserMessageIds();
+    const trimmed = id.trim();
+    if (!trimmed || ids.includes(trimmed)) return;
+    if (!this.writeKv(KV.failedUserMessageIds, JSON.stringify([...ids, trimmed]))) {
+      throw new Error("Failed to persist failedUserMessageIds");
+    }
+  }
+  filterFailedUserMessages<T extends { id: string }>(messages: readonly T[]): T[] {
+    const failedIds = new Set(this.getFailedUserMessageIds());
+    return messages.filter((message) => !failedIds.has(message.id));
+  }
   getAgentOrigin(): "dev" | "user" { return this.readKv(KV.origin) === "dev" ? "dev" : "user"; }
   setAgentOrigin(origin: "dev" | "user"): void { this.writeKv(KV.origin, origin); }
   getIntroductionPending(): boolean { return this.readKv(KV.introduction) === "1"; }
@@ -261,7 +286,7 @@ export class SandAgentDb {
   setAgentProfilePromptSnapshot(snapshot: unknown): void { this.writeKv(KV.profileSnapshot, JSON.stringify(snapshot)); }
   clearAgentProfilePromptSnapshot(): void { this.deleteKv(KV.profileSnapshot); }
   clearTransientState(): void { for (const key of [KV.unread, KV.spendGuardLegacy, KV.spendGuard, KV.awaiting, KV.latestRequestId, KV.requestIds, KV.episode, KV.memorySnapshot, KV.profileSnapshot]) this.deleteKv(key); }
-  clearConversation(): boolean { if (this.closed) return false; const metadata = this.readMetadata(); const committed = this.runWrite("clearConversation", () => { this.db.exec("BEGIN IMMEDIATE"); try { this.statements.clearBlobs!.run(); this.statements.clearTranscriptEntries!.run(); for (const key of [KV.awaiting, KV.latestRequestId, KV.requestIds, KV.episode, KV.memorySnapshot, KV.profileSnapshot]) this.statements.deleteKv!.run(key); this.statements.setKv!.run(KV.metadata, this.serializeMetadata({ ...metadata, latestRootBlobId: new Uint8Array(), currentPlanUri: "" })); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; } }); if (!committed) return false; publishTranscriptMutation({ kind: "conversation-cleared", agentId: this.agentDirName }); this.notify(this.awaitingListeners); this.notify(this.listeners.get("latestRootBlobId") ?? new Set()); return true; }
+  clearConversation(): boolean { if (this.closed) return false; const metadata = this.readMetadata(); const committed = this.runWrite("clearConversation", () => { this.db.exec("BEGIN IMMEDIATE"); try { this.statements.clearBlobs!.run(); this.statements.clearTranscriptEntries!.run(); for (const key of [KV.awaiting, KV.latestRequestId, KV.requestIds, KV.episode, KV.memorySnapshot, KV.profileSnapshot, KV.failedUserMessageIds]) this.statements.deleteKv!.run(key); this.statements.setKv!.run(KV.metadata, this.serializeMetadata({ ...metadata, latestRootBlobId: new Uint8Array(), currentPlanUri: "" })); this.db.exec("COMMIT"); } catch (error) { this.db.exec("ROLLBACK"); throw error; } }); if (!committed) return false; publishTranscriptMutation({ kind: "conversation-cleared", agentId: this.agentDirName }); this.notify(this.awaitingListeners); this.notify(this.listeners.get("latestRootBlobId") ?? new Set()); return true; }
   getAgentPurpose(): string | null { const value = this.readKv(KV.purpose); return value && /^[a-z][a-z0-9_-]*$/.test(value) ? value : null; }
   setAgentPurpose(purpose: string): void { this.writeKv(KV.purpose, purpose); }
   clearAgentPurpose(): void { this.deleteKv(KV.purpose); }

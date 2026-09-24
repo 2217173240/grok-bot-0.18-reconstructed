@@ -10,7 +10,7 @@ import type { SandSettingsStore } from "../../shared/node/settings/sand-settings
 import type { RecreateResult } from "./box-recreate-commands.js";
 import { EnvDescriptorHostConnector, type SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
-import { isCommandCodeModelId } from "../../shared/inference-router.js";
+import { isCommandCodeModelId, isSandInferenceProvider } from "../../shared/inference-router.js";
 import { isLocalAdminEnabled } from "../../shared/node/local-admin.js";
 import { appendLocalIntercept } from "../../shared/node/local-admin-intercept.js";
 import { LOCAL_MCP_SERVERS_FILENAME } from "../../shared/node/mcp/local-mcp-servers.js";
@@ -86,35 +86,48 @@ async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.en
   return decideDockerImage(env, probe, expectedDepsPin);
 }
 
-// The app's expected deps pin, stamped at package time next to the bundle.
-// The connector's compiled location varies by layout (bundled inside
-// app.asar/dist/electron-main, mirrored in app.asar.unpacked, or a bare
-// esbuild output during tests), so search upward for the stamp instead of
-// guessing one relative depth. No stamp (dev/test bundles) means the pin
-// cannot be verified — the connector then runs the present image rather than
-// guessing staleness.
-let expectedDepsPinRead = false;
-let expectedDepsPinValue: string | undefined;
-async function readExpectedDepsPin(): Promise<string | undefined> {
-  if (!expectedDepsPinRead) {
-    expectedDepsPinRead = true;
-    let directory = dirname(fileURLToPath(import.meta.url));
+// 应用的 deps pin 在打包时写入 bundle 附近。connector 可能位于
+// app.asar/dist/electron-main、app.asar.unpacked 或测试 bundle，因此按目录向上查找。
+// 开发和测试 bundle 可以没有 stamp；发布资源必须包含有效 stamp。
+let expectedDepsPinPromise: Promise<string | undefined> | undefined;
+export async function readExpectedDepsPin(): Promise<string | undefined> {
+  const resourcesPath = Reflect.get(process, "resourcesPath");
+  expectedDepsPinPromise ??= readExpectedDepsPinFrom(dirname(fileURLToPath(import.meta.url)), typeof resourcesPath === "string" ? resourcesPath : undefined);
+  try { return await expectedDepsPinPromise; } catch (error) { expectedDepsPinPromise = undefined; throw error; }
+}
+
+export async function readExpectedDepsPinFrom(moduleDirectory: string, resourcesPath: string | undefined): Promise<string | undefined> {
+  const candidates = new Set<string>();
+  if (resourcesPath != null && resourcesPath.length > 0) candidates.add(join(resourcesPath, "build-stamp.json"));
+  else {
+    let directory = moduleDirectory;
     for (let depth = 0; depth < 8; depth += 1) {
-      for (const candidate of [join(directory, "build-stamp.json"), join(directory, "Resources", "build-stamp.json")]) {
-        try {
-          const parsed = JSON.parse(await readFile(candidate, "utf8")) as { depsPin?: unknown };
-          if (typeof parsed.depsPin === "string" && /^[0-9a-f]{64}$/.test(parsed.depsPin)) {
-            expectedDepsPinValue = parsed.depsPin;
-            return expectedDepsPinValue;
-          }
-        } catch {}
-      }
+      candidates.add(join(directory, "build-stamp.json"));
+      candidates.add(join(directory, "Resources", "build-stamp.json"));
       const parent = dirname(directory);
       if (parent === directory) break;
       directory = parent;
     }
   }
-  return expectedDepsPinValue;
+  for (const candidate of candidates) {
+    try {
+      const raw = await readFile(candidate, "utf8");
+      const parsed = JSON.parse(raw) as { depsPin?: unknown };
+      if (typeof parsed.depsPin !== "string" || !/^[0-9a-f]{64}$/.test(parsed.depsPin)) {
+        throw new Error(`Invalid build stamp at ${candidate}: depsPin must be a 64-character hexadecimal string.`);
+      }
+      return parsed.depsPin;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  // A packaged Electron app always has a Resources directory. Its stamp is
+  // required; source bundles and tests may legitimately have no stamp.
+  if (resourcesPath != null && resourcesPath.length > 0) {
+    throw new Error(`Missing build stamp in packaged resources: ${join(resourcesPath, "build-stamp.json")}`);
+  }
+  return undefined;
 }
 
 export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: boolean): "docker" {
@@ -440,9 +453,9 @@ export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcess
   return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
+  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
     const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> }; Mounts?: readonly { Destination?: unknown }[] };
     return {
@@ -454,6 +467,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       boxExecDaemonSha256: typeof value.Config?.Labels?.[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] === "string" ? value.Config.Labels[LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL] as string : "",
       hasInferenceCredential: value.Config?.Labels?.["com.grok-bot.local-vm.inference-credential"] === "1",
       hasCodexAuthMount: value.Mounts?.some(mount => mount.Destination === "/root/.codex") === true,
+      hasClaudeAuthMount: value.Mounts?.some(mount => mount.Destination === "/root/.claude") === true,
       schemaVersion: typeof value.Config?.Labels?.["com.grok-bot.local-vm.schema-version"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.schema-version"] as string : "",
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
       desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
@@ -652,11 +666,33 @@ export async function stageCurrentHostBundle(settingsPath: string): Promise<Loca
   };
 }
 
-async function localClaudeMountArguments(): Promise<string[]> {
-  const source = join(homedir(), ".claude");
-  return await isDirectory(source)
-    ? ["--mount", `type=bind,src=${source},dst=/root/.claude,readonly`]
-    : [];
+// The Mac's routing choice, read at container creation. An unreadable file
+// keeps the connector's long-standing default provider.
+export async function readMacRouting(settingsPath: string): Promise<{ provider: string; commandCodeModel: string | undefined }> {
+  let macSettings: { inferenceProvider?: unknown; commandCodeModel?: unknown };
+  try {
+    macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown; commandCodeModel?: unknown };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return { provider: "claude-code", commandCodeModel: undefined };
+    throw error;
+  }
+  if (macSettings === null || typeof macSettings !== "object" || Array.isArray(macSettings)) throw new Error(`Invalid routing settings in ${settingsPath}: expected an object.`);
+  const provider = macSettings.inferenceProvider === undefined ? "claude-code" : macSettings.inferenceProvider;
+  if (!isSandInferenceProvider(provider)) throw new Error(`Invalid inference provider in ${settingsPath}.`);
+  if (macSettings.commandCodeModel !== undefined && !isCommandCodeModelId(macSettings.commandCodeModel)) throw new Error(`Invalid commandCodeModel in ${settingsPath}.`);
+  return { provider, commandCodeModel: macSettings.commandCodeModel as string | undefined };
+}
+
+// ~/.claude holds the Claude Code login and its history. Only the Claude Code
+// provider needs it, so other providers (whose models can run shell commands
+// with network access) never get it mounted. A missing directory means no
+// mount either way, so it can't cause a replace loop.
+async function claudeAuthMountWanted(provider: string): Promise<boolean> {
+  return provider === "claude-code" && await isDirectory(join(homedir(), ".claude"));
+}
+
+function localClaudeMountArguments(wanted: boolean): string[] {
+  return wanted ? ["--mount", `type=bind,src=${join(homedir(), ".claude")},dst=/root/.claude,readonly`] : [];
 }
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
@@ -702,13 +738,15 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // dependencies: replace it, the same as a schema or host-bundle change. A
   // desktop-mode mismatch replaces too — the entrypoint only applies at run.
   const pinDrifted = expectedDepsPin != null && inspected.depsPin !== expectedDepsPin;
+  const routing = await readMacRouting(settingsPath);
+  const claudeMount = await claudeAuthMountWanted(routing.provider);
   // The mount is the content-addressed directory v<layout>-<hostSha>-<daemonSha>,
   // so a rebuilt daemon with an unchanged host bundle is drift just as much as a
   // rebuilt host: without this the container keeps the old daemon mounted while
   // reporting itself current, and staged-runtime pruning may then delete the
   // directory it is still reading.
   const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);
@@ -729,20 +767,14 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // (observed live). The provider mirrors the Mac's setting; the file lives
     // in the volume, so container replacement keeps it.
     const dataVolume = image !== LOCAL_DOCKER_BOX_IMAGE ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data";
-    let provider = "claude-code";
-    let commandCodeModel: string | undefined;
-    try {
-      const macSettings = JSON.parse(await readFile(settingsPath, "utf8")) as { inferenceProvider?: unknown; commandCodeModel?: unknown };
-      if (typeof macSettings.inferenceProvider === "string" && macSettings.inferenceProvider.length > 0) provider = macSettings.inferenceProvider;
-      if (isCommandCodeModelId(macSettings.commandCodeModel)) commandCodeModel = macSettings.commandCodeModel;
-    } catch {}
+    const { provider, commandCodeModel } = routing;
     // Force-merge the provider key (the host persists the file itself, and a
     // pre-existing provider-less file from an older boot would survive a
     // write-only-if-absent seed — observed live). The Mac is the source of
     // truth; the merge runs only at container creation.
     const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
     await runDocker(["run", "--rm", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
-    const authMounts = await localClaudeMountArguments();
+    const authMounts = localClaudeMountArguments(claudeMount);
     // Plugin definitions are the one input the box cannot obtain for itself.
     // Binding the user's file means the computer always reads the current
     // version, and an installation that never wrote one simply has no mount.
@@ -792,6 +824,18 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
 
 export async function startLocalDockerBox(settingsPath: string): Promise<GatewayConnection> {
   return await ensureLocalDockerBox(settingsPath);
+}
+
+// Called after the Router provider changes. The ~/.claude mount is fixed when
+// the container is created, so crossing the Claude Code boundary replaces the
+// running container (the data volume is kept). Returns whether it did.
+export async function refreshLocalDockerBoxForProvider(settingsPath: string): Promise<boolean> {
+  const inspected = await inspectContainer();
+  if (!inspected.exists || !inspected.owned) return false;
+  const { provider } = await readMacRouting(settingsPath);
+  if (inspected.hasClaudeAuthMount === await claudeAuthMountWanted(provider)) return false;
+  await ensureLocalDockerBox(settingsPath);
+  return true;
 }
 
 export interface LocalBoxStopFacts { exists: boolean; running: boolean; owned: boolean }
