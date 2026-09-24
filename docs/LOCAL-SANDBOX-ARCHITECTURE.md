@@ -74,6 +74,8 @@ flowchart TD
 
 ## 生命周期和幂等规则
 
+读取失败与持久状态截断的最新复核、PR #63–65 处理顺序见 [ROADMAP.md](ROADMAP.md)。截至 `f87850a`，build-stamp、Codex 配置和审计 outbox 的错误处理仍有待修复项；已有容器与 UI 验收不覆盖这些异常条件。
+
 1. 回合拥有自己的 Context 和 MCP bridge。取消信号传到 Claude abortController、AI SDK abortSignal、Codex fetch、MCP HTTP 请求、盒内 Connect RPC 与 stdio MCP 客户端；bridge 随流关闭。已经发生的外部副作用不会因取消而撤销。
 2. daemon 拥有 MCP client 与 stdio 子进程。回合结束关闭代理 bridge，插件生命周期由 daemon 配置与关闭操作决定。
 3. 配置的键顺序不改变含义。等价配置保持已经连接的 client；配置移除或替换先释放旧 client。
@@ -108,6 +110,8 @@ flowchart TD
 3. **公开分发与原版专用服务。** 当前本地安装已经完成；公开再分发仍需按 `PROVENANCE.md` 对原版 Electron、renderer、18 张图片和原生文件执行权利审查。发布包明确不包含 `csnaps` carrier，代码库遥测接口提供无操作实现。若交付目标包括复现该原版服务，需要单独确定其数据范围和用途。
 
 ## 基础镜像身份
+
+固定基础镜像归档、原版安装包来源清单和校验下载器统一维护于 `grok-bot-box-image`。主仓库部署说明提供从该仓库获取固定镜像的步骤；不要求复制开发机器的缓存。镜像 Release 的文件 SHA 与镜像 manifest digest 分别验证。
 
 基础镜像身份记录在 `docker/base-image.json`，由构建脚本按 digest 选择，并进入 `readDepsPin`。
 `org.opencontainers.image.base.name` 镜像 label 保存构建使用的父镜像引用。

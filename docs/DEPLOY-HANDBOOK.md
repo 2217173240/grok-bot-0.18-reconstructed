@@ -52,42 +52,34 @@ git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
 cd grok-bot-0.18-reconstructed
 
 # box 镜像源仓库（base 镜像 grok-box-base:arm64 的全部构建输入）
-git clone https://github.com/2217173240/grok-bot-box-image.git
+git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
 # 内容：box-image/Dockerfile + box-image/bin 全套治理脚本 + box-service + .dockerignore
 # 注意：仓库路径任意，但必须在 /Users 下（见 §3 Colima 挂载限制）
 ```
 
-## 3. 镜像链（二选一）
-
-### 方式 A：从源机迁移镜像（快，推荐）
+## 3. 获取固定基础镜像并构建执行镜像
 
 ```sh
-# 源机：
-mkdir -p .cache
-docker save grok-box-base:arm64 -o .cache/base.tar
-docker save grok-bot-exec-box:arm64 -o .cache/exec-box.tar
-# 传到新机后：
-docker load -i base.tar && docker load -i exec-box.tar
-docker image inspect grok-bot-exec-box:arm64 --format '{{index .Config.Labels "com.grok-bot.local-vm.deps-pin"}}'
-# ^ 记下这个 pin；若与主仓库当前 deps-pin 不一致（见 §4 后的 pin 校验），走方式 B 重建薄层
-```
-
-### 方式 B：新机构建（约 30-60 分钟）
-
-```sh
-# 1) Colima VM（源机参数，照抄）：aarch64 / 4C / 6GiB / 30GiB
 colima start --profile grokbot --cpu 4 --memory 6 --disk 30 --arch aarch64
 export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
-# ⚠ Colima 默认只共享 /Users —— 仓库和数据根必须在 /Users 下，/tmp 下的 bind mount 对容器不可见（实测坑）
-
-# 2) base 镜像（box 镜像源仓库根为上下文；31 步全过为成功判据）
-cd grok-bot-box-image
-docker build --platform linux/arm64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -f box-image/Dockerfile -t grok-box-base:arm64 .
-
-# 3) 薄层（自带临时小上下文，避免把仓库 node_modules 撑进去）
-cd <grok-bot-repo>
+node .cache/box-image/scripts/fetch-artifact.mjs base-arm64 --load
 docker/build-arm64-box.sh
-# 成功判据：构建日志含 "tree-sitter loads natively" 和 "node:sqlite available"
+```
+
+基础镜像归档由 `grok-bot-box-image` 的 `base-d12224a-arm64` Release 提供。
+获取脚本按独立仓库的 `artifacts/manifest.json` 核对文件大小与 SHA-256，导入后核对镜像 digest、平台与源码 label。
+主仓库继续按 `docker/base-image.json` 验证固定输入；获取归档不修改此文件，因此不会改变现有依赖 pin。
+导入只加载镜像，不启动或替换生产容器。已有 `.cache/box-image` 时复用该检出，不重复 clone。
+
+原版 0.18.0 应用也由独立仓库登记官方地址与 SHA；主仓库 `npm run bootstrap` 已支持直接获取和校验。
+需要提前准备时执行 `node .cache/box-image/scripts/fetch-artifact.mjs upstream-macos-0.18.0`，
+再把下载文件复制到本仓库 `.cache/downloads/Grok_Bot_0.18.0.dmg`；bootstrap 会再次校验。
+
+### 维护者构建新基础镜像
+
+```sh
+cd .cache/box-image
+docker build --platform linux/arm64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -f box-image/Dockerfile -t grok-box-base:arm64 .
 ```
 
 基础镜像需要与 `docker/base-image.json` 的 digest、源码提交和平台匹配。构建源码应检出其中的 `sourceRevision`；APT 软件源变更仍可能改变产物，因此重新生成的镜像需经过验收并显式更新清单。构建脚本同时检查 OCI 源仓库与提交 label。
