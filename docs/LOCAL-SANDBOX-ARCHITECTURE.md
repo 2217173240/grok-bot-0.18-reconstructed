@@ -66,7 +66,7 @@ flowchart TD
 | 浏览器目标网站 / 用户配置插件 | 执行用户任务 | 由任务决定；本地部署仍允许用户授权的第三方网络服务 |
 | 官方 0.18 应用构件 | Electron 外壳、renderer、原生依赖与历史证据 | 仍是经过固定哈希核对的构建输入；当前发布目标允许复用 |
 
-默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。`/Applications/Grok Bot 0.18 Reconstructed.app` 已安装从当前 main 构建并校验的应用。
+默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。`/Applications/Grok Bot 0.18 Reconstructed.app` 本轮已安装并验证的构建基线为 `8b4cf52`。
 
 第三方 API 地址、主模型及子模型映射由启动环境配置，启动脚本保留显式值。API token 由 provider 读取本地凭据文件并传入 CLI 子进程，测试和报告不输出凭据。
 
@@ -74,7 +74,7 @@ flowchart TD
 
 ## 生命周期和幂等规则
 
-local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的增量增删。#71 已合入：读取、解密及写入失败明确报告，成功保存后才更新内存；原生 Electron Keychain 的保存、重启、权限失败及损坏密文检查通过。Settings 的实际桌面重启与错误提示验收单独记录。用户密钥只能保存在运行时存储或受控只读挂载中，不能进入主仓库、镜像仓库、构建层或发布附件。
+local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的增量增删。#71、#77 已合入：读取、解密及写入失败明确报告，成功保存后才更新内存；原生 Electron Keychain 的保存、重启、权限失败及损坏密文检查通过。Settings 已完成实际应用与 VM 重启、选择性增删和非法 Mac 文件的读取错误验证，详情见执行证据。用户密钥只能保存在运行时存储或受控只读挂载中，不能进入主仓库、镜像仓库、构建层或发布附件。
 
 读取失败与持久状态保留的维护范围见 [ROADMAP.md](ROADMAP.md)。PR #63、#64、#65、#70 已合入 main：build-stamp 和 provider 配置异常明确报错，失败消息 ID 保留到会话清理，Codex TOML 使用统一解析器，审计与 Episode 待处理状态按确认结果消费。160 项测试覆盖真实 SQLite、文件故障、HTTP 流和子进程；实际安装包验收另行记录。
 
@@ -98,7 +98,7 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
 | 5 | 高 / 中 | provider 使用 Grok turn 工具与权限 | Claude 已通过 macOS UI 的真实文件、MCP、图片附件与 Computer 子代理回合。Codex 在隔离容器用真实账号通过文本、工具续接、取消与转录验收。Command Code 的无效密钥在隔离容器调用真实接口，HTTP 401 使流及结果及时失败。OpenRouter、Command Code 的本地 key 为空，按当前验收范围未调用真实账号。 |
 | 6 | 高 / 中 | MCP 取消到达实际执行进程 | 真实延时 stdio 插件和 daemon RPC 取消通过；调用期间取消后未写入完成标记。Mac 回合路径已移除 |
-| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | 当前 main 的 macOS 包已安装并完成 GLM 文本、文件、MCP 与 Computer 回合。Mac 与容器拦截记录均为零 Cursor/xAI 外发；本次实际调用路径成立。 |
+| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | 1eaa2ed 已完成 GLM 文本、文件、MCP 与 Computer 回合，记录范围内零 Cursor/xAI 外发；本轮 8b4cf52 已验证嵌入桌面，最终 Computer 回合等待 #82。 |
 | 8 | 中 / 中 | router/session-sync 故障被健康检查发现并恢复 | 真实进程退出、健康判定与明确重建已通过隔离 Docker 验收 |
 | 9 | 中 / 低 | 多显示随机访问凭证、资源配额、人工登录接管 | 随机凭证、旧凭证撤销、四窗口资源限制与真实 WebSocket 访问已验证；真人登录与交回需要测试账号和用户参与。 |
 | 10 | 高 / 中 | 保留原版外观并核对发布包身份 | 默认包保留原版 renderer 的完整文件清单，精确补丁按顺序验证输入与输出 SHA-256；Electron 外壳、ASAR、原生依赖与重签名包体已在隔离环境核对。可读前端独立发布不再是交付要求 |
@@ -107,7 +107,7 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 
 ## 需要用户提供条件才能继续验收的能力
 
-1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空，本轮遵循“仅验收已配置项”，所以没有真实账户调用结果。Command Code 已用固定无效密钥从隔离容器调用真实接口，HTTP 401 的错误传播与提示已验证；该结果不覆盖有效账号的文本、图片、工具调用、取消和转录回合。提供者可在应用 Settings → Router 保存各自密钥，再执行这些回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，生产容器也不绑定 `~/.codex`；因此 Codex 图片附件与桌面应用 Settings 切换后的真实回合没有验收结论。
+1. **其他模型账户与附件。** OpenRouter 和 Command Code 的本地 key 为空；本轮 Router 持久化验收使用无效标记，结束后已经删除。Command Code 已用固定无效密钥从隔离容器调用真实接口，HTTP 401 的错误传播与提示已验证；该结果不覆盖有效账号的文本、图片、工具调用、取消和转录回合。提供者可在应用 Settings → Router 保存各自密钥，再执行这些回合。Claude 已在 macOS UI 完成文本、文件、MCP、图片附件与 Computer。Codex 使用现有 `~/.codex/auth.json` 只读挂载到隔离容器，真实文本、工具续接、取消和转录通过；本轮增加 `gpt-6-astra` 经生产工具装配调用官方 SDK MCP fixture 的验证。该账号需要显式选用其支持的模型 `gpt-6-astra`，仅凭当前默认模型 `gpt-5.4` 会收到 API 400。用户决定本轮不在生产容器使用 Codex 凭据，生产容器也不绑定 `~/.codex`；完整 Codex UI、host 初始化与图片附件仍未覆盖。
 2. **passkey 与人工接管。** `sand-webauthn-signer` 已随固定哈希的原生依赖进入安装包，尚未在用户的 passkey 服务完成真实注册或登录。noVNC 的正确 token 与错误 token 已经通过真实 WebSocket 握手核对，Computer 也已操作桌面。用户决定本轮只验收自动化路径；真人输入凭据、交还控制权和会话恢复需要以后提供测试站点并亲自完成。
 3. **公开分发与原版专用服务。** 当前本地安装已经完成；公开再分发仍需按 `PROVENANCE.md` 对原版 Electron、renderer、18 张图片和原生文件执行权利审查。发布包明确不包含 `csnaps` carrier，代码库遥测接口提供无操作实现。若交付目标包括复现该原版服务，需要单独确定其数据范围和用途。
 
@@ -119,11 +119,13 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 `org.opencontainers.image.base.name` 镜像 label 保存构建使用的父镜像引用。
 清单中的 `sourceRepository` 与 `sourceRevision` 对应基础镜像的 OCI label，构建时同时核对。Chromium 主 profile 的数据卷链接由基础镜像提供。
 
+镜像仓库 #6 已合入 `5caa549`，export 保留仓库身份；独立网络 namespace 中的空 Docker 已完成固定 digest 导入与全部 16 层扫描。
+
 多屏同步使用 host 每三秒发布的全局 activity 文件。任意 agent 运行、状态超过十五秒、状态无法读取或人工接管文件存在时，延后后台写入；全部 agent 空闲后再同步。页面内在写入时检查 origin 和已有键，空页初始化与刷新在同一次页面执行中完成。每个浏览器实例和 origin 最多尝试两次自动刷新，同步轮次串行执行。该状态检查在发送命令前进行，不构成与任意外部浏览器操作的互斥锁；cookie 的读取和写入也受 CDP 两次调用之间的时间窗口限制。
 
 ## 代码保证的准确范围
 
-- host 的远程执行请求使用 `RemoteExecManager`；第三方 provider 路线还会在 host 所在计算机启动 Claude CLI，由 CLI 执行本地工具。工具执行位置需要沿具体路线追踪。
+- 本地部署的 host 与第三方 provider CLI 均在 Docker 容器运行，工具经容器 daemon 或 CLI 执行。Mac coordinator 负责命令路由与连接；工作目录 bind mount 使容器文件操作同步到宿主目录。
 - 盒内权限仍有约束：`claudeToolPermission` 处理人工接管与 `never` 设置；容器 bind mount 使盒内写入可影响用户文件。凭据可保存在 Mac 数据根，再以只读文件提供给容器。
 - `allowedPurpose` 先允许 SAFE，再允许 `UNSAFE_ALWAYS_ALLOWED`，随后拒绝其他用途下的 CREDENTIALS / UNSPECIFIED。最终值是否经过策略还取决于 enforcement 开关，其默认值为 false。
 - 纯函数与查表都可以配合类型约束、运行时校验和穷尽测试；包装器的字段占位、错误信息和日志可以独立保留。当前实现的选择不能推出查表必然丢失这些保证。
@@ -148,6 +150,11 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 
 ## 执行证据与边界
 
+- 2026-09-24，PR #71、#74、#75、#76、#77、#78、#79、#80、#81 已合入 main。本轮 `8b4cf52` 完成完整 package、verify、codesign 核对与安装。主窗口与 noVNC webview 的 renderer 进程均包含 `enable-sandbox`；实际桌面显示、鼠标打开 terminal、键盘输入生成工作目录文件和重新打开 noVNC 均通过。
+- Router UI 用无效 OpenRouter 标记保存后，重启应用与 VM 仍保留；增加 Command Code 标记后旧键保留；删除 OpenRouter 后 Command Code 保留，再次重启结果不变。随后在原本不存在的 Mac `user-secrets.json` 创建包含非法嵌套字段的测试文件，UI 显示读取错误与重试入口，文件 SHA 和 box 测试键均未改变。移除自建文件并重启后恢复，两个测试键已经全部删除，生产路由恢复 Claude。本轮没有使用新的有效 API key。
+- 隔离容器中只读使用现有 Codex auth，真实 `gpt-6-astra` 经生产工具装配连接官方 SDK MCP fixture，`GetMcpTools` 与 `CallMcpTool` 各执行一次；transcript 包含两次调用和两次结果，最终回答返回成功 nonce。此证据覆盖工具装配与真实 provider 往返，完整 Codex UI 与 host 初始化仍未覆盖。
+- PR #82 正在修正桌面 CDP 探测退出码 7/28 的失败处理及 CI，使探测失败进入正常审批路径。最终 Computer UI 回合等待该修复，本轮完整 Computer 验收尚未完成。
+
 - 2026-09-24 从远端 main `1eaa2ed63bb8a72ece6f8953ab3315e735c7128b` 完成依赖安装、完整 package/verify、桌面应用安装和 `start-local.sh` 启动。160 项测试与两项类型检查通过，零跳过；14 个可执行源码运行模块、原生依赖、签名和 ASAR 组成校验通过。安装后 ASAR SHA-256 为 `b2a723d33e541c32f606397d8e24ca3cd6aa96a2e8d9c6ff2e4bc52b6c531cd6`，应用和镜像 deps pin 均为 `6a9093c70512188e963f645ac98c02ef21b4758952d7c5836f4fe4040e71809f`。
 - 同次真实桌面 UI 直接进入 local admin；Claude 路由在容器返回 Linux、文件 SHA-256 `d6df65cd1aea483bf9042aaf18bda9c72386e03125ecc8fccb0466644c96c8f9`、MCP echo 和前台 Computer Task 结果。独立读取文件核对摘要，并读取截图 PNG 头确认 1280×800、11047 字节。
 - UI 切换到未配置密钥的 Command Code 后明确显示 `Command Code needs COMMAND_CODE_API_KEY`，容器的 `/root/.claude` 挂载同时移除。恢复 Claude 后，新消息收到 `RECOVERED-1eaa2ed`；失败消息要求创建的文件仍不存在，Claude 挂载恢复。测试没有新增或修改 API key，也没有挂载 Codex 账号。
@@ -160,7 +167,7 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 
 - macOS 完整构建执行 `npm run package`，包括前端与源码类型检查及全部自动化测试。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。
 - `Task` 默认在当前回合等待子代理结果，显式 `run_in_background: true` 才注册后续回合通知。父任务取消会终止前台子任务；两种模式共享状态、用量、审计和窗口释放流程。6 项真实子进程测试覆盖两种模式、取消与错误清理；`tests/provider-live-foreground-task.mjs` 在隔离容器经真实 Claude SDK / GLM API 和 host MCP bridge 验证子任务结果返回父任务，执行各一次、后台通知为零。
-- 从当前 main 重新构建 `grok-bot-exec-box:arm64` 后，exec 门禁 G0–G5 与 desktop 门禁 D1–D6 全部通过，涵盖真实 Connect RPC 工具往返、缓存写入、1280×800 桌面、noVNC 访问控制、XTEST 截图与桌面进程持有者。
+- `1eaa2ed` 验收期间重新构建 `grok-bot-exec-box:arm64` 后，exec 门禁 G0–G5 与 desktop 门禁 D1–D6 全部通过，涵盖真实 Connect RPC 工具往返、缓存写入、1280×800 桌面、noVNC 访问控制、XTEST 截图与桌面进程持有者。
 - `/Applications` 中的新包启动后，local admin 直接显示会话输入，不显示登录按钮。真实 GLM 回合完成容器内文件写入与读取、SHA-256、stdio MCP echo；独立读取的文件与界面回复一致。
 - 真实 UI 请求经 `Task` 派发 `computerUse` 子代理，子代理用 `Computer` 完成鼠标移动和截图；独立检查持久化文件为 1280×800 PNG。截图 MIME、扩展名与文件内容一致。
 - 真实 UI 上传仓库自带的 Router 设置页 PNG，发送后的用户转录含 `[Image]`；配置的 GLM 服务完成图像分析并识别 Router 页面。附件暂存使用 `node:crypto` 的 `randomUUID` 独立导出，避免未绑定方法在 Electron 主进程产生 `ERR_INVALID_THIS`。
