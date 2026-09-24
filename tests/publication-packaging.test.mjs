@@ -161,7 +161,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   const awaiting = await readFile(path.join(repoRoot, "source", "host", "box", "awaiting-human.ts"), "utf8");
   assert.match(awaiting, /AWAITING_HUMAN_DEFAULT_TIMEOUT_MS = 15 \* 60 \* 1000/);
   assert.match(awaiting, /REPEATED ask while awaiting must NOT/);
-  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /withAwaitingHuman\(withNoMonitorComputerUse\(primary\.remoteAccessor\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /withAwaitingHuman\(withComputerUse\(primary\.remoteAccessor\)\)/);
   assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /resourceEntry\(shellExecutorResource/);
   assert.doesNotMatch(providers, /tools: mcpServerUrl == null \? \[\]/);
   assert.match(providers, /https:\/\/openrouter\.ai\/api\/v1/);
@@ -254,7 +254,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localComputerUse, /LOCAL_DESKTOP_GEOMETRY = \{ width: 1280, height: 800 \}/);
   assert.match(localComputerUse, /xwd -root/);
   assert.match(localComputerUse, /cursor position query is not available/);
-  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /localDesktopComputerUseEnabled\(\)\s*\?\s*\(accessor => generated\.withLocalDesktopComputerUse\(accessor\)\)/);
+  assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "production.ts"), "utf8"), /desktopEnabled\s*\?\s*\(accessor => generated\.withLocalDesktopComputerUse\(accessor\)\)/);
   assert.match(await readFile(path.join(repoRoot, "source", "host", "box", "generated-production.ts"), "utf8"), /resourceEntry\(computerUseExecutorResource, localComputerUseExecutor\)/);
   assert.match(await readFile(path.join(repoRoot, "docker", "arm64-exec-box.Dockerfile"), "utf8"), /xtest-input-local\.py/);
   // Dual gate profiles (S-4): exec keeps every current assertion; desktop
