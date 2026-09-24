@@ -424,13 +424,22 @@ export class TurnRuntime {
       try {
         const unansweredPrompts =
           this.tm.widgetResponses.collectUnansweredQuestionPrompts(session);
+        const recentUserMessages = session.db.filterFailedUserMessages(options.recentUserMessages ?? []);
         const result = await runner.run(prompt, {
           ...options,
+          ...(options.recentUserMessages === undefined ? {} : { recentUserMessages }),
           ...unansweredPrompts,
           traceCtx: turnCtx,
           appendReplyReminder: true,
           requestSource: "turn",
           onModelResolved: (modelId: string) => turn.setModel(modelId),
+        }).catch((error: unknown) => {
+          if (
+            options.messageId != null &&
+            epoch === this.tm.sendPipeline.currentTurnEpoch(session) &&
+            !(error instanceof Error && error.name === "AbortError")
+          ) session.db.recordFailedUserMessageId(options.messageId);
+          throw error;
         });
         let settledResult = result;
         if (result.quiescedForUpgrade)
