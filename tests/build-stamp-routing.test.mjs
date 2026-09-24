@@ -21,7 +21,7 @@ test("routing defaults only for a missing settings file and rejects malformed va
     await assert.rejects(readMacRouting(settings), /Invalid inference provider/);
     await writeFile(settings, JSON.stringify([]));
     await assert.rejects(readMacRouting(settings), /Invalid routing settings/);
-    await writeFile(settings, JSON.stringify({ commandCodeModel: "invalid" }));
+    await writeFile(settings, JSON.stringify({ commandCodeModel: 7 }));
     await assert.rejects(readMacRouting(settings), /Invalid commandCodeModel/);
     await writeFile(settings, "{");
     await assert.rejects(readMacRouting(settings), SyntaxError);
