@@ -1,0 +1,23 @@
+[extend]
+useDefault = true
+
+# WebSocket nonce、公有 OAuth client ID 和固定图片名称均不授予访问权限。
+[[allowlists]]
+description = "WebSocket handshake nonce in protocol checks"
+condition = "AND"
+paths = ['''^(scripts/box-windows-auth-e2e\.mjs|docker/container-gates\.sh)$''']
+regexTarget = "match"
+regexes = ['''Sec-WebSocket-Key:''']
+
+[[allowlists]]
+description = "Public OAuth client identifiers"
+condition = "AND"
+paths = ['''^source/shared/node/cursor-token\.ts$''']
+regexTarget = "match"
+regexes = ['''(PROD|DEV)_AUTH_CLIENT_ID\s*=''']
+
+[[allowlists]]
+description = "Reviewed renderer image asset name"
+condition = "AND"
+paths = ['''^manifests/reconstruction/renderer-closure\.json$''']
+regexes = ['''^apollo-B0sEgAUH\.png$''']

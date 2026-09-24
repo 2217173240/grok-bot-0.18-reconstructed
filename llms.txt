@@ -35,6 +35,7 @@ The independent box-image repository supplies the pinned image Release archive a
 - [README (English)](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/README.md)
 - [README (简体中文)](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/README.zh-CN.md)
 - [Local sandbox architecture and verified scope](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/LOCAL-SANDBOX-ARCHITECTURE.md)
+- [Maintenance status and reliability guarantees](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/ROADMAP.md)
 - [Architecture](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/ARCHITECTURE.md)
 - [Deployment handbook](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/docs/DEPLOY-HANDBOOK.md)
 - [Provenance](https://github.com/2217173240/grok-bot-0.18-reconstructed/blob/main/PROVENANCE.md)

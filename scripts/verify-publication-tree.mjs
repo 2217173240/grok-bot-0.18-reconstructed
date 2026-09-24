@@ -8,6 +8,7 @@ import { repoRoot } from "./lib/config.mjs";
 
 const git = "/usr/bin/git";
 const tar = "/usr/bin/tar";
+await run(process.execPath, [path.join(repoRoot, "scripts/check-publication-inputs.mjs")], { cwd: repoRoot });
 const scratch = await mkdtemp(path.join(os.tmpdir(), "grok-bot-publication-"));
 const archive = path.join(scratch, "repository.tar");
 const exported = path.join(scratch, "exported");
