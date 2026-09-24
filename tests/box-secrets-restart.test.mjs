@@ -1,294 +1,183 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
+import { promisify } from "node:util";
 import { build } from "esbuild";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const execute = promisify(execFile);
+process.env.SAND_LOCAL_ADMIN = "1";
 
-// The secrets store loads "electron" at runtime. Each bundle gets its own
-// directory with a stand-in module whose safeStorage behaves like an unlocked
-// Keychain, so the Keychain-mode paths run against real files.
-const FAKE_ELECTRON = `
-const prefix = "fake-keychain:";
-module.exports = {
-  app: { isPackaged: true, getPath: () => __dirname },
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (value) => Buffer.from(prefix + value, "utf8"),
-    decryptString: (buffer) => {
-      const text = buffer.toString("utf8");
-      if (!text.startsWith(prefix)) throw new Error("not encrypted by this keychain");
-      return text.slice(prefix.length);
-    },
-    getSelectedStorageBackend: () => "keychain",
-    setUsePlainTextEncryption: () => {},
-  },
-};
-`;
-
-async function loadModule(entry) {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "grok-secrets-restart-"));
-  await mkdir(path.join(directory, "node_modules", "electron"), { recursive: true });
-  await writeFile(path.join(directory, "node_modules", "electron", "index.js"), FAKE_ELECTRON);
-  const output = path.join(directory, `${path.basename(entry, ".ts")}.cjs`);
+async function loadModules(t) {
+  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
+  const directory = await mkdtemp(path.join(repoRoot, ".cache/secrets-restart-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const output = path.join(directory, "modules.cjs");
   await build({
-    entryPoints: [path.join(repoRoot, entry)],
-    outfile: output,
-    bundle: true,
-    format: "cjs",
-    platform: "node",
-    target: "node22",
-    external: ["electron"],
-    logLevel: "error",
+    stdin: { contents: [
+      'export * from "./source/electron-main/secrets/user-secrets-store.ts";',
+      'export { createBoxSecretsPush } from "./source/electron-main/secrets/secrets-ipc.ts";',
+      'export { BoxSecretsApplier, SandBoxSecretsUnreadableError } from "./source/host/extensions/secrets/secrets-service.ts";',
+      'export { createContext } from "./source/packages/context/core.ts";',
+      'export * as scheduling from "./source/internal/scheduling.ts";',
+    ].join("\n"), resolveDir: repoRoot, loader: "ts" },
+    outfile: output, bundle: true, format: "cjs", platform: "node", target: "node22", external: ["electron"], logLevel: "error",
   });
-  const module = createRequire(output)(output);
-  return { module, directory, dispose: () => rm(directory, { recursive: true, force: true }) };
+  return { ...createRequire(output)(output), directory };
 }
 
-const encrypted = (value) => Buffer.from(`fake-keychain:${value}`, "utf8").toString("base64");
-
-function withoutLocalAdmin(run) {
-  return async () => {
-    const saved = process.env.SAND_LOCAL_ADMIN;
-    delete process.env.SAND_LOCAL_ADMIN;
-    try { await run(); } finally { if (saved === undefined) delete process.env.SAND_LOCAL_ADMIN; else process.env.SAND_LOCAL_ADMIN = saved; }
-  };
-}
-
-const DAMAGED_USER_SECRETS = {
-  "v2 secret that is not a string": { version: 2, accounts: { "account-a": { EXAMPLE_KEY: 42 } } },
-  "v2 secret next to a valid one": { version: 2, accounts: { "account-a": { GOOD_KEY: encrypted("good"), EXAMPLE_KEY: 42 } } },
-  "v2 account that is an array": { version: 2, accounts: { "account-a": [encrypted("value")] } },
-  "v2 account that is null": { version: 2, accounts: { "account-a": null } },
-  "v2 account that is a string": { version: 2, accounts: { "account-a": "oops" } },
-  "v2 damaged second account": { version: 2, accounts: { "account-a": { GOOD_KEY: encrypted("good") }, "account-b": { EXAMPLE_KEY: false } } },
-  "v2 accounts that is not an object": { version: 2, accounts: ["account-a"] },
-  "v1 secret that is not a string": { version: 1, secrets: { EXAMPLE_KEY: { nested: true } } },
+const damagedFiles = {
+  "v2 numeric secret": { version: 2, accounts: { account: { KEY: 42 } } },
+  "v2 valid and invalid siblings": { version: 2, accounts: { account: { GOOD_KEY: "stored", KEY: false } } },
+  "v2 array account": { version: 2, accounts: { account: ["stored"] } },
+  "v2 null account": { version: 2, accounts: { account: null } },
+  "v2 string account": { version: 2, accounts: { account: "stored" } },
+  "v2 invalid second account": { version: 2, accounts: { account: {}, other: { KEY: {} } } },
+  "v2 array accounts": { version: 2, accounts: [] },
+  "v1 object secret": { version: 1, secrets: { KEY: {} } },
   "unknown version": { version: 3, accounts: {} },
-  "non-object root": ["version", 2],
+  "array root": ["version", 2],
 };
 
-for (const [name, content] of Object.entries(DAMAGED_USER_SECRETS)) {
-  test(`damaged user-secrets.json (${name}) is never exported as a complete set or overwritten`, withoutLocalAdmin(async () => {
-    const loaded = await loadModule("source/electron-main/secrets/user-secrets-store.ts");
-    try {
-      const storePath = path.join(loaded.directory, "user-secrets.json");
-      const original = `${JSON.stringify(content, null, 2)}\n`;
-      await writeFile(storePath, original, { mode: 0o600 });
-      const store = new loaded.module.SandUserSecretsStore(storePath, () => "account-a");
-      const snapshot = await store.exportSnapshot();
-      assert.equal(snapshot.complete, false);
-      await assert.rejects(() => store.upsert({ NEW_KEY: "new" }), loaded.module.SandUserSecretsUnreadableError);
-      await store.remove(["GOOD_KEY"]).catch((error) => assert.ok(error instanceof loaded.module.SandUserSecretsUnreadableError));
-      assert.equal(await readFile(storePath, "utf8"), original);
-    } finally {
-      await loaded.dispose();
-    }
-  }));
+async function assertUnreadable(m, storePath) {
+  const store = new m.SandUserSecretsStore(storePath, () => "account");
+  for (const operation of [() => store.exportSnapshot(), () => store.listKeys(["REMOTE_KEY"]), () => store.reveal("KEY"), () => store.upsert({ NEW_KEY: "new" }), () => store.remove(["KEY"])]) {
+    await assert.rejects(operation, m.SandUserSecretsUnreadableError);
+  }
 }
 
-test("user-secrets.json that is not valid JSON is left byte-for-byte", withoutLocalAdmin(async () => {
-  const loaded = await loadModule("source/electron-main/secrets/user-secrets-store.ts");
-  try {
-    const storePath = path.join(loaded.directory, "user-secrets.json");
-    const original = '{"version":2,"accounts":{"account-a":{"KEY":"trunc';
+for (const [name, content] of Object.entries(damagedFiles)) {
+  test(`损坏的 user-secrets.json 拒绝读取和修改：${name}`, async (t) => {
+    const m = await loadModules(t), storePath = path.join(m.directory, "user-secrets.json");
+    const original = `${JSON.stringify(content)}\n`;
     await writeFile(storePath, original, { mode: 0o600 });
-    const store = new loaded.module.SandUserSecretsStore(storePath, () => "account-a");
-    assert.equal((await store.exportSnapshot()).complete, false);
-    await assert.rejects(() => store.upsert({ NEW_KEY: "new" }), loaded.module.SandUserSecretsUnreadableError);
+    await assertUnreadable(m, storePath);
     assert.equal(await readFile(storePath, "utf8"), original);
-  } finally {
-    await loaded.dispose();
-  }
-}));
-
-test("user-secrets.json that cannot be read keeps its bytes and mode", { skip: process.getuid?.() === 0 }, withoutLocalAdmin(async () => {
-  const loaded = await loadModule("source/electron-main/secrets/user-secrets-store.ts");
-  const storePath = path.join(loaded.directory, "user-secrets.json");
-  try {
-    const original = `${JSON.stringify({ version: 2, accounts: { "account-a": { KEY: encrypted("value") } } })}\n`;
-    await writeFile(storePath, original, { mode: 0o600 });
-    await chmod(storePath, 0o000);
-    const store = new loaded.module.SandUserSecretsStore(storePath, () => "account-a");
-    assert.equal((await store.exportSnapshot()).complete, false);
-    await assert.rejects(() => store.upsert({ NEW_KEY: "new" }), loaded.module.SandUserSecretsUnreadableError);
-    assert.equal((await stat(storePath)).mode & 0o777, 0o000);
-    await chmod(storePath, 0o600);
-    assert.equal(await readFile(storePath, "utf8"), original);
-  } finally {
-    await chmod(storePath, 0o600).catch(() => {});
-    await loaded.dispose();
-  }
-}));
-
-test("a missing user-secrets.json is a complete empty set and the first save creates it", withoutLocalAdmin(async () => {
-  const loaded = await loadModule("source/electron-main/secrets/user-secrets-store.ts");
-  try {
-    const storePath = path.join(loaded.directory, "user-secrets.json");
-    const store = new loaded.module.SandUserSecretsStore(storePath, () => "account-a");
-    assert.deepEqual(await store.exportSnapshot(), { accountScope: "account-a", secrets: {}, complete: true, removed: [] });
-    await store.upsert({ NEW_KEY: "new" });
-    const saved = JSON.parse(await readFile(storePath, "utf8"));
-    assert.deepEqual(Object.keys(saved.accounts["account-a"]), ["NEW_KEY"]);
-    assert.equal((await stat(storePath)).mode & 0o777, 0o600);
-  } finally {
-    await loaded.dispose();
-  }
-}));
-
-test("valid v1 and v2 files still load, export and save", withoutLocalAdmin(async () => {
-  const loaded = await loadModule("source/electron-main/secrets/user-secrets-store.ts");
-  try {
-    const v2Path = path.join(loaded.directory, "v2.json");
-    await writeFile(v2Path, JSON.stringify({ version: 2, accounts: { "account-a": { KEY_A: encrypted("a") }, "account-b": {} } }));
-    const v2 = new loaded.module.SandUserSecretsStore(v2Path, () => "account-a");
-    assert.deepEqual(await v2.exportSnapshot(), { accountScope: "account-a", secrets: { KEY_A: "a" }, complete: true, removed: [] });
-    await v2.upsert({ KEY_B: "b" });
-    assert.deepEqual((await v2.exportSnapshot()).secrets, { KEY_A: "a", KEY_B: "b" });
-    const reread = JSON.parse(await readFile(v2Path, "utf8"));
-    assert.deepEqual(Object.keys(reread.accounts["account-a"]).sort(), ["KEY_A", "KEY_B"]);
-    assert.deepEqual(reread.accounts["account-b"], {});
-
-    const v1Path = path.join(loaded.directory, "v1.json");
-    await writeFile(v1Path, JSON.stringify({ version: 1, secrets: { LEGACY_KEY: encrypted("legacy") } }));
-    const v1 = new loaded.module.SandUserSecretsStore(v1Path, () => "account-a");
-    assert.deepEqual(await v1.exportSnapshot(), { accountScope: "account-a", secrets: { LEGACY_KEY: "legacy" }, complete: true, removed: [] });
-  } finally {
-    await loaded.dispose();
-  }
-}));
-
-// Host side: a new BoxSecretsApplier on the same file is what a box restart
-// looks like. Merges must build on the saved file, never replace it blindly.
-async function createApplier(loaded, storePath) {
-  const scheduling = loaded.module.__scheduling;
-  const applied = [];
-  const applier = new loaded.module.BoxSecretsApplier({
-    applyToBox: async (_ctx, update) => { applied.push(update); },
-    retryPolicy: scheduling.createRetryPolicy(scheduling.realClock, { name: "test-apply", maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 1 }),
-    applyDeadline: scheduling.createDeadlinePolicy(scheduling.realClock, { name: "test-save", timeoutMs: 1_000 }),
-    storePath,
-    log: () => {},
   });
-  return { applier, applied };
 }
 
-async function loadHost() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "grok-box-secrets-host-"));
-  const entry = path.join(directory, "entry.ts");
-  await writeFile(entry, [
-    `export { BoxSecretsApplier, SandBoxSecretsUnreadableError } from ${JSON.stringify(path.join(repoRoot, "source/host/extensions/secrets/secrets-service.ts"))};`,
-    `export * as __scheduling from ${JSON.stringify(path.join(repoRoot, "source/internal/scheduling.ts"))};`,
-  ].join("\n"));
-  const output = path.join(directory, "host.cjs");
-  await build({ entryPoints: [entry], outfile: output, bundle: true, format: "cjs", platform: "node", target: "node22", logLevel: "error" });
-  return { module: createRequire(output)(output), directory, dispose: () => rm(directory, { recursive: true, force: true }) };
+test("截断的 JSON 保留原文件", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "user-secrets.json");
+  const original = '{"version":2,"accounts":{"account":{"KEY":"trunc';
+  await writeFile(storePath, original, { mode: 0o600 });
+  await assertUnreadable(m, storePath);
+  assert.equal(await readFile(storePath, "utf8"), original);
+});
+
+test("读取权限失败保留原文件与权限", { skip: process.getuid?.() === 0 }, async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "user-secrets.json");
+  const original = JSON.stringify({ version: 2, accounts: {} });
+  await writeFile(storePath, original, { mode: 0o600 });
+  await chmod(storePath, 0o000);
+  try { await assertUnreadable(m, storePath); assert.equal((await stat(storePath)).mode & 0o777, 0o000); }
+  finally { await chmod(storePath, 0o600); }
+  assert.equal(await readFile(storePath, "utf8"), original);
+});
+
+test("local-admin 缺少文件时保存会话修改并合并远端列表", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "user-secrets.json");
+  const store = new m.SandUserSecretsStore(storePath, () => "account");
+  assert.equal(store.isPersistent(), false);
+  assert.deepEqual(await store.exportSnapshot(), { accountScope: "account", secrets: {}, complete: false, removed: [] });
+  await store.upsert({ NEW_KEY: "new" });
+  assert.equal(await store.reveal("NEW_KEY"), "new");
+  assert.deepEqual(await store.listKeys(["SAVED_KEY", "NEW_KEY"]), ["NEW_KEY", "SAVED_KEY"]);
+  await store.remove(["SAVED_KEY"]);
+  assert.deepEqual(await store.listKeys(["SAVED_KEY"]), ["NEW_KEY"]);
+  assert.deepEqual(await store.exportSnapshot(), { accountScope: "account", secrets: { NEW_KEY: "new" }, complete: false, removed: ["SAVED_KEY"] });
+  await assert.rejects(() => stat(storePath), { code: "ENOENT" });
+});
+
+function createApplier(t, m, storePath) {
+  const environmentPath = path.join(m.directory, "child-environment.json");
+  const applier = new m.BoxSecretsApplier({
+    applyToBox: async (_ctx, update) => {
+      assert.equal(update.replace, true);
+      await execute(process.execPath, ["-e", 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.env))', environmentPath], { env: update.env });
+    },
+    retryPolicy: m.scheduling.createRetryPolicy(m.scheduling.realClock, { name: "test-apply", maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 1 }),
+    applyDeadline: m.scheduling.createDeadlinePolicy(m.scheduling.realClock, { name: "test-save", timeoutMs: 5_000 }),
+    storePath,
+  });
+  t.after(() => applier.stop());
+  return { applier, environmentPath };
 }
 
 const readSecrets = async (storePath) => JSON.parse(await readFile(storePath, "utf8")).secrets;
+async function assertEnvironment(environmentPath, secrets) {
+  const environment = JSON.parse(await readFile(environmentPath, "utf8"));
+  // macOS 为新进程自动添加文本编码变量。
+  if (process.platform === "darwin") delete environment.__CF_USER_TEXT_ENCODING;
+  assert.deepEqual(environment, { ...secrets, CLOUD_AGENT_INJECTED_SECRET_NAMES: Object.keys(secrets).sort().join(",") });
+}
 
-test("after a box restart, merged additions and removals build on the saved file", async () => {
-  const loaded = await loadHost();
-  try {
-    const storePath = path.join(loaded.directory, "box-secrets.json");
-    await writeFile(storePath, `${JSON.stringify({ version: 1, secrets: { SAVED_KEY: "saved", OTHER_KEY: "other" } })}\n`, { mode: 0o600 });
-
-    const first = await createApplier(loaded, storePath);
-    await first.applier.mergeSecrets({}, { NEW_KEY: "new" }, []);
-    assert.deepEqual(await readSecrets(storePath), { SAVED_KEY: "saved", OTHER_KEY: "other", NEW_KEY: "new" });
-    assert.equal((await stat(storePath)).mode & 0o777, 0o600);
-    first.applier.stop();
-
-    const second = await createApplier(loaded, storePath);
-    await second.applier.mergeSecrets({}, {}, ["SAVED_KEY"]);
-    assert.deepEqual(await readSecrets(storePath), { OTHER_KEY: "other", NEW_KEY: "new" });
-    assert.deepEqual(second.applier.getStatus().keys, ["NEW_KEY", "OTHER_KEY"]);
-    second.applier.stop();
-  } finally {
-    await loaded.dispose();
-  }
+test("重新创建 host 后合并添加和删除，子进程接收完整环境", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "box-secrets.json"), ctx = m.createContext();
+  await writeFile(storePath, JSON.stringify({ version: 1, secrets: { SAVED_KEY: "saved", OTHER_KEY: "other" } }), { mode: 0o600 });
+  const first = createApplier(t, m, storePath);
+  await first.applier.mergeSecrets(ctx, { NEW_KEY: "new" }, []);
+  assert.deepEqual(await readSecrets(storePath), { SAVED_KEY: "saved", OTHER_KEY: "other", NEW_KEY: "new" });
+  await assertEnvironment(first.environmentPath, await readSecrets(storePath));
+  first.applier.stop();
+  const second = createApplier(t, m, storePath);
+  await second.applier.mergeSecrets(ctx, {}, ["SAVED_KEY"]);
+  assert.deepEqual(await readSecrets(storePath), { OTHER_KEY: "other", NEW_KEY: "new" });
+  await assertEnvironment(second.environmentPath, await readSecrets(storePath));
+  assert.deepEqual((await second.applier.getStatus()).keys, ["NEW_KEY", "OTHER_KEY"]);
+  assert.equal((await stat(storePath)).mode & 0o777, 0o600);
 });
 
-test("after a box restart, a merge with no saved file creates it", async () => {
-  const loaded = await loadHost();
-  try {
-    const storePath = path.join(loaded.directory, "box-secrets.json");
-    const { applier } = await createApplier(loaded, storePath);
-    await applier.mergeSecrets({}, { NEW_KEY: "new" }, ["NOT_THERE"]);
-    assert.deepEqual(await readSecrets(storePath), { NEW_KEY: "new" });
-    applier.stop();
-  } finally {
-    await loaded.dispose();
-  }
+test("缺少 box 文件时保存与应用新增密钥", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "box-secrets.json");
+  const { applier, environmentPath } = createApplier(t, m, storePath);
+  await applier.mergeSecrets(m.createContext(), { NEW_KEY: "new" }, ["NOT_THERE"]);
+  assert.deepEqual(await readSecrets(storePath), { NEW_KEY: "new" });
+  await assertEnvironment(environmentPath, { NEW_KEY: "new" });
 });
 
-for (const [name, original] of Object.entries({
-  "invalid JSON": '{"version":1,"secrets":{"SAVED_KEY":"sav',
-  "a secret that is not a string": `${JSON.stringify({ version: 1, secrets: { SAVED_KEY: 42 } })}\n`,
-  "an unknown version": `${JSON.stringify({ version: 2, secrets: {} })}\n`,
-})) {
-  test(`after a box restart, a merge refuses to overwrite a box-secrets.json with ${name}`, async () => {
-    const loaded = await loadHost();
-    try {
-      const storePath = path.join(loaded.directory, "box-secrets.json");
-      await writeFile(storePath, original, { mode: 0o600 });
-      const { applier, applied } = await createApplier(loaded, storePath);
-      await assert.rejects(() => applier.mergeSecrets({}, { NEW_KEY: "new" }, []), loaded.module.SandBoxSecretsUnreadableError);
-      assert.equal(await readFile(storePath, "utf8"), original);
-      assert.deepEqual(applied, []);
-      applier.stop();
-    } finally {
-      await loaded.dispose();
-    }
+for (const [name, original] of Object.entries({ "invalid JSON": '{"version":1,"secrets":{"KEY":"trunc', "numeric secret": JSON.stringify({ version: 1, secrets: { KEY: 42 } }), "unknown version": JSON.stringify({ version: 2, secrets: {} }) })) {
+  test(`损坏的 box 文件保留原内容：${name}`, async (t) => {
+    const m = await loadModules(t), storePath = path.join(m.directory, "box-secrets.json");
+    await writeFile(storePath, original, { mode: 0o600 });
+    const { applier, environmentPath } = createApplier(t, m, storePath);
+    await assert.rejects(() => applier.mergeSecrets(m.createContext(), { NEW_KEY: "new" }, []), m.SandBoxSecretsUnreadableError);
+    assert.equal(await readFile(storePath, "utf8"), original);
+    await assert.rejects(() => stat(environmentPath), { code: "ENOENT" });
   });
 }
 
-test("a merge that goes over the secret limits is rejected before anything is saved", async () => {
-  const loaded = await loadHost();
-  try {
-    const storePath = path.join(loaded.directory, "box-secrets.json");
-    const original = `${JSON.stringify({ version: 1, secrets: { SAVED_KEY: "saved" } })}\n`;
-    await writeFile(storePath, original, { mode: 0o600 });
-    const { applier } = await createApplier(loaded, storePath);
-    await assert.rejects(() => applier.mergeSecrets({}, { BIG_KEY: "x".repeat(40 * 1024) }, []));
-    await assert.rejects(() => applier.mergeSecrets({}, { PATH: "/tmp" }, []));
-    assert.equal(await readFile(storePath, "utf8"), original);
-    applier.stop();
-  } finally {
-    await loaded.dispose();
-  }
+test("超过容量或使用保留名称的修改在写入之前失败", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "box-secrets.json");
+  const original = JSON.stringify({ version: 1, secrets: { SAVED_KEY: "saved" } });
+  await writeFile(storePath, original, { mode: 0o600 });
+  const { applier, environmentPath } = createApplier(t, m, storePath);
+  await assert.rejects(() => applier.mergeSecrets(m.createContext(), { BIG_KEY: "x".repeat(40 * 1024) }, []));
+  await assert.rejects(() => applier.mergeSecrets(m.createContext(), { PATH: "/invalid" }, []));
+  assert.equal(await readFile(storePath, "utf8"), original);
+  await assert.rejects(() => stat(environmentPath), { code: "ENOENT" });
 });
 
-// Mac → box push: a partial Mac view sends only its edits and writes no mirror.
-test("a partial Mac snapshot sends only its edits and writes no Mac mirror", async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "grok-secrets-push-"));
-  const output = path.join(directory, "push.cjs");
-  await build({ entryPoints: [path.join(repoRoot, "source/electron-main/secrets/secrets-ipc.ts")], outfile: output, bundle: true, format: "cjs", platform: "node", target: "node22", external: ["electron"], logLevel: "error" });
-  const { createBoxSecretsPush } = createRequire(output)(output);
-  try {
-    const macSecretsPath = path.join(directory, "box-secrets.json");
-    const requests = [];
-    let snapshot = { accountScope: "account-a", secrets: {}, complete: false, removed: [] };
-    const push = createBoxSecretsPush({
-      userSecretsStore: { exportSnapshot: async () => snapshot },
-      isAccountDeparting: () => false,
-      setBoxSecrets: async (request) => { requests.push(request); return { isApplied: true }; },
-      report: () => {},
-      macSecretsPath,
-    });
-    assert.equal(await push.push("resync"), true);
-    assert.deepEqual(requests, []);
-
-    snapshot = { accountScope: "account-a", secrets: { NEW_KEY: "new" }, complete: false, removed: ["OLD_KEY"] };
-    assert.equal(await push.push("edit"), true);
-    assert.deepEqual(requests, [{ secrets: { NEW_KEY: "new" }, merge: true, removeKeys: ["OLD_KEY"] }]);
-    await assert.rejects(() => stat(macSecretsPath), { code: "ENOENT" });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+test("local-admin 会话通过生产 push 合并到 host，并保留 Mac 文件", async (t) => {
+  const m = await loadModules(t), storePath = path.join(m.directory, "box-secrets.json"), macSecretsPath = path.join(m.directory, "mac-secrets.json");
+  await writeFile(storePath, JSON.stringify({ version: 1, secrets: { SAVED_KEY: "saved", OLD_KEY: "old" } }), { mode: 0o600 });
+  const store = new m.SandUserSecretsStore(path.join(m.directory, "user-secrets.json"), () => "account");
+  const { applier, environmentPath } = createApplier(t, m, storePath);
+  const push = m.createBoxSecretsPush({
+    userSecretsStore: store, isAccountDeparting: () => false,
+    setBoxSecrets: (request) => request.merge ? applier.mergeSecrets(m.createContext(), request.secrets, request.removeKeys) : applier.setSecrets(m.createContext(), request.secrets),
+    report: (report) => assert.equal(report.outcome, "ok"), macSecretsPath,
+  });
+  assert.equal(await push.push("resync"), true);
+  await assert.rejects(() => stat(environmentPath), { code: "ENOENT" });
+  await store.upsert({ NEW_KEY: "new" });
+  await store.remove(["OLD_KEY"]);
+  await push.pushOrThrow("edit");
+  assert.deepEqual(await readSecrets(storePath), { SAVED_KEY: "saved", NEW_KEY: "new" });
+  await assertEnvironment(environmentPath, await readSecrets(storePath));
+  assert.deepEqual(await store.listKeys((await applier.getStatus()).keys), ["NEW_KEY", "SAVED_KEY"]);
+  await assert.rejects(() => stat(macSecretsPath), { code: "ENOENT" });
 });

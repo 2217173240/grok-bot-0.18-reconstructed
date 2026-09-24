@@ -48,11 +48,10 @@ let warnedInMemory = false;
 function warnInMemoryOnce(): void {
   if (warnedInMemory) return;
   warnedInMemory = true;
-  captureSandSentryWarning("[sand] OS secure storage (keychain/keyring) is unavailable; box secrets are kept in memory for this session only and will NOT persist across restart.");
+  captureSandSentryWarning("[sand] OS secure storage is unavailable; this Mac keeps session edits in memory. Saved box secrets persist in the box data volume after synchronization.");
 }
 
-// Both readers reject the whole record when any member is invalid, so a
-// damaged file is reported as unreadable instead of loading as fewer secrets.
+// 任意成员损坏都拒绝整份记录，保留原文件并向调用方报告。
 export function readEncryptedSecrets(value: unknown): EncryptedSecrets | undefined {
   if (!isRecord(value)) return undefined;
   const entries = Object.entries(value);
@@ -73,10 +72,10 @@ export function readEncryptedSecretsByAccount(value: unknown): EncryptedSecretsB
 
 export class SandUserSecretsStore {
   private diskCache: EncryptedSecretsByAccount | undefined;
+  private diskLoad: Promise<EncryptedSecretsByAccount> | undefined;
   private diskUnreadable = false;
   private readonly sessionSecrets = new Map<string, Map<string, string>>();
-  // Keys removed this session while the store only holds in-memory edits; the
-  // box still has its own copy, so removals are sent explicitly.
+  // 会话内存只保存本次修改，删除操作需要显式传给持有完整副本的 box。
   private readonly sessionRemovals = new Map<string, Set<string>>();
   private readonly storePath: string;
   private readonly getAccountScope: () => string | undefined;
@@ -88,7 +87,7 @@ export class SandUserSecretsStore {
 
   isPersistent(): boolean { return isEncryptedStorageAvailable(); }
 
-  // savedElsewhere: keys the box reports; shown unless removed this session.
+  // 合并 box 返回的键名称，并移除本会话已经删除的键。
   async listKeys(savedElsewhere: readonly string[] = []): Promise<string[]> {
     const accountScope = this.getAccountScope();
     const { disk, session } = await this.resolveSlot(accountScope);
@@ -107,9 +106,7 @@ export class SandUserSecretsStore {
     catch { return null; }
   }
 
-  // complete=false means this store does not hold the full set (in-memory mode,
-  // or the saved file could not be read): the box copy must be merged into, not
-  // replaced. Signed out stays complete, so the box is still cleared then.
+  // 内存模式仅导出增量；退出账号时完整空集合表达显式清除。
   async exportSnapshot(): Promise<{ readonly accountScope: string | undefined; readonly secrets: Record<string, string>; readonly complete: boolean; readonly removed: readonly string[] }> {
     const accountScope = this.getAccountScope();
     const { disk, session } = await this.resolveSlot(accountScope);
@@ -165,8 +162,14 @@ export class SandUserSecretsStore {
 
   private async getDiskCache(): Promise<EncryptedSecretsByAccount> {
     if (this.diskCache !== undefined) return this.diskCache;
-    this.diskCache = await this.loadFromDisk();
-    return this.diskCache;
+    this.diskLoad ??= this.loadFromDisk();
+    try {
+      this.diskCache = await this.diskLoad;
+      this.diskUnreadable = false;
+      return this.diskCache;
+    } finally {
+      this.diskLoad = undefined;
+    }
   }
 
   private resolveCurrentSlot() { return this.resolveSlot(this.getAccountScope()); }
@@ -198,30 +201,29 @@ export class SandUserSecretsStore {
   }
 
   private async loadFromDisk(): Promise<EncryptedSecretsByAccount> {
-    // Only a missing file means "no saved secrets". Any other read or parse
-    // failure is remembered so the empty cache is never pushed or written back.
+    // 只有文件缺失表示尚未保存，其他读取错误直接报告。
     let raw: string;
     try { raw = await fs.readFile(this.storePath, "utf8"); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.markUnreadable(error);
-      return {};
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      return this.markUnreadable(error);
     }
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!isRecord(parsed)) return this.markUnreadable(new Error("not an object"));
-      if (parsed.version === 1) {
-        const secrets = readEncryptedSecrets(parsed.secrets);
-        return secrets === undefined ? this.markUnreadable(new Error("invalid v1 secrets")) : { [LEGACY_ACCOUNT_SLOT]: secrets };
-      }
-      if (parsed.version !== 2) return this.markUnreadable(new Error("unknown version"));
-      return readEncryptedSecretsByAccount(parsed.accounts) ?? this.markUnreadable(new Error("invalid accounts"));
-    } catch (error) { return this.markUnreadable(error); }
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); }
+    catch (error) { return this.markUnreadable(error); }
+    if (!isRecord(parsed)) return this.markUnreadable(new Error("not an object"));
+    if (parsed.version === 1) {
+      const secrets = readEncryptedSecrets(parsed.secrets);
+      return secrets === undefined ? this.markUnreadable(new Error("invalid v1 secrets")) : { [LEGACY_ACCOUNT_SLOT]: secrets };
+    }
+    if (parsed.version !== 2) return this.markUnreadable(new Error("unknown version"));
+    return readEncryptedSecretsByAccount(parsed.accounts) ?? this.markUnreadable(new Error("invalid accounts"));
   }
 
-  private markUnreadable(error: unknown): EncryptedSecretsByAccount {
+  private markUnreadable(error: unknown): never {
     this.diskUnreadable = true;
     reportDesktopEdgeFailure("user-secrets", "read", error);
-    return {};
+    throw new SandUserSecretsUnreadableError();
   }
 
   private async persist(accounts: EncryptedSecretsByAccount): Promise<void> {

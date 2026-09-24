@@ -41,8 +41,7 @@ export interface BoxSecretsPushReport {
   readonly errorClass?: "keychain_locked" | "other" | "host_unreachable" | "box_unreachable";
 }
 
-// merge=true: the Mac only knows this session's edits, so the host applies them
-// on top of its saved copy instead of replacing it.
+// merge=true 表示 Mac 仅持有本会话修改，由 host 合并完整副本。
 export type BoxSecretsRequest =
   | { readonly secrets: Record<string, string> }
   | { readonly secrets: Record<string, string>; readonly merge: true; readonly removeKeys: readonly string[] };
@@ -68,8 +67,7 @@ export function createBoxSecretsPush(deps: {
     }
     const sentCount = Object.keys(snapshot.secrets).length;
     if (snapshot.complete === false) {
-      // Never replace the box copy from a partial view; with no edits there is
-      // nothing to send, and no partial Mac mirror is written.
+      // 没有修改时无需推送；增量副本不写入 Mac 的明文镜像文件。
       if (sentCount === 0 && snapshot.removed.length === 0) return { ok: true };
       try {
         const status = await deps.setBoxSecrets({ secrets: snapshot.secrets, merge: true, removeKeys: snapshot.removed });
@@ -154,8 +152,8 @@ export function registerSecretsIpc(deps: {
   const { userSecretsStore, clientPersistenceStore } = deps.stores;
   ipcMain.handle("sand:secrets-list", async (event) => {
     guards.assertTrustedSecretsSender(event);
-    // Without OS secure storage the Mac keeps no saved copy; the box does.
-    const boxKeys = userSecretsStore.isPersistent() ? [] : await deps.stores.listBoxSecretKeys?.().catch(() => []) ?? [];
+    // Mac 没有 OS 加密存储时，从 box 获取持久化键名称。
+    const boxKeys = userSecretsStore.isPersistent() ? [] : await deps.stores.listBoxSecretKeys?.() ?? [];
     return { keys: await userSecretsStore.listKeys(boxKeys), isPersistent: userSecretsStore.isPersistent() };
   });
   ipcMain.handle("sand:secrets-reveal", async (event, request) => {
@@ -209,7 +207,7 @@ export function createSecretsStores(
     readonly isSignedIn: () => boolean;
     readonly isAccountDeparting: () => boolean;
     readonly setBoxSecrets: (request: BoxSecretsRequest) => Promise<{ readonly isApplied?: boolean }>;
-    readonly getBoxSecretsStatus?: () => Promise<unknown>;
+    readonly getBoxSecretsStatus: () => Promise<unknown>;
   },
 ): {
   readonly userSecretsStore: SandUserSecretsStore;
@@ -234,9 +232,12 @@ export function createSecretsStores(
     }),
     pushTelemetry,
     listBoxSecretKeys: async () => {
-      const status: unknown = await push.getBoxSecretsStatus?.();
+      const status: unknown = await push.getBoxSecretsStatus();
       const keys = typeof status === "object" && status != null ? Reflect.get(status, "keys") : undefined;
-      return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : [];
+      if (!Array.isArray(keys) || !keys.every((key): key is string => typeof key === "string")) {
+        throw new Error("Invalid box secrets status response");
+      }
+      return keys;
     },
   };
 }
