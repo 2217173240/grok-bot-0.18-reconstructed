@@ -252,8 +252,10 @@ export function createSystemPromptAssembly(deps: SystemPromptAssemblyDependencie
     const sections = [base];
     if (deps.isSpotlightEnabled?.() !== false) sections.push(spotlightPromptSection({ canSendMessage: !deps.isSubagentRunner }));
     const profile = deps.isSharedRoomRunner ? profileSection(resolveProfileForPrompt(), true) : snapshot?.profileSection ?? profileSection(resolveProfileForPrompt(), false);
-    if (profile != null) sections.push(profile);
-    if (deps.isSharedRoomRunner) return sections.join("\n\n");
+    if (deps.isSharedRoomRunner) {
+      if (profile != null) sections.push(profile);
+      return sections.join("\n\n");
+    }
     const add = (value: string | null | undefined): void => { if (value != null && value.length > 0) sections.push(value); };
     add(getUserIdentitySection());
     if (!deps.isSubagentRunner && !deps.isSystemPromptOverridden && deps.isMultitaskEnabled?.() === true) add(deps.multitaskSection);
@@ -262,6 +264,10 @@ export function createSystemPromptAssembly(deps: SystemPromptAssemblyDependencie
     add(getTimeZoneSection());
     add(getMemorySection()); add(getAutomationsSection()); add(getWorkflowsSection()); add(getChannelsSection()); add(getAgentDirectorySection());
     add(deps.mcpCustomInstructionsSection()); add(deps.mcpDiscoveryStatusSection()); add(deps.remoteBoxSection()); add(deps.computerSection());
+    // The profile is the only section that differs between agents, so it goes
+    // last: a new agent then reuses the provider's cached prefix for everything
+    // above it instead of re-reading the rest of the prompt.
+    add(profile);
     return sections.join("\n\n");
   }
 
