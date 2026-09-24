@@ -39,7 +39,7 @@ async function startCdp(directory) {
         if (match != null && stdout.includes("desktop-probe-ready")) { clearTimeout(timer); resolve(Number(match[1])); }
       };
       child.once("error", error => { clearTimeout(timer); reject(error); });
-      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Electron exited before readiness: ${code ?? signal}`)); });
+      child.once("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Electron exited before readiness: ${code ?? signal}\n${stderr.slice(-1500)}`)); });
       child.stdout.on("data", value => { stdout += value; check(); });
       child.stderr.on("data", value => { stderr += value; check(); });
     });
