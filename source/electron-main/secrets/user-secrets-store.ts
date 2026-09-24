@@ -16,6 +16,9 @@ export class SandBoxSecretsValidationError extends Error {}
 export class SandSecretsAccountRequiredError extends Error {
   constructor() { super("Box secrets can only change while an account is signed in"); }
 }
+export class SandUserSecretsUnreadableError extends Error {
+  constructor() { super("The saved secrets file could not be read; refusing to overwrite it"); }
+}
 
 type EncryptedSecrets = Record<string, string>;
 type EncryptedSecretsByAccount = Record<string, EncryptedSecrets>;
@@ -45,12 +48,15 @@ let warnedInMemory = false;
 function warnInMemoryOnce(): void {
   if (warnedInMemory) return;
   warnedInMemory = true;
-  captureSandSentryWarning("[sand] OS secure storage (keychain/keyring) is unavailable; box secrets are kept in memory for this session only and will NOT persist across restart.");
+  captureSandSentryWarning("[sand] OS secure storage is unavailable; this Mac keeps session edits in memory. Saved box secrets persist in the box data volume after synchronization.");
 }
 
+// 任意成员损坏都拒绝整份记录，保留原文件并向调用方报告。
 export function readEncryptedSecrets(value: unknown): EncryptedSecrets | undefined {
   if (!isRecord(value)) return undefined;
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const entries = Object.entries(value);
+  if (!entries.every((entry): entry is [string, string] => typeof entry[1] === "string")) return undefined;
+  return Object.fromEntries(entries);
 }
 
 export function readEncryptedSecretsByAccount(value: unknown): EncryptedSecretsByAccount | undefined {
@@ -58,14 +64,20 @@ export function readEncryptedSecretsByAccount(value: unknown): EncryptedSecretsB
   const entries: Array<[string, EncryptedSecrets]> = [];
   for (const [accountSlot, secretsValue] of Object.entries(value)) {
     const secrets = readEncryptedSecrets(secretsValue);
-    if (secrets !== undefined) entries.push([accountSlot, secrets]);
+    if (secrets === undefined) return undefined;
+    entries.push([accountSlot, secrets]);
   }
   return Object.fromEntries(entries);
 }
 
 export class SandUserSecretsStore {
   private diskCache: EncryptedSecretsByAccount | undefined;
+  private diskLoad: Promise<EncryptedSecretsByAccount> | undefined;
+  private mutations: Promise<void> = Promise.resolve();
+  private diskUnreadable = false;
   private readonly sessionSecrets = new Map<string, Map<string, string>>();
+  // 会话内存只保存本次修改，删除操作需要显式传给持有完整副本的 box。
+  private readonly sessionRemovals = new Map<string, Set<string>>();
   private readonly storePath: string;
   private readonly getAccountScope: () => string | undefined;
 
@@ -76,9 +88,13 @@ export class SandUserSecretsStore {
 
   isPersistent(): boolean { return isEncryptedStorageAvailable(); }
 
-  async listKeys(): Promise<string[]> {
-    const { disk, session } = await this.resolveCurrentSlot();
-    return [...new Set([...Object.keys(disk), ...session.keys()])].sort();
+  // 合并 box 返回的键名称，并移除本会话已经删除的键。
+  async listKeys(savedElsewhere: readonly string[] = []): Promise<string[]> {
+    const accountScope = this.getAccountScope();
+    const { disk, session } = await this.resolveSlot(accountScope);
+    const removed = accountScope === undefined ? new Set<string>() : this.sessionRemovals.get(accountScope) ?? new Set<string>();
+    const remote = accountScope === undefined ? [] : savedElsewhere.filter((key) => !removed.has(key));
+    return [...new Set([...Object.keys(disk), ...session.keys(), ...remote])].sort();
   }
 
   async reveal(key: string): Promise<string | null> {
@@ -87,29 +103,36 @@ export class SandUserSecretsStore {
     if (sessionValue != null) return sessionValue;
     const stored = disk[key];
     if (stored == null || !isEncryptedStorageAvailable()) return null;
-    try { return loadElectronUserSecretsRuntime("electron").safeStorage.decryptString(Buffer.from(stored, "base64")); }
-    catch { return null; }
+    return this.decrypt(stored);
   }
 
-  async exportSnapshot(): Promise<{ readonly accountScope: string | undefined; readonly secrets: Record<string, string> }> {
+  // 内存模式仅导出增量；退出账号时完整空集合表达显式清除。
+  async exportSnapshot(): Promise<{ readonly accountScope: string | undefined; readonly secrets: Record<string, string>; readonly complete: boolean; readonly removed: readonly string[] }> {
     const accountScope = this.getAccountScope();
     const { disk, session } = await this.resolveSlot(accountScope);
+    const complete = accountScope === undefined || (isEncryptedStorageAvailable() && !this.diskUnreadable);
+    const removed = accountScope === undefined ? [] : [...(this.sessionRemovals.get(accountScope) ?? [])].sort();
     const secrets: Record<string, string> = {};
     const diskKeys = Object.keys(disk);
     if (diskKeys.length > 0 && !isEncryptedStorageAvailable()) throw new SandSecureStorageUnavailableError();
-    for (const key of diskKeys) secrets[key] = loadElectronUserSecretsRuntime("electron").safeStorage.decryptString(Buffer.from(disk[key]!, "base64"));
+    for (const key of diskKeys) secrets[key] = this.decrypt(disk[key]!);
     for (const [key, value] of session) secrets[key] = value;
-    return { accountScope, secrets };
+    return { accountScope, secrets, complete, removed };
   }
 
   async upsert(entries: Readonly<Record<string, string>>): Promise<void> {
-    if (this.getAccountScope() === undefined) throw new SandSecretsAccountRequiredError();
-    const { diskByAccount, disk, session } = await this.resolveCurrentSlot();
+    const copy = { ...entries };
+    return this.serialize(() => this.upsertCurrent(copy));
+  }
+
+  private async upsertCurrent(entries: Readonly<Record<string, string>>): Promise<void> {
+    const accountScope = this.getAccountScope();
+    if (accountScope === undefined) throw new SandSecretsAccountRequiredError();
+    const { diskByAccount, disk, session } = await this.resolveSlot(accountScope);
     const resulting: Record<string, string> = {};
     if (isEncryptedStorageAvailable()) {
       for (const [key, blob] of Object.entries(disk)) {
-        try { resulting[key] = loadElectronUserSecretsRuntime("electron").safeStorage.decryptString(Buffer.from(blob, "base64")); }
-        catch (error) { reportDesktopEdgeFailure("user-secrets", "decrypt", error); }
+        resulting[key] = this.decrypt(blob);
       }
     }
     for (const [key, value] of session) resulting[key] = value;
@@ -117,48 +140,92 @@ export class SandUserSecretsStore {
     const validationError = validateBoxSecrets(resulting);
     if (validationError != null) throw new SandBoxSecretsValidationError(validationError);
     if (isEncryptedStorageAvailable()) {
+      const nextDisk = { ...disk };
       for (const [key, value] of Object.entries(entries)) {
-        disk[key] = loadElectronUserSecretsRuntime("electron").safeStorage.encryptString(value).toString("base64");
-        session.delete(key);
+        nextDisk[key] = loadElectronUserSecretsRuntime("electron").safeStorage.encryptString(value).toString("base64");
       }
-      await this.persist(diskByAccount);
+      const nextAccounts = { ...diskByAccount, [accountScope]: nextDisk };
+      await this.persist(nextAccounts);
+      this.diskCache = nextAccounts;
+      for (const key of Object.keys(entries)) session.delete(key);
       return;
     }
     warnInMemoryOnce();
-    for (const [key, value] of Object.entries(entries)) session.set(key, value);
+    const removals = this.removalsFor(accountScope);
+    for (const [key, value] of Object.entries(entries)) { session.set(key, value); removals.delete(key); }
   }
 
   async remove(keys: readonly string[]): Promise<void> {
-    if (this.getAccountScope() === undefined) throw new SandSecretsAccountRequiredError();
-    const { diskByAccount, disk, session } = await this.resolveCurrentSlot();
-    let diskChanged = false;
+    const copy = [...keys];
+    return this.serialize(() => this.removeCurrent(copy));
+  }
+
+  private async removeCurrent(keys: readonly string[]): Promise<void> {
+    const accountScope = this.getAccountScope();
+    if (accountScope === undefined) throw new SandSecretsAccountRequiredError();
+    const { diskByAccount, disk, session } = await this.resolveSlot(accountScope);
+    const nextDisk = { ...disk };
+    for (const key of keys) delete nextDisk[key];
+    if (Object.keys(nextDisk).length !== Object.keys(disk).length) {
+      const nextAccounts = { ...diskByAccount, [accountScope]: nextDisk };
+      await this.persist(nextAccounts);
+      this.diskCache = nextAccounts;
+    }
+    const removals = isEncryptedStorageAvailable() ? undefined : this.removalsFor(accountScope);
     for (const key of keys) {
       session.delete(key);
-      if (key in disk) { delete disk[key]; diskChanged = true; }
+      removals?.add(key);
     }
-    if (diskChanged) await this.persist(diskByAccount);
+  }
+
+  private serialize(operation: () => Promise<void>): Promise<void> {
+    const result = this.mutations.then(operation);
+    this.mutations = result.then(() => {}, () => {});
+    return result;
+  }
+
+  private decrypt(stored: string): string {
+    try { return loadElectronUserSecretsRuntime("electron").safeStorage.decryptString(Buffer.from(stored, "base64")); }
+    catch (error) {
+      reportDesktopEdgeFailure("user-secrets", "decrypt", error);
+      throw new SandUserSecretsUnreadableError();
+    }
   }
 
   private async getDiskCache(): Promise<EncryptedSecretsByAccount> {
     if (this.diskCache !== undefined) return this.diskCache;
-    this.diskCache = await this.loadFromDisk();
-    return this.diskCache;
+    this.diskLoad ??= this.loadFromDisk();
+    try {
+      this.diskCache = await this.diskLoad;
+      this.diskUnreadable = false;
+      return this.diskCache;
+    } finally {
+      this.diskLoad = undefined;
+    }
   }
 
   private resolveCurrentSlot() { return this.resolveSlot(this.getAccountScope()); }
+
+  private removalsFor(accountSlot: string): Set<string> {
+    let removals = this.sessionRemovals.get(accountSlot);
+    if (removals === undefined) { removals = new Set(); this.sessionRemovals.set(accountSlot, removals); }
+    return removals;
+  }
 
   private async resolveSlot(accountSlot: string | undefined): Promise<{
     readonly diskByAccount: EncryptedSecretsByAccount;
     readonly disk: EncryptedSecrets;
     readonly session: Map<string, string>;
   }> {
-    const diskByAccount = await this.getDiskCache();
+    let diskByAccount = await this.getDiskCache();
     if (accountSlot === undefined) return { diskByAccount, disk: {}, session: new Map() };
     const legacyDisk = diskByAccount[LEGACY_ACCOUNT_SLOT];
     if (legacyDisk !== undefined && Object.keys(legacyDisk).length > 0) {
-      diskByAccount[accountSlot] = { ...legacyDisk, ...(diskByAccount[accountSlot] ?? {}) };
-      delete diskByAccount[LEGACY_ACCOUNT_SLOT];
-      await this.persist(diskByAccount);
+      const nextAccounts = { ...diskByAccount, [accountSlot]: { ...legacyDisk, ...(diskByAccount[accountSlot] ?? {}) } };
+      delete nextAccounts[LEGACY_ACCOUNT_SLOT];
+      await this.persist(nextAccounts);
+      this.diskCache = nextAccounts;
+      diskByAccount = nextAccounts;
     }
     const disk = diskByAccount[accountSlot] ?? {};
     diskByAccount[accountSlot] = disk;
@@ -168,22 +235,33 @@ export class SandUserSecretsStore {
   }
 
   private async loadFromDisk(): Promise<EncryptedSecretsByAccount> {
+    // 只有文件缺失表示尚未保存，其他读取错误直接报告。
     let raw: string;
     try { raw = await fs.readFile(this.storePath, "utf8"); }
-    catch { return {}; }
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!isRecord(parsed)) return {};
-      if (parsed.version === 1) {
-        const secrets = readEncryptedSecrets(parsed.secrets);
-        return secrets === undefined ? {} : { [LEGACY_ACCOUNT_SLOT]: secrets };
-      }
-      if (parsed.version !== 2) return {};
-      return readEncryptedSecretsByAccount(parsed.accounts) ?? {};
-    } catch { return {}; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      return this.markUnreadable(error);
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); }
+    catch (error) { return this.markUnreadable(error); }
+    if (!isRecord(parsed)) return this.markUnreadable(new Error("not an object"));
+    if (parsed.version === 1) {
+      const secrets = readEncryptedSecrets(parsed.secrets);
+      return secrets === undefined ? this.markUnreadable(new Error("invalid v1 secrets")) : { [LEGACY_ACCOUNT_SLOT]: secrets };
+    }
+    if (parsed.version !== 2) return this.markUnreadable(new Error("unknown version"));
+    return readEncryptedSecretsByAccount(parsed.accounts) ?? this.markUnreadable(new Error("invalid accounts"));
+  }
+
+  private markUnreadable(error: unknown): never {
+    this.diskUnreadable = true;
+    reportDesktopEdgeFailure("user-secrets", "read", error);
+    throw new SandUserSecretsUnreadableError();
   }
 
   private async persist(accounts: EncryptedSecretsByAccount): Promise<void> {
+    if (this.diskUnreadable) throw new SandUserSecretsUnreadableError();
     await fs.mkdir(dirname(this.storePath), { recursive: true });
     const temporary = `${this.storePath}.${process.pid}.${randomUUID()}.tmp`;
     await fs.writeFile(temporary, JSON.stringify({ version: 2, accounts }, null, 2), { encoding: "utf8", mode: 0o600 });
