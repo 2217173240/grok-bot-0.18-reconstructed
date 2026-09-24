@@ -16,7 +16,7 @@ git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
 cd grok-bot-0.18-reconstructed
 npm ci
 npm run bootstrap      # verifies the pinned 0.18.0 release input
-npm run check          # typecheck + 121 regression tests
+npm run check          # type checks and regression tests
 npm run package        # → dist/Grok Bot 0.18 Reconstructed.app
 ```
 
@@ -99,7 +99,7 @@ To add a local MCP server, create `~/.grokbot-local/mcp-servers.json` with the s
 
 | Check | Result |
 | --- | --- |
-| CI on `main` and on pull requests | TypeScript checks, **121 tests / 121 pass**, editable frontend build, clean Git archive check |
+| CI on `main` and on pull requests | TypeScript checks, regression tests, editable frontend build, clean Git archive check; **160 tests passed** for the reliability update on 2026-09-24 |
 | macOS package | repository tests, package verification, and the native `arm64` container's execution and desktop gates |
 | Local-admin UI, live | real GLM-backed conversation, container file write and read, MCP echo call, image attachment analysis |
 | Computer plane, live | `Task` → `computerUse` → `Computer` mouse move plus a 1280×800 PNG screenshot |
