@@ -86,10 +86,8 @@ async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.en
   return decideDockerImage(env, probe, expectedDepsPin);
 }
 
-// The app's expected deps pin, stamped at package time next to the bundle.
-// The connector's compiled location varies by layout (bundled inside
-// app.asar/dist/electron-main, mirrored in app.asar.unpacked, or a bare
-// esbuild output during tests), so search upward for the stamp instead of
+// 应用的 deps pin 在打包时写入 bundle 附近。connector 可能位于
+// app.asar/dist/electron-main、app.asar.unpacked 或测试 bundle，因此按目录向上查找。
 // 开发和测试 bundle 可以没有 stamp；发布资源必须包含有效 stamp。
 let expectedDepsPinPromise: Promise<string | undefined> | undefined;
 export async function readExpectedDepsPin(): Promise<string | undefined> {

@@ -42,9 +42,17 @@ test("build stamp is optional for source bundles and strict when resources are p
     await assert.rejects(readExpectedDepsPinFrom(resources, resources), /Missing build stamp/);
     await writeFile(path.join(directory, "build-stamp.json"), JSON.stringify({ depsPin: "bad" }));
     await assert.rejects(readExpectedDepsPinFrom(directory, undefined), /Invalid build stamp/);
+    await rm(path.join(directory, "build-stamp.json"));
+    await mkdir(path.join(directory, "build-stamp.json"));
+    await assert.rejects(readExpectedDepsPinFrom(directory, undefined), /EISDIR/);
+    await rm(path.join(directory, "build-stamp.json"), { recursive: true });
     const pin = "a".repeat(64);
     await writeFile(path.join(directory, "build-stamp.json"), JSON.stringify({ depsPin: pin }));
-    assert.equal(await readExpectedDepsPinFrom(directory, undefined), pin);
+    assert.deepEqual(await Promise.all([
+      readExpectedDepsPinFrom(directory, undefined),
+      readExpectedDepsPinFrom(directory, undefined),
+      readExpectedDepsPinFrom(directory, undefined),
+    ]), [pin, pin, pin]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
