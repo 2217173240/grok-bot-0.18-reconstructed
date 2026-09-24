@@ -424,15 +424,22 @@ export class TurnRuntime {
       try {
         const unansweredPrompts =
           this.tm.widgetResponses.collectUnansweredQuestionPrompts(session);
-        const failedUserMessageIds = new Set(session.db.getFailedUserMessageIds());
+        const recentUserMessages = session.db.filterFailedUserMessages(options.recentUserMessages ?? []);
         const result = await runner.run(prompt, {
           ...options,
-          ...(options.recentUserMessages === undefined ? {} : { recentUserMessages: options.recentUserMessages.filter((message) => !failedUserMessageIds.has(message.id)) }),
+          ...(options.recentUserMessages === undefined ? {} : { recentUserMessages }),
           ...unansweredPrompts,
           traceCtx: turnCtx,
           appendReplyReminder: true,
           requestSource: "turn",
           onModelResolved: (modelId: string) => turn.setModel(modelId),
+        }).catch((error: unknown) => {
+          if (
+            options.messageId != null &&
+            epoch === this.tm.sendPipeline.currentTurnEpoch(session) &&
+            !(error instanceof Error && error.name === "AbortError")
+          ) session.db.recordFailedUserMessageId(options.messageId);
+          throw error;
         });
         let settledResult = result;
         if (result.quiescedForUpgrade)
@@ -492,7 +499,6 @@ export class TurnRuntime {
           classifyAgentError(error),
           sandErrorDetail(error),
         );
-        if (options.messageId != null) session.db.recordFailedUserMessageId(options.messageId);
         markTurnTraceError(turnTrace, error);
         if (epoch === this.tm.sendPipeline.currentTurnEpoch(session)) {
           const description = describeAgentRunError(error);
