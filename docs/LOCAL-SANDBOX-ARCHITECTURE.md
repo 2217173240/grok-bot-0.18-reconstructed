@@ -67,7 +67,7 @@ flowchart TD
 | 浏览器目标网站 / 用户配置插件 | 执行用户任务 | 由任务决定；本地部署仍允许用户授权的第三方网络服务 |
 | 官方 0.18 应用构件 | Electron 外壳、renderer、原生依赖与历史证据 | 仍是经过固定哈希核对的构建输入；当前发布目标允许复用 |
 
-默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。`/Applications/Grok Bot 0.18 Reconstructed.app` 本轮已安装并验证的构建基线为 `8b4cf52`。
+默认发布包保留原版 renderer，并用精确补丁加入本地 Router 设置；`frontend/src` 是可读的开发与研究材料，不承担发布包的像素一致性要求。18 张原版静态图片已按原字节与 SHA-256 纳入 `frontend/assets` 供前端开发使用。`/Applications/Grok Bot 0.18 Reconstructed.app` 已安装并验证的构建基线为 `5a95fe6`。
 
 第三方 API 地址、主模型及子模型映射由启动环境配置，启动脚本保留显式值。API token 由 provider 读取本地凭据文件并传入 CLI 子进程，测试和报告不输出凭据。
 
@@ -99,7 +99,7 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 | 4 | 高 / 高 | 本地启动不等待官方 bootstrap，拦截入口覆盖 host/coordinator | 已实现并验证本地默认值、显式开关与幂等安装 |
 | 5 | 高 / 中 | provider 使用 Grok turn 工具与权限 | Claude 已通过 macOS UI 的真实文件、MCP、图片附件与 Computer 子代理回合。Codex 在隔离容器用真实账号通过文本、工具续接、取消与转录验收。Command Code 的无效密钥在隔离容器调用真实接口，HTTP 401 使流及结果及时失败。OpenRouter、Command Code 的本地 key 为空，按当前验收范围未调用真实账号。 |
 | 6 | 高 / 中 | MCP 取消到达实际执行进程 | 真实延时 stdio 插件和 daemon RPC 取消通过；调用期间取消后未写入完成标记。Mac 回合路径已移除 |
-| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | 1eaa2ed 已完成 GLM 文本、文件、MCP 与 Computer 回合，记录范围内零 Cursor/xAI 外发；本轮 8b4cf52 已验证嵌入桌面，最终 Computer 回合等待 #82。 |
+| 7 | 高 / 中 | 封锁 Cursor/xAI 返回时验证 UI→回合→工具→transcript→UI | 1eaa2ed 已完成封锁场景；当前安装路径已验证 GLM 文件、MCP、图片、Computer、审批与取消，网络证据范围见下方记录。 |
 | 8 | 中 / 中 | router/session-sync 故障被健康检查发现并恢复 | 真实进程退出、健康判定与明确重建已通过隔离 Docker 验收 |
 | 9 | 中 / 低 | 多显示随机访问凭证、资源配额、人工登录接管 | 随机凭证、旧凭证撤销、四窗口资源限制与真实 WebSocket 访问已验证；真人登录与交回需要测试账号和用户参与。 |
 | 10 | 高 / 中 | 保留原版外观并核对发布包身份 | 默认包保留原版 renderer 的完整文件清单，精确补丁按顺序验证输入与输出 SHA-256；Electron 外壳、ASAR、原生依赖与重签名包体已在隔离环境核对。可读前端独立发布不再是交付要求 |
@@ -151,8 +151,8 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 
 ## 执行证据与边界
 
-- 2026-09-28，`c386cb7` 完成完整 `package`、`verify`、签名核对、安装及启动脚本重启。247 项测试中，246 项在 Mac 运行通过；Linux XTEST 测试在同一执行镜像中单独通过。包体核对覆盖 14 个可执行源码运行模块、原生依赖、ASAR、身份与签名。
-- 执行镜像为 `sha256:601cd3410d4b1f817a6023b1265715348546ffa4e863fba1fb74dde1fb5392a7`，deps pin 为 `602e93959244647350767f5a56699974b1c1381b11d1fb2d43fdd062b7db3430`。exec 与 desktop 门禁通过，包含真实 RPC、缓存和 profile 写入、noVNC 正反鉴权、桌面归属及桌面退出后的健康报告。
+- 2026-09-28，`5a95fe6` 完成构建、`verify`、签名核对、安装及启动脚本重启。261 项检查中，259 项在 Mac 运行通过；Linux XTEST 在当前镜像单独通过，未创建容器的检查由 CI 验证。包体核对覆盖 14 个可执行源码运行模块、原生依赖、ASAR、身份与签名。
+- 执行镜像为 `sha256:c64d45a0db7df9c87b4d305fed757361dcddf140640e7eb12db256f662e6a5a6`，deps pin 为 `6f29d172fff334904187f0f5bc305638cf9647d6bf83c74ad02920d406946df3`。exec 与 desktop 门禁通过，包含真实 RPC、缓存和 profile 写入、noVNC 正反鉴权、桌面归属及桌面退出后的健康报告。Docker init 回收孤儿进程，原数据卷和旧 PID 1 锁完成实际升级；真实 UI 中断与后续回复完成后，两组推理进程均消失，容器无 zombie。
 - 启动直接进入 local admin。模型与 Claude 子模型映射均为用户选定的 `glm-5.3-flash`，由容器环境独立核对。模型配置变化后的容器重建已用真实 Docker 验证，数据卷继续保留。
 - 真实 UI 完成文件创建、修改、搜索、读取和 MCP echo。图片 Read 正确识别 `ORBIT 7319` 与形状颜色；纯图片消息正确识别另一张未提供答案的 `COMET 4826` 图片，刷新后可以继续回答。纯图片首轮在 SQLite 中仅有一条成功投递的回复。
 - 审批卡等待期间文件不存在；选择 Deny 后文件仍不存在；新请求选择 Allow once 后文件内容与预期逐字节一致。工具记录确认拒绝提案没有执行，批准后的 Shell 只有一次成功调用。
