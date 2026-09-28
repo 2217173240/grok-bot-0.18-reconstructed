@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createSdkMcpServer, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { appendLocalPerformance } from "../../../shared/node/local-performance.js";
 
 export interface HostToolDefinition {
   readonly name: string;
@@ -24,7 +25,7 @@ function mcpContent(content: readonly Record<string, unknown>[]): Array<{ type: 
 }
 
 /** 每个回合独立创建；执行 ID 与 Claude 的 tool_use ID 分开记录。 */
-export function createHostToolsMcpBridge(definitions: readonly HostToolDefinition[], execution: HostToolExecution, turnSignal: AbortSignal): { readonly config: McpSdkServerConfigWithInstance; close(): Promise<void> } {
+export function createHostToolsMcpBridge(definitions: readonly HostToolDefinition[], execution: HostToolExecution, turnSignal: AbortSignal, correlationHash?: string): { readonly config: McpSdkServerConfigWithInstance; close(): Promise<void> } {
   const tools = new Map(definitions.map(definition => [definition.name, definition]));
   if (tools.size !== definitions.length) throw new Error("Duplicate host tool names");
   const lifetime = new AbortController();
@@ -37,10 +38,13 @@ export function createHostToolsMcpBridge(definitions: readonly HostToolDefinitio
     const selected = tools.get(request.params.name);
     if (selected == null) throw new McpError(ErrorCode.InvalidParams, `Unknown Grok Bot host tool: ${request.params.name}`);
     const signal = AbortSignal.any([lifetime.signal, extra.signal]);
+    const started = performance.now();
+    let outcome: "success" | "failed" | "cancelled" = "failed";
     try {
       if (signal.aborted) throw signal.reason ?? new Error("Host tool call canceled.");
       const result = await execution.execute({ name: selected.name, args: request.params.arguments ?? {}, toolCallId: randomUUID(), signal });
       const content = mcpContent(result.content);
+      outcome = signal.aborted ? "cancelled" : result.isError ? "failed" : "success";
       if (result.isError) {
         // Claude SDK 的错误分支只读取第一个文本块，完整正文与边界标记需要放在一起。
         const text = content.filter(part => part.type === "text").map(part => part.text).join("\n");
@@ -48,7 +52,11 @@ export function createHostToolsMcpBridge(definitions: readonly HostToolDefinitio
       }
       return { content, isError: false };
     } catch (error) {
+      outcome = signal.aborted ? "cancelled" : "failed";
       return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
+    } finally {
+      // 整次工具请求耗时包含主机端审批等待。
+      try { appendLocalPerformance({ phase: "tool-bridge", provider: "claude-code", mode: "hosted", outcome, durationMs: performance.now() - started, toolCount: 1, ...(correlationHash === undefined ? {} : { correlationHash }) }); } catch {}
     }
   });
   let closing: Promise<void> | undefined;
