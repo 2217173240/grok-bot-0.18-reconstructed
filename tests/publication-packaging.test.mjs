@@ -129,7 +129,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   // host 工具桥随流关闭；纯文本请求只运行一个回合。
   assert.match(providers, /maxTurns: hosted \? 24 : 1/);
   assert.match(providers, /grok_bot_host_tools: hostBridge\.config/);
-  assert.match(providers, /await hostBridge\?\.close\(\)/);
+  assert.match(providers, /await hostBridge\.close\(\)/);
   assert.doesNotMatch(providers, /grok_bot_plugins|standaloneTools/);
   assert.match(providers, /use Task to delegate browserUse or computerUse/);
   assert.match(providers, /do not fall back to curl/);
