@@ -67,6 +67,7 @@ test("source-only production bundles contain runnable entrypoints and provenance
     assert.equal(main.clean, true);
     assert.equal(host.clean, true);
     assert.ok(host.provenance.executableGraph.externalImports.includes("pdfjs-dist/legacy/build/pdf.mjs"));
+    assert.ok(host.provenance.executableGraph.externalImports.includes("sharp"));
     for (const [runtime, result] of [["electron-main", main], ["host", host]]) {
       const executable = await readFile(result.outputPath, "utf8");
       const provenance = JSON.parse(await readFile(result.provenancePath, "utf8"));

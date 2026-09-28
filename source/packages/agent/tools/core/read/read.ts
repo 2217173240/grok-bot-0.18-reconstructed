@@ -41,6 +41,7 @@ import { formatCodeBlock } from "../formatting.js";
 import { isJupyterNotebook } from "../notebook-utils.js";
 import { formatNotebookForLLM } from "./notebook-format.js";
 import { detectImageMimeType } from "./image-utils.js";
+import { normalizeReadImage } from "./image-normalization.js";
 import { LARGE_TEXT_BLOB_THRESHOLD, READ_CHAR_HARD_LIMIT } from "./common.js";
 import { isPdfBinary } from "./pdf-utils.js";
 import { maybeRedirectWorktriesPath } from "../worktree-paths.js";
@@ -373,15 +374,25 @@ export function createReadTool(
           if (extractor === undefined) throw new TypeError("Read PDF worker is not bound");
           pdfContentOverride = normalizeLineEndings(await extractor(output.value));
         } else {
+          const mimeType = detectImageMimeType(output.value, resolvedPath);
+          let data = output.value;
+          if (mimeType !== undefined) {
+            try {
+              data = await normalizeReadImage(data, mimeType);
+            } catch (error) {
+              throw new ToolCallUnexpectedEnvironmentError(`Cannot read image file ${resolvedPath}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
           const blobStore = meta.stateHandler?.getBlobStore?.();
           if (blobStore !== undefined) {
-            blobBackedReturnedByteCount = output.value.byteLength;
-            const blobId = success.outputBlobId && success.outputBlobId.length > 0 ? success.outputBlobId : await getBlobId(output.value);
-            if (success.outputBlobId && success.outputBlobId.length > 0) await blobStore.setBlobLocallyOnly(context, blobId, output.value);
-            else await blobStore.setBlob(context, blobId, output.value);
+            blobBackedReturnedByteCount = data.byteLength;
+            const reuseBlobId = data === output.value && success.outputBlobId && success.outputBlobId.length > 0;
+            const blobId = reuseBlobId ? success.outputBlobId! : await getBlobId(data);
+            if (reuseBlobId) await blobStore.setBlobLocallyOnly(context, blobId, data);
+            else await blobStore.setBlob(context, blobId, data);
             return new ReadToolResult({ result: { case: "success", value: new ReadToolSuccess({ output: { case: "dataBlobId", value: blobId }, fileSize, path: resolvedPath }) } });
           }
-          return new ReadToolResult({ result: { case: "success", value: new ReadToolSuccess({ output: { case: "data", value: output.value }, fileSize, path: resolvedPath }) } });
+          return new ReadToolResult({ result: { case: "success", value: new ReadToolSuccess({ output: { case: "data", value: data }, fileSize, path: resolvedPath }) } });
         }
       }
       if (pdfContentOverride === undefined && output.case !== "content") {
