@@ -103,6 +103,8 @@ node scripts/summarize-local-performance.mjs <local-intercept.jsonl>
 
 排队、dispatch、TTFT、审批和首次可见回复复用现有事件的耗时；没有有效耗时的事件不写入。`delivery` 表示消息接受到首次可见回复，`turn` 使用本地单调时钟记录整个回合。审批按 pending、approved、denied、expired、dismissed 分组，等待中的快照与已结束等待分别汇总。
 
+host 工具的完成事件记为 `observed`；现有工具状态明确报告失败时记为 `failed`。完成事件本身不保证所有工具都成功，bridge 的结果与工具输出分别提供对应证据。
+
 记录在请求和阶段结束时产生，不逐 token 写入。诊断写入失败保持原请求和工具结果；执行与清理本身的失败仍按原路径报告。汇总程序对非法已知记录明确报错，错误信息仅包含输入序号和行号。当前记录格式为 schemaVersion 1。
 
 一万次连续写入并经历容量轮换的隔离测量中，当前 Node 22 容器 P50 为 0.010ms、P95 为 0.029ms、P99 为 0.098ms，最大值为 3.809ms。Mac Node 26 同批次 P95 为 0.156ms。该数据只覆盖诊断写入成本；当前保持同步写入，尚无证据支持增加异步队列与退出刷新状态。

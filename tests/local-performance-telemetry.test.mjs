@@ -92,7 +92,7 @@ test("ForwardingInteractionListener records only paired completed tools", async 
     await listener.sendUpdate({}, { message: { case: "toolCallCompleted", value: { callId: "failed", toolCall: failed } } });
     const ledger = await readFile(path.join(dataRoot, "local-intercept.jsonl"), "utf8");
     const rows = ledger.trim().split("\n").map(JSON.parse);
-    assert.deepEqual(rows.map(row => row.outcome), ["success", "failed"]);
+    assert.deepEqual(rows.map(row => row.outcome), ["observed", "failed"]);
     assert.doesNotMatch(ledger, /call-1|providerIdentifier|test|secret-error/);
   } finally {
     for (const [key, value] of Object.entries({ SAND_DATA_ROOT: previous.root, SAND_LOCAL_ADMIN: previous.admin, SAND_DISABLE_TELEMETRY: previous.disabled })) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
