@@ -264,9 +264,7 @@ export function createSystemPromptAssembly(deps: SystemPromptAssemblyDependencie
     add(getTimeZoneSection());
     add(getMemorySection()); add(getAutomationsSection()); add(getWorkflowsSection()); add(getChannelsSection()); add(getAgentDirectorySection());
     add(deps.mcpCustomInstructionsSection()); add(deps.mcpDiscoveryStatusSection()); add(deps.remoteBoxSection()); add(deps.computerSection());
-    // The profile is the only section that differs between agents, so it goes
-    // last: a new agent then reuses the provider's cached prefix for everything
-    // above it instead of re-reading the rest of the prompt.
+    // 将包含 agent 身份的 profile 放在末尾，使前面内容相同时能够复用 provider 的缓存前缀。
     add(profile);
     return sections.join("\n\n");
   }
