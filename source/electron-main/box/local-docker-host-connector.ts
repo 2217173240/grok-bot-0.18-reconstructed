@@ -202,7 +202,7 @@ export function localDockerRunPlan(options: {
     throw new Error("The local computer requires a Mac-side workspace directory to bind-mount at /workspace.");
   }
   const common = [
-    "run", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
+    "run", "--init", "--detach", "--name", LOCAL_DOCKER_BOX_CONTAINER,
     "--label", LOCAL_DOCKER_OWNER_LABEL, "--label", `com.grok-bot.local-vm.host-sha256=${options.hostSha256}`,
     "--label", `${LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL}=${options.boxExecDaemonSha256}`,
     "--label", `com.grok-bot.local-vm.inference-credential=${hasCredential ? "1" : "0"}`,
@@ -474,14 +474,15 @@ export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcess
   return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; hasPluginsMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean; inferenceConfigHash?: string }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; init: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; hasPluginsMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean; inferenceConfigHash?: string }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
-  if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, hasPluginsMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
+  if (!result.ok) return { exists: false, running: false, init: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, hasPluginsMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
-    const value = JSON.parse(result.output) as { State?: { Running?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> }; Mounts?: readonly { Destination?: unknown }[] };
+    const value = JSON.parse(result.output) as { State?: { Running?: unknown }; HostConfig?: { Init?: unknown }; Config?: { Image?: unknown; Labels?: Record<string, unknown> }; Mounts?: readonly { Destination?: unknown }[] };
     return {
       exists: true,
       running: value.State?.Running === true,
+      init: value.HostConfig?.Init === true,
       owned: value.Config?.Labels?.["com.grok-bot.local-vm"] === "1",
       image: typeof value.Config?.Image === "string" ? value.Config.Image : "",
       hostSha256: typeof value.Config?.Labels?.["com.grok-bot.local-vm.host-sha256"] === "string" ? value.Config.Labels["com.grok-bot.local-vm.host-sha256"] as string : "",
@@ -770,7 +771,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // directory it is still reading.
   const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
   const inferenceConfigDrifted = hostTurn && inspected.inferenceConfigHash !== localDockerInferenceConfigHash(process.env, hostTurn);
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inferenceConfigDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || !inspected.hasPluginsMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const drifted = inspected.exists && (!inspected.init || inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inferenceConfigDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || !inspected.hasPluginsMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);

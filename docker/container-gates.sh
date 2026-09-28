@@ -100,6 +100,12 @@ fi
 
 LOGS=$(docker logs "$NAME" 2>&1)
 
+if [ "$(docker inspect --format '{{.HostConfig.Init}}' "$NAME")" = "true" ]; then
+  pass "G1 Docker init enabled for orphan process reaping"
+else
+  fail "G1 Docker init is required for orphan process reaping"
+fi
+
 # G2 — the daemon the host spawned reached ready.
 if echo "$LOGS" | grep -q '"event":"box-exec-daemon-ready"'; then
   pass "G2 reconstructed exec-daemon ready (host-spawned)"

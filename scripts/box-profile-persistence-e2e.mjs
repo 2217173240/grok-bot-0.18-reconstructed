@@ -35,7 +35,7 @@ if (process.argv[2] === "inside") {
   const workspace = `${name}-workspace`;
   const docker = (...args) => run("docker", args, { timeout: 90_000, maxBuffer: 1_000_000 });
   const start = async () => {
-    await docker("run", "--detach", "--name", name, "--memory", "3g", "--security-opt", "seccomp=unconfined", "--entrypoint", "/usr/local/bin/box-init-exec",
+    await docker("run", "--init", "--detach", "--name", name, "--memory", "3g", "--security-opt", "seccomp=unconfined", "--entrypoint", "/usr/local/bin/box-init-exec",
       "--volume", `${data}:/home/box/sand-data`, "--volume", `${workspace}:/workspace`,
       "--mount", `type=bind,src=${path.resolve(import.meta.filename)},dst=/home/box/profile-persistence-test.mjs,readonly`,
       image, "-e", "setInterval(() => {}, 1000)");
@@ -44,7 +44,7 @@ if (process.argv[2] === "inside") {
   };
   const browser = () => docker("exec", "--env", "DISPLAY=:1", name, "box-chrome");
   try {
-    await docker("run", "--rm", "--user", "root", "--entrypoint", "sh", "--volume", `${data}:/home/box/sand-data`, "--volume", `${workspace}:/workspace`, image, "-c", "chown -R box:box /home/box/sand-data /workspace");
+    await docker("run", "--init", "--rm", "--user", "root", "--entrypoint", "sh", "--volume", `${data}:/home/box/sand-data`, "--volume", `${workspace}:/workspace`, image, "-c", "chown -R box:box /home/box/sand-data /workspace");
     await start();
     await browser();
     await docker("exec", name, "node", "/home/box/profile-persistence-test.mjs", "inside", "write");

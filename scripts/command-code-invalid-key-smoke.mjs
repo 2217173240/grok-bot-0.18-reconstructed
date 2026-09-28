@@ -40,7 +40,7 @@ if (process.argv.includes("--inside-container")) {
     await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts")], outfile, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
     const insideBundle = `/repo/${path.relative(root, outfile)}`;
     const { stdout, stderr } = await promisify(execFile)("docker", [
-      "run", "--rm", "--network", "bridge", "--read-only",
+      "run", "--init", "--rm", "--network", "bridge", "--read-only",
       "--mount", `type=bind,src=${root},dst=/repo,readonly`,
       "-e", "COMMAND_CODE_API_KEY=grokbot-invalid-key-probe",
       "-e", "SAND_DATA_ROOT=/repo/.cache/command-code-isolated-data",
