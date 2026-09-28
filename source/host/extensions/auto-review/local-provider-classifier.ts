@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { Context } from "../../../packages/context/core.js";
 import { SmartModeClassifierArgs, SmartModeClassifierDecision, SmartModeClassifierResult, SmartModeClassifierSuccess } from "../../../packages/proto/generated/agent/v1/smart_mode_classifier_exec_pb.js";
-import type { TextOnlyInferenceOwner } from "../inference/text-only-completion.js";
+import { TextOnlyInferenceResponseError, type TextOnlyInferenceOwner } from "../inference/text-only-completion.js";
+import { SmartModeClassifierFailure } from "../../../packages/agent/utils/smart-mode-classifier-error-metadata.js";
+import type { SmartModeClassifierExecutor } from "../../../packages/agent-exec/smart-mode-classifier.js";
 
 export const LOCAL_AUTO_REVIEW_INSTRUCTIONS = [
   "You review one proposed action for a local desktop assistant. You have no tools and must not perform the action.",
@@ -26,15 +28,24 @@ export function parseLocalAutoReviewDecision(text: string): SmartModeClassifierR
   }) } });
 }
 
-export function createLocalProviderSmartModeClassifierExecutor(inference: TextOnlyInferenceOwner) {
+export function createLocalProviderSmartModeClassifierExecutor(inference: TextOnlyInferenceOwner): SmartModeClassifierExecutor {
   return {
+    // 本地 Router 使用用户选择的模型，分类请求保留一次有界执行机会。
+    executionPolicy: { timeoutMs: 120_000, maxAttempts: 1 },
     async execute(context: Context, args: SmartModeClassifierArgs): Promise<SmartModeClassifierResult> {
       context.signal.throwIfAborted();
       if (args.target === undefined || args.target.action.trim().length === 0 || args.target.arguments === undefined) throw new Error("Auto-review requires an action and its arguments.");
       const input = JSON.stringify({ target: args.target.toJson(), conversationContext: args.conversationContext.map(message => message.toJson()) });
-      const completion = await inference.completeTextOnly(context, LOCAL_AUTO_REVIEW_INSTRUCTIONS, input);
+      let completion: string;
+      try {
+        completion = await inference.completeTextOnly(context, LOCAL_AUTO_REVIEW_INSTRUCTIONS, input);
+      } catch (error) {
+        if (context.signal.aborted) throw new SmartModeClassifierFailure("cancelled");
+        throw new SmartModeClassifierFailure(error instanceof TextOnlyInferenceResponseError ? "invalid_response" : "provider_failure");
+      }
       context.signal.throwIfAborted();
-      return parseLocalAutoReviewDecision(completion);
+      try { return parseLocalAutoReviewDecision(completion); }
+      catch { throw new SmartModeClassifierFailure("invalid_response"); }
     },
   };
 }

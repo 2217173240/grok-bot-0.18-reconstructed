@@ -21,6 +21,7 @@ import { tryExtractSmartModeClassifierConversationContext } from "../../smart-mo
 import type { ConversationStateHandle } from "../../state.js";
 import { AgentConversationTurnHandle } from "../../state.js";
 import { executeSmartModeClassifierWithMeasurement } from "../../utils/smart-mode-classifier-measurement.js";
+import { smartModeClassifierFailureReason } from "../../utils/smart-mode-classifier-error-metadata.js";
 import { delayDevSmartModeClassifierIfRequested, type OneShotState } from "../dev-smart-mode-classifier-block.js";
 import { withToolExecutionTimeoutSuspended } from "../tool-timeout-suspension.js";
 import {
@@ -380,7 +381,7 @@ async function runSmartModeMcpPreflight(
     if (error instanceof Error && error.message === "Auto-review MCP approval store is not configured") throw error;
     if (error instanceof ToolCallRejectedError || error instanceof ToolCallAbortedError) throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ToolCallRejectedError(SMART_MODE_MCP_CLASSIFIER_ERROR_REASON);
+    throw new ToolCallRejectedError(smartModeClassifierFailureReason(error, SMART_MODE_MCP_CLASSIFIER_ERROR_REASON));
   }
 }
 

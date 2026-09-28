@@ -4,7 +4,11 @@ import { createResource, type ControlledExecManager } from "./resource-provider.
 import { createClientDeserializer, createClientSerializer, createServerDeserializer, createServerSerializer } from "./serialization.js";
 import type { SmartModeClassifierArgs, SmartModeClassifierResult } from "../proto/generated/agent/v1/smart_mode_classifier_exec_pb.js";
 
-export const smartModeClassifierExecutorResource = createResource<Executor<SmartModeClassifierArgs, SmartModeClassifierResult>, RemoteExecManager, ControlledExecManager>(
+export interface SmartModeClassifierExecutor extends Executor<SmartModeClassifierArgs, SmartModeClassifierResult> {
+  readonly executionPolicy?: { readonly timeoutMs: number; readonly maxAttempts: number };
+}
+
+export const smartModeClassifierExecutorResource = createResource<SmartModeClassifierExecutor, RemoteExecManager, ControlledExecManager>(
   (execManager) => new ExecutorResource(execManager, createServerSerializer("smartModeClassifierArgs"), createClientDeserializer("smartModeClassifierResult")),
   (implementation, controlledExecManager) => controlledExecManager.register(new SimpleControlledExecHandler(implementation, createServerDeserializer("smartModeClassifierArgs"), createClientSerializer("smartModeClassifierResult"))),
 );

@@ -26,6 +26,20 @@ test("严格分类 JSON 只接受 ALLOW 或完整 BLOCK", () => {
   }
 });
 
+test("分类上下文沿用消息限制并约束 Computer 历史总量", () => {
+  const messages = [
+    ...Array.from({ length: 10 }, (_, index) => ({ role: "user", content: `user-${index}:` + "u".repeat(5000) })),
+    ...Array.from({ length: 10 }, (_, index) => ({ role: "assistant", content: `assistant-${index}:` + "a".repeat(5000) })),
+    ...Array.from({ length: 100 }, (_, index) => ({ role: "computer", content: `computer-${index}:` + "c".repeat(5000) })),
+  ];
+  const bounded = runtime.truncateSandAutoReviewClassifierContext(messages);
+  assert.ok(bounded.reduce((sum, message) => sum + message.content.length, 0) <= 32_000);
+  assert.ok(bounded.every(message => message.content.length <= 4000));
+  assert.equal(bounded.filter(message => message.role === "user").length, 2);
+  assert.ok(bounded.some(message => message.content.startsWith("user-9:")));
+  assert.ok(bounded.some(message => message.content.startsWith("computer-99:")));
+});
+
 test("Computer enforce 拒绝 screenshot 后追加需要审核的动作", () => {
   const parameters = runtime.buildComputerParameters({ mode: "enforce" });
   for (const action of [{ action: "type", text: "send" }, { action: "key", key: "ENTER" }, { action: "click", x: 1, y: 1 }, { action: "drag", x: 1, y: 1, x2: 2, y2: 2 }]) {
@@ -182,18 +196,28 @@ test("真实 HTTP 与 AI SDK 分类：规则传输、无工具请求、错误及
   let toolCall = false;
   let hold = false;
   let accepted;
+  let closed;
+  let responseDelayMs = 0;
   const requests = [];
   const server = createServer(async (request, response) => {
     let raw = "";
     for await (const chunk of request) raw += chunk;
     requests.push(JSON.parse(raw));
     accepted?.();
+    response.once("close", () => closed?.());
     if (status !== 200) { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify({ error: { message: "protocol service unavailable" } })); return; }
     response.writeHead(200, { "content-type": "text/event-stream" });
     const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ id: "protocol-classifier", object: "chat.completion.chunk", created: 1, model: "protocol-model", choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-    if (toolCall) send({ tool_calls: [{ index: 0, id: "unexpected-call", type: "function", function: { name: "unexpected", arguments: "{}" } }] });
-    else send({ content: completion });
-    if (!hold) { send({}, toolCall ? "tool_calls" : "stop"); response.end("data: [DONE]\n\n"); }
+    const finish = () => {
+      if (toolCall) send({ tool_calls: [{ index: 0, id: "unexpected-call", type: "function", function: { name: "unexpected", arguments: "{}" } }] });
+      else send({ content: completion });
+      if (!hold) { send({}, toolCall ? "tool_calls" : "stop"); response.end("data: [DONE]\n\n"); }
+    };
+    if (responseDelayMs === 0) finish();
+    else {
+      const timer = setTimeout(finish, responseDelayMs);
+      response.once("close", () => clearTimeout(timer));
+    }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const model = createOpenAI({ apiKey: "protocol-test", baseURL: `http://127.0.0.1:${server.address().port}/v1`, compatibility: "compatible" }).chat("protocol-model");
@@ -214,25 +238,49 @@ test("真实 HTTP 与 AI SDK 分类：规则传输、无工具请求、错误及
     assert.equal(input.conversationContext[0].content, conversation[0].content);
     completion = '{"decision":"BLOCK","blockReason":"User rule blocks this read"}';
     assert.equal((await run(runtime.createContext())).kind, "block");
+    const beforeSlow = requests.length;
+    responseDelayMs = 10_100;
+    assert.equal((await run(runtime.createContext())).kind, "block");
+    assert.equal(requests.length - beforeSlow, 1);
+    responseDelayMs = 0;
     for (const invalid of ['{"decision":"UNKNOWN"}', '{"decision":"BLOCK"}', 'not JSON', 'x'.repeat(16_385), '']) {
       completion = invalid;
-      assert.equal((await run(runtime.createContext())).kind, "reject");
+      const decision = await run(runtime.createContext());
+      assert.equal(decision.kind, "reject");
+      assert.match(decision.reason, /invalid classification response/);
     }
     status = 503;
-    assert.equal((await run(runtime.createContext())).kind, "reject");
+    const failed = await run(runtime.createContext());
+    assert.equal(failed.kind, "reject");
+    assert.match(failed.reason, /configured provider/);
     status = 200;
     toolCall = true;
     assert.equal((await run(runtime.createContext())).kind, "reject");
     toolCall = false;
     completion = "{";
     hold = true;
+    const beforeTimeout = requests.length;
+    const disconnected = new Promise(resolve => { closed = resolve; });
+    const bounded = { ...classifier, executionPolicy: { timeoutMs: 1000, maxAttempts: 1 } };
+    await assert.rejects(runtime.executeSmartModeClassifierWithMeasurement(runtime.createContext(), bounded, new runtime.SmartModeClassifierArgs({ target, conversationContext: conversation }), "enforce", undefined, { maxAttempts: 4 }), error => {
+      assert.equal(error.kind, "timeout");
+      assert.match(error.message, /timed out after 1s.*not executed/);
+      return true;
+    });
+    await disconnected;
+    assert.equal(requests.length - beforeTimeout, 1);
+    closed = undefined;
     const [ctx, cancel] = runtime.createContext().withCancel();
     const received = new Promise(resolve => { accepted = resolve; });
-    const pending = classifier.execute(ctx, new runtime.SmartModeClassifierArgs({ target, conversationContext: conversation }));
+    const pending = runtime.executeSmartModeClassifierWithMeasurement(ctx, classifier, new runtime.SmartModeClassifierArgs({ target, conversationContext: conversation }));
     void pending.catch(() => {});
     await received;
     cancel(new Error("cancel classifier"));
-    await assert.rejects(pending, /cancel|abort/i);
+    await assert.rejects(pending, error => {
+      assert.equal(error.name, "AbortError");
+      assert.equal(error.kind, "cancelled");
+      return true;
+    });
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

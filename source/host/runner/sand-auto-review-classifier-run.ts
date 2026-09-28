@@ -4,6 +4,7 @@ import type { RemoteExecManager } from "../../packages/agent-exec/remote.js";
 import type { ResourceAccessor } from "../../packages/agent-exec/resource-provider.js";
 import { getConversationId } from "../../packages/agent/utils/request-id.js";
 import { executeSmartModeClassifierWithMeasurement } from "../../packages/agent/utils/smart-mode-classifier-measurement.js";
+import { smartModeClassifierFailureReason } from "../../packages/agent/utils/smart-mode-classifier-error-metadata.js";
 import {
   SmartModeClassifierArgs,
   SmartModeClassifierDecision,
@@ -65,6 +66,6 @@ export async function runSandAutoReviewClassifier(args: {
       : { kind: "reject", reason: args.errorReason };
   } catch (error: unknown) {
     if (error instanceof Error && error.name === "AbortError") throw error;
-    return { kind: "reject", reason: args.errorReason };
+    return { kind: "reject", reason: smartModeClassifierFailureReason(error, args.errorReason) };
   }
 }
