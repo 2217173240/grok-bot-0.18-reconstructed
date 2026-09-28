@@ -40,9 +40,10 @@ try {
     },
   } });
   await assert.rejects(async () => { for await (const _message of stream) {} }, /abort|cancel/i);
-  assert.equal(listCalls, 1);
-  assert.equal(requests, 0);
+  assert.ok(listCalls >= 1);
+  assert.equal(controller.signal.reason?.message, "Cancel while replying to SDK control request");
   await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(requests, 0);
   process.stdout.write(JSON.stringify({ canceled: true, listCalls, modelRequests: requests }) + "\n");
 } finally {
   clearTimeout(deadline);

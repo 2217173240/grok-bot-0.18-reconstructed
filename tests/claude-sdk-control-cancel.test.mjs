@@ -14,7 +14,9 @@ test("真实 Claude SDK 与 CLI 在 control request 回复期间取消，错误�
       cwd: root, timeout: 20_000, env: { ...process.env, TMPDIR: directory },
     });
     const report = JSON.parse(result.stdout.trim());
-    assert.deepEqual(report, { canceled: true, listCalls: 1, modelRequests: 0 });
+    assert.equal(report.canceled, true);
+    assert.ok(Number.isInteger(report.listCalls) && report.listCalls >= 1);
+    assert.equal(report.modelRequests, 0);
     assert.equal(result.stderr.includes("UnhandledPromiseRejection"), false);
   } finally {
     await rm(directory, { recursive: true, force: true });

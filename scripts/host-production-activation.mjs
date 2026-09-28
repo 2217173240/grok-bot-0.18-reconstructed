@@ -330,7 +330,7 @@ async function assembleExternalReadProductionEvidence(sourceOnly = false) {
     },
     pdfTextExtraction: {
       status: "supported",
-      daemonRead: await sourceNeedleAnchor("source/box-exec-daemon/server.ts", "if (isPdfBinary(data, args.path)) {"),
+      daemonRead: await sourceNeedleAnchor("source/box-exec-daemon/server.ts", "if (isPdfBinary(data, args.path) || detectImageMimeType(data, args.path) !== undefined) {"),
       boxRead: await sourceNeedleAnchor("source/host/host-runner-composition.ts", "pdfTextExtractor: extractPdfText,"),
       extractor: await sourceNeedleAnchor("source/host/runner/pdf-text-extractor.ts", "export async function extractPdfText(bytes: Uint8Array): Promise<string> {"),
       package: {
@@ -563,6 +563,7 @@ export async function buildProductionHostIfSupplied({ outputRoot, manifestPath =
   const external = [...new Set([
     ...validated.bindings.filter(binding => !localSourceClassifications.has(binding.classification)).map(binding => binding.resolvedModule),
     "pdfjs-dist/legacy/build/pdf.mjs",
+    "sharp",
   ])];
   const result = await esbuild({
     absWorkingDir: repoRoot,
