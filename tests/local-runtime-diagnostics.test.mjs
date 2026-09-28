@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,6 +28,39 @@ function launch(command, environment) {
 
 test("launcher shell 语法有效", async () => {
   await execute("bash", ["-n", path.join(root, "start-local.sh")]);
+});
+
+test("真实 HTTP 健康检查仅接受 2xx，并且不跟随重定向", async () => {
+  const healthRoot = await mkdtemp(path.join(directory, "health-"));
+  const token = randomUUID();
+  await writeFile(path.join(healthRoot, "local-docker-vm.json"), JSON.stringify({ token }), { mode: 0o600 });
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push({ path: request.url, authorized: request.headers.authorization === `Bearer ${token}` });
+    const status = Number(request.url.slice(1));
+    if (status === 302) response.setHeader("location", "/200");
+    response.writeHead(status);
+    response.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    for (const status of [200, 204, 302, 401, 500]) {
+      let code = 0, output = "";
+      try {
+        const result = await execute("bash", ["-c", 'source "$1"; health_ok "$2"', "health-test", path.join(root, "start-local.sh"), `http://127.0.0.1:${server.address().port}/${status}`], { env: { ...env, GROKBOT_DATA_ROOT: healthRoot } });
+        output = result.stdout + result.stderr;
+      } catch (error) {
+        code = error.code;
+        output = error.stdout + error.stderr;
+      }
+      assert.equal(code, status < 300 ? 0 : 1);
+      assert.equal(output.length, 0);
+    }
+    assert.deepEqual(requests.map(request => request.path), ["/200", "/204", "/302", "/401", "/500"]);
+    assert.equal(requests.every(request => request.authorized), true);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
 });
 
 test("真实 Docker CLI 对不可达 socket 返回明确状态", { timeout: 10_000 }, async () => {

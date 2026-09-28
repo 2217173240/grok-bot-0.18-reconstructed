@@ -58,11 +58,12 @@ PY
 . "$REPO/scripts/lib/docker-socket.sh"
 
 health_ok() {
-  local token
+  local token status
   token="$(gateway_token)"
   [ -n "$token" ] || return 1
-  curl -s -o /dev/null --max-time 2 -H "authorization: Bearer $token" \
-    "$GATEWAY_HEALTH_URL" 2>/dev/null || return 1
+  status="$(curl --fail -s -o /dev/null --write-out '%{http_code}' --max-time 2 -H "authorization: Bearer $token" \
+    "${1:-$GATEWAY_HEALTH_URL}" 2>/dev/null)" || return 1
+  case "$status" in 2??) return 0 ;; *) return 1 ;; esac
 }
 
 seed_settings() {
@@ -257,8 +258,8 @@ do_start() {
     waited=$((waited + 1))
   done
   say "gateway did not become healthy within ${READY_TIMEOUT_S}s; host log tail:"
-  tail -30 "$DATA_ROOT/box-logs/sand-host.log" 2>/dev/null || \
-    say "(no host log — the host may never have spawned; see $APP_LOG)"
+  docker logs --tail 30 grok-bot-local-vm 2>&1 || \
+    say "(container host logs unavailable; see $APP_LOG)"
   exit 1
 }
 
@@ -398,6 +399,7 @@ validate_turn_mode() {
   [ "${GROKBOT_BOX:-docker}" = "docker" ] || die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker)"
 }
 
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 case "${1:-start}" in
   start)   validate_turn_mode; do_start ;;
   stop)    do_stop ;;
@@ -406,3 +408,4 @@ case "${1:-start}" in
   logs)    do_logs ;;
   *)       die "usage: $0 [start|stop|status|restart|logs]" ;;
 esac
+fi
