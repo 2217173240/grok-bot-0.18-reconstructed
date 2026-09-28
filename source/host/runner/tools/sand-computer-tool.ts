@@ -52,7 +52,7 @@ const actionCoreShape = {
   x: z.number().int().optional(), y: z.number().int().optional(),
   x2: z.number().int().optional(), y2: z.number().int().optional(),
   path: z.array(z.object({ x: z.number().int(), y: z.number().int() })).optional(),
-  text: z.string().optional(), key: z.string().optional(),
+  text: z.string().optional(), key: z.string().optional().describe('Linux X11 key or combination, for example "Return", "ctrl+a", "Alt+F2", or "super+Tab". Use Linux modifier names: ctrl, alt, shift, super, meta.'),
   button: z.enum(["left", "right", "middle"]).optional(),
   count: z.number().int().min(1).max(3).optional(),
   direction: z.enum(["up", "down", "left", "right"]).optional(),
