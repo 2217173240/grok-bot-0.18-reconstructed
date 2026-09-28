@@ -795,14 +795,22 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
 
 export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const tools = toToolSet(definitions);
+  const requestController = new AbortController();
+  const requestSignal = signal === undefined ? requestController.signal : AbortSignal.any([signal, requestController.signal]);
   const measured = createProviderPerformance(provider, invocationId, instructions !== undefined ? "text-only" : tools !== undefined ? "hosted" : "unhosted", signal);
   measured.mark("dispatchMs");
-  const result = streamText({ model, system: instructions ?? GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
+  const result = streamText({ model, system: instructions ?? GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, abortSignal: requestSignal });
   const streamFailure = Promise.withResolvers<never>();
   void streamFailure.promise.catch(() => {});
   const fullStream = (async function* () {
+    const reader = result.fullStream.getReader();
+    let complete = false;
+    let streamError: unknown;
     try {
-      for await (const chunk of result.fullStream) {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) { complete = true; break; }
+        const chunk = next.value;
         if (chunk.type === "error") throw chunk.error;
         if (chunk.type === "finish") {
           const cached = chunk.providerMetadata?.openai?.cachedPromptTokens;
@@ -811,9 +819,30 @@ export function chatCompletionsExecutor(provider: RoutedProvider, model: Languag
         yield chunk;
       }
     } catch (error) {
+      streamError = error;
       const failure = providerApiError(provider, error);
       streamFailure.reject(failure);
       throw failure;
+    } finally {
+      const cleanupStarted = performance.now();
+      try {
+        if (!complete) {
+          // AI SDK 的 iterable 没有 return；取消请求并关闭我们持有的 reader。
+          requestController.abort();
+          streamFailure.reject(requestSignal.reason);
+          try { await reader.cancel(); }
+          catch (error) {
+            if (error !== streamError && error !== requestSignal.reason) {
+              measured.cleanupFailed();
+              if (streamError !== undefined) throw new AggregateError([streamError, error], "Provider stream failed while closing.", { cause: streamError });
+              throw error;
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+        measured.timing("cleanupMs", cleanupStarted);
+      }
     }
   })();
   const response = Promise.race([result.response, streamFailure.promise]);

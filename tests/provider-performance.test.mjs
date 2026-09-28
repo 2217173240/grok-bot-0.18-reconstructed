@@ -27,6 +27,12 @@ const hash = id => createHash("sha256").update(id).digest("hex").slice(0, 16);
 const records = async id => (await readFile(path.join(directory, "local-intercept.jsonl"), "utf8")).trim().split("\n").map(JSON.parse).filter(row => row.kind === "local-performance" && row.correlationHash === hash(id));
 const listen = server => new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(`http://127.0.0.1:${server.address().port}`)));
 const consume = async stream => { for await (const _chunk of stream) {} };
+async function closedBeforeServerCleanup(closed, label) {
+  let timeout;
+  try {
+    await Promise.race([closed, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`${label} remained open before server cleanup`)), 1500); })]);
+  } finally { clearTimeout(timeout); }
+}
 
 test("未消费的测量流不订阅取消信号", () => {
   const controller = new AbortController();
@@ -38,7 +44,11 @@ test("未消费的测量流不订阅取消信号", () => {
 test("真实 chat-completions HTTP 流按请求记录成功、失败、取消和缺失值", { timeout: 20000 }, async () => {
   for (const provider of ["openrouter", "command-code"]) for (const scenario of ["success", "missing-usage", "empty", "tool-only", "failed", "cancel", "return"]) {
     const id = `${provider}-${scenario}`;
+    const responseClosed = Promise.withResolvers();
+    const socketClosed = Promise.withResolvers();
     const server = createServer(async (req, res) => {
+      res.once("close", responseClosed.resolve);
+      req.socket.once("close", socketClosed.resolve);
       for await (const _chunk of req) {}
       if (scenario === "failed") { res.writeHead(400); res.end(JSON.stringify({ error: { message: "private-error-sentinel", type: "invalid_request_error" } })); return; }
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -61,6 +71,9 @@ test("真实 chat-completions HTTP 流按请求记录成功、失败、取消和
         while ((await iterator.next()).value?.type !== "text-delta") {}
         if (scenario === "cancel") { controller.abort(); await assert.rejects(consume(iterator)); }
         else await iterator.return();
+        await closedBeforeServerCleanup(responseClosed.promise, `${id} response`);
+        await closedBeforeServerCleanup(socketClosed.promise, `${id} socket`);
+        await closedBeforeServerCleanup(Promise.allSettled([result.response, result.usage, result.extendedUsage, result.providerMetadata]), `${id} result promises`);
       } else if (scenario === "failed") await assert.rejects(consume(result.fullStream));
       else await consume(result.fullStream);
       const rows = await records(id);
@@ -123,7 +136,11 @@ test("consumer.return 的真实文件清理错误记录 failed，日志错误保
 test("真实 Codex HTTP transport 的稀疏 usage 与请求测量", { timeout: 10000 }, async () => {
   for (const scenario of ["success", "missing", "failed", "cancel", "return"]) {
     const id = `codex-${scenario}`;
+    const responseClosed = Promise.withResolvers();
+    const socketClosed = Promise.withResolvers();
     const server = createServer(async (req, res) => {
+      res.once("close", responseClosed.resolve);
+      req.socket.once("close", socketClosed.resolve);
       for await (const _chunk of req) {}
       if (scenario === "failed") { res.writeHead(400); res.end("private-error-sentinel"); return; }
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -143,6 +160,10 @@ test("真实 Codex HTTP transport 的稀疏 usage 与请求测量", { timeout: 1
       else if (scenario === "cancel") { await iterator.next(); controller.abort(); await assert.rejects(consume(iterator)); }
       else if (scenario === "failed") await assert.rejects(consume(iterator));
       else await consume(iterator);
+      if (["return", "cancel"].includes(scenario)) {
+        await closedBeforeServerCleanup(responseClosed.promise, `${id} response`);
+        await closedBeforeServerCleanup(socketClosed.promise, `${id} socket`);
+      }
       const [row] = await records(id);
       assert.equal(row.outcome, ["return", "cancel"].includes(scenario) ? "cancelled" : scenario === "failed" ? "failed" : "success");
       assert.equal(row.inputTokens, scenario === "success" ? 10 : undefined);
