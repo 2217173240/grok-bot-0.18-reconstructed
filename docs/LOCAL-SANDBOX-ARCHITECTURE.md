@@ -92,6 +92,8 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 
 ## 本地性能测量
 
+启动脚本的 `SAND_DISABLE_TELEMETRY` 与 `SAND_DISABLE_SENTRY` 通过容器环境白名单传入 host，并计入配置身份；已有容器缺少这些值时更新容器，继续使用原数据卷。
+
 local admin 且 `SAND_DISABLE_TELEMETRY=1` 时，性能数据写入现有数据目录的 `local-intercept.jsonl`。记录使用固定阶段、provider、结果分类、毫秒耗时和 token 计数；关联标识保存为截短 SHA-256。性能字段不包含提示词、回复、工具名称、参数、模型地址或凭据。文件权限为 `0600`，沿用诊断文件的容量轮换规则，因此汇总反映文件中保留的样本。
 
 开发环境使用以下命令汇总指定文件；容器中的文件应复制到本地私有目录后读取，不提交到仓库：
