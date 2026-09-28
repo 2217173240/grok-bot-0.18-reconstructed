@@ -10,3 +10,16 @@ export { runSandAutoReviewClassifier } from "../../source/host/runner/sand-auto-
 export { SandSettingsStore } from "../../source/shared/node/settings/sand-settings-store.js";
 export { resolveSandAutoReviewModes } from "../../source/host/runner/sand-auto-review.js";
 export { filterTurnToolsForLocalMode } from "../../source/host/runner/tools/turn-toolset.js";
+export { createShellTool } from "../../source/packages/agent/tools/core/shell/create-shell-tool.js";
+export { shellStreamExecutorResource } from "../../source/packages/agent-exec/shell-stream.js";
+export { startBoxExecDaemon } from "../../source/box-exec-daemon/server.js";
+export { ExecService } from "../../source/packages/proto/generated/agent/v1/exec_service_connect.js";
+export { ExecServerMessage } from "../../source/packages/proto/generated/agent/v1/exec_pb.js";
+export { InteractionHandler } from "../../source/packages/agent/interaction-handler.js";
+export { SandAutoReviewController } from "../../source/host/runner/sand-auto-review.js";
+export { createSandShellApprovalProvider } from "../../source/host/runner/sand-auto-review-tool-escalations.js";
+export { buildComputerParameters, createComputerTool } from "../../source/host/runner/tools/sand-computer-tool.js";
+export { createAutoReviewGate } from "../../source/host/runner/auto-review-gate.js";
+export { SAND_AUTO_REVIEW_MODES_ENFORCE } from "../../source/host/runner/sand-auto-review.js";
+export { createHostComputerToolDependencies } from "../../source/host/runner/host-computer-tool-dependencies.js";
+export { computerUseExecutorResource } from "../../source/packages/agent-exec/computer-use.js";

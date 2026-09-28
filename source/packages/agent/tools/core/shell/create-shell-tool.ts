@@ -612,9 +612,8 @@ export function createShellTool(resourceAccessor: ShellToolResourceAccessor, opt
     let approvedShellBinding: { readonly executionStateIdentity?: string; readonly targetEnrichmentHash?: string } | undefined;
     let smartModeApprovalProviderApproved = false;
     if (smartModeDecision.kind === "block") {
-      const approvalRequested = rawArgs.request_smart_mode_approval === true;
       const approvalProvider = options.smartModeApprovalProvider;
-      if (!approvalRequested || approvalProvider === undefined) {
+      if (approvalProvider === undefined) {
         throw new ShellToolRejectedError(command, workingDirectory, smartModeDecision.reason);
       }
       const approvalStateIdentity = options.smartModeShellApprovalState?.getIdentity();
