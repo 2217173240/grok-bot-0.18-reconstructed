@@ -15,6 +15,8 @@ const { localDockerRunPlan, localDockerInferenceEnvironment, localDockerInferenc
 after(() => rm(directory, { recursive: true, force: true }));
 
 const inferenceEnv = {
+  SAND_DISABLE_TELEMETRY: "1",
+  SAND_DISABLE_SENTRY: "1",
   ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
   SAND_CLAUDE_MODEL: "glm-5.3-flash",
   ANTHROPIC_MODEL: "glm-5.3-flash",
@@ -65,6 +67,8 @@ test("真实 Docker 重建后模型映射与配置标识同步更新", { skip: p
     const first = await inspect();
     assert.equal(first.Labels[LOCAL_DOCKER_INFERENCE_CONFIG_LABEL], localDockerInferenceConfigHash(inferenceEnv, true));
     for (const expected of localDockerInferenceEnvironment(inferenceEnv)) assert.ok(first.Env.includes(expected));
+    const runtime = JSON.parse(await docker(["exec", name, "node", "-e", 'console.log(JSON.stringify({telemetry:process.env.SAND_DISABLE_TELEMETRY,sentry:process.env.SAND_DISABLE_SENTRY}))']));
+    assert.deepEqual(runtime, { telemetry: "1", sentry: "1" });
     const changed = { ...inferenceEnv, ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.2" };
     assert.notEqual(first.Labels[LOCAL_DOCKER_INFERENCE_CONFIG_LABEL], localDockerInferenceConfigHash(changed, true));
     await docker(["rm", "--force", name]);
