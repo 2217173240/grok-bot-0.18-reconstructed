@@ -303,8 +303,8 @@ do_stop() {
 }
 
 do_status() {
-  local pid hpid token
-  pid="$(app_pid)"; hpid="$(host_pid)"
+  local pid hpid container_state mcp_config
+  pid="$(app_pid)"
   say "data root:   $DATA_ROOT"
   say "box mode:    $(cat "$DATA_ROOT/box-mode" 2>/dev/null || echo docker) (GROKBOT_BOX=docker to switch)"
   # 盒内回合要求自建镜像，状态信息给出对应的构建入口。
@@ -325,21 +325,43 @@ do_status() {
   if [ -n "$pid" ]; then say "app:         running (pid $pid)"; else say "app:         not running"; fi
   if ! resolve_docker_host 2>/dev/null || ! docker info >/dev/null 2>&1; then
     say "computer:    docker unreachable — cannot inspect the container ($(docker_unreachable_hint))"
-  elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^grok-bot-local-vm$'; then
-    if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
-      say "computer:    desktop plane (box-init-exec, opt-in)"
-      if [ -f "$DATA_ROOT/box-workspace/.grokbot/novnc-url" ]; then
-        say "handover:    $(cat "$DATA_ROOT/box-workspace/.grokbot/novnc-url")"
+    say "host:        unknown (Docker unreachable)"
+    say "box-exec:    unknown (Docker unreachable)"
+  else
+    container_state="$(docker inspect --format '{{.State.Status}}' grok-bot-local-vm 2>/dev/null || true)"
+    if [ "$container_state" = "running" ]; then
+      if [ "$(docker inspect --format '{{index .Config.Labels "com.grok-bot.local-vm.desktop"}}' grok-bot-local-vm 2>/dev/null)" = "1" ]; then
+        say "computer:    desktop plane (box-init-exec, opt-in)"
+        if [ -f "$DATA_ROOT/box-workspace/.grokbot/novnc-url" ]; then
+          say "handover:    $(cat "$DATA_ROOT/box-workspace/.grokbot/novnc-url")"
+        fi
+      else
+        say "computer:    exec plane (headless)"
+      fi
+      hpid="$(docker exec grok-bot-local-vm pgrep -f '[s]and-host/host-main[.]cjs' 2>/dev/null | head -1 || true)"
+      if [ -n "$hpid" ]; then say "host:        running in container (pid $hpid)"; else say "host:        not running in container"; fi
+      if docker exec grok-bot-local-vm node -e '
+        const token = process.env.SAND_BOX_EXEC_DAEMON_AUTH_TOKEN || process.env.SAND_GATEWAY_TOKEN;
+        if (!token) process.exit(1);
+        fetch("http://127.0.0.1:1337/agent.v1.ControlService/Ping", {
+          method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: "{}", signal: AbortSignal.timeout(2000),
+        }).then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1));
+      ' >/dev/null 2>&1; then
+        say "box-exec:    healthy (container port 1337)"
+      else
+        say "box-exec:    not responding (container port 1337)"
       fi
     else
-      say "computer:    exec plane (headless)"
+      say "computer:    container not running (${container_state:-not found})"
+      say "host:        not running (container ${container_state:-not found})"
+      say "box-exec:    not running (container ${container_state:-not found})"
     fi
   fi
-  if [ -n "$hpid" ]; then say "host:        running (pid $hpid)"; else say "host:        not running"; fi
   if pgrep -f "dist/local-exec-daemon/main\.cjs" >/dev/null 2>&1; then
-    say "exec-daemon: running (pid $(pgrep -f "dist/local-exec-daemon/main\.cjs" | head -1))"
+    say "Mac local-exec: running (pid $(pgrep -f "dist/local-exec-daemon/main\.cjs" | head -1))"
   else
-    say "exec-daemon: not running"
+    say "Mac local-exec: not running"
   fi
   if health_ok; then say "gateway:     healthy"; else say "gateway:     down"; fi
   if [ -f "$DATA_ROOT/local-intercept.jsonl" ]; then
@@ -349,8 +371,25 @@ do_status() {
 }
 
 do_logs() {
-  say "tailing $DATA_ROOT/app.log and box-logs/sand-host.log (Ctrl-C to stop)"
-  tail -n 40 -F "$APP_LOG" "$DATA_ROOT/box-logs/sand-host.log" 2>/dev/null
+  resolve_docker_host 2>/dev/null && docker info >/dev/null 2>&1 || die "Docker unreachable ($(docker_unreachable_hint))"
+  docker inspect grok-bot-local-vm >/dev/null 2>&1 || die "container grok-bot-local-vm not found"
+  local app_log_pid="" container_log_pid=""
+  cleanup_logs() {
+    [ -z "$app_log_pid" ] || kill "$app_log_pid" 2>/dev/null || true
+    [ -z "$container_log_pid" ] || kill "$container_log_pid" 2>/dev/null || true
+    wait 2>/dev/null || true
+  }
+  trap cleanup_logs EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  say "tailing $APP_LOG and Docker grok-bot-local-vm logs (Ctrl-C to stop)"
+  tail -n 40 -F "$APP_LOG" &
+  app_log_pid=$!
+  docker logs --tail 40 --follow grok-bot-local-vm &
+  container_log_pid=$!
+  wait "$container_log_pid"
+  cleanup_logs
+  trap - EXIT INT TERM
 }
 
 validate_turn_mode() {

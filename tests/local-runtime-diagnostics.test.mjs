@@ -1,0 +1,103 @@
+import assert from "node:assert/strict";
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+import test from "node:test";
+
+const root = path.resolve(import.meta.dirname, "..");
+const execute = promisify(execFile);
+await mkdir(path.join(root, ".cache"), { recursive: true });
+const directory = await mkdtemp(path.join(root, ".cache/runtime-diagnostics-"));
+test.after(() => rm(directory, { recursive: true, force: true }));
+const env = { ...process.env, GROKBOT_DATA_ROOT: directory };
+const unreachable = { ...env, DOCKER_HOST: `unix://${directory}/unreachable.sock` };
+
+function launch(command, environment) {
+  const child = spawn("bash", [path.join(root, "start-local.sh"), command], { env: environment, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  child.stdout.on("data", chunk => { output += chunk; });
+  child.stderr.on("data", chunk => { output += chunk; });
+  const ended = once(child, "close");
+  return { child, ended, output: () => output.split("\n").filter(line => !line.startsWith("handover:")).join("\n") };
+}
+
+test("launcher shell 语法有效", async () => {
+  await execute("bash", ["-n", path.join(root, "start-local.sh")]);
+});
+
+test("真实 Docker CLI 对不可达 socket 返回明确状态", { timeout: 10_000 }, async () => {
+  const run = launch("status", unreachable);
+  const [code] = await run.ended;
+  assert.equal(code, 0);
+  assert.equal(run.output().includes("host:        unknown (Docker unreachable)"), true);
+  assert.equal(run.output().includes("box-exec:    unknown (Docker unreachable)"), true);
+  assert.equal(run.output().includes("Mac local-exec:"), true);
+  assert.equal(run.output().includes("host:        not running"), false);
+});
+
+test("日志命令在 Docker 不可达时明确失败", { timeout: 10_000 }, async () => {
+  const run = launch("logs", unreachable);
+  const [code] = await run.ended;
+  assert.equal(code, 1);
+  assert.equal(run.output().includes("Docker unreachable"), true);
+});
+
+test("容器未创建时准确报告未运行", { timeout: 10_000 }, async t => {
+  try { await execute("docker", ["info"], { env }); }
+  catch { t.skip("Docker daemon unavailable"); return; }
+  try { await execute("docker", ["inspect", "grok-bot-local-vm"], { env }); }
+  catch {
+    const run = launch("status", env);
+    const [code] = await run.ended;
+    assert.equal(code, 0);
+    assert.equal(run.output().includes("container not running (not found)"), true);
+    assert.equal(run.output().includes("box-exec:    not running (container not found)"), true);
+    return;
+  }
+  t.skip("Existing user container is preserved");
+});
+
+test("读取实际运行容器的 host 与 box-exec 状态", { skip: process.env.SAND_TEST_RUNTIME_DIAGNOSTICS !== "1", timeout: 10_000 }, async () => {
+  const run = launch("status", env);
+  const [code] = await run.ended;
+  assert.equal(code, 0);
+  assert.equal(run.output().includes("host:        running in container (pid "), true);
+  assert.equal(run.output().includes("box-exec:    healthy (container port 1337)"), true);
+});
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  test(`实际 Docker 日志与 app 日志在 ${signal} 后清理 followers`, { skip: process.env.SAND_TEST_RUNTIME_DIAGNOSTICS !== "1", timeout: 10_000 }, async () => {
+    const marker = `app-diagnostic-${signal}`;
+    await writeFile(path.join(directory, "app.log"), `${marker}\n`);
+    const containerLogs = await execute("docker", ["logs", "--tail", "1", "grok-bot-local-vm"], { env });
+    const lastContainerLine = (containerLogs.stdout + containerLogs.stderr).trim();
+    const run = launch("logs", env);
+    let followers = [];
+    try {
+      for (let attempt = 0; attempt < 50; attempt++) {
+        try {
+          const { stdout } = await execute("pgrep", ["-P", String(run.child.pid)]);
+          followers = stdout.trim().split(/\s+/).filter(Boolean).map(Number);
+        } catch { followers = []; }
+        if (followers.length >= 2 && run.output().includes(marker)) break;
+        await delay(50);
+      }
+      assert.equal(run.output().includes("Docker grok-bot-local-vm logs"), true);
+      assert.equal(run.output().includes(marker), true);
+      if (lastContainerLine) assert.equal(run.output().includes(lastContainerLine), true);
+      assert.equal(followers.length, 2);
+      run.child.kill(signal);
+      const [code] = await run.ended;
+      assert.equal(code, signal === "SIGTERM" ? 143 : 130);
+      for (const pid of followers) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+    } finally {
+      if (run.child.exitCode === null && run.child.signalCode === null) {
+        run.child.kill("SIGTERM");
+        await run.ended;
+      }
+    }
+  });
+}
