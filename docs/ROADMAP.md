@@ -41,6 +41,7 @@
 | 24 | Node 26 安装依赖 | 官方 Electron 完整解压，安装结果与官方归档一致 | #93 已合入；真实 ZIP、272 个官方文件校验与 Electron 启动通过 |
 | 25 | 回合交付 | 用户可见消息通过 SendMessage 投递，内部文字不额外发送；取消、审批等待与会话替代不触发补发 | #95 已合入；真实 SQLite/工具回归与纯图片 UI 单次投递通过 |
 | 26 | SDK 取消 | control request 取消后 CLI、连接及等待响应全部释放，错误被处理 | #83、#97 已合入；真实 SDK/CLI 覆盖立即取消与已有请求等待期间取消，零未处理异常 |
+| 27 | 启动脚本诊断 | 分别显示容器 host、box-exec 和 Mac local-exec；读取当前容器日志，退出日志命令时释放跟随进程 | #99 覆盖 Docker 不可达、容器不存在、实际运行状态及 SIGINT/SIGTERM 清理；本机真实容器六项通过，容器不存在分支由 CI 验证 |
 
 `c386cb7` 完成完整 package、verify、codesign 核对、安装及启动脚本重启。247 项测试中 246 项在 Mac 通过，Linux 专用 XTEST 测试已在同一执行镜像单独通过；Docker 测试显式启用。exec 与 desktop 容器门禁通过。应用与镜像 deps pin 为 `602e93959244647350767f5a56699974b1c1381b11d1fb2d43fdd062b7db3430`。镜像仓库 #6 已合入 `5caa549`；导出保留仓库身份，独立网络 namespace 中的空 Docker 完成固定 digest 导入及 16 层扫描。
 
