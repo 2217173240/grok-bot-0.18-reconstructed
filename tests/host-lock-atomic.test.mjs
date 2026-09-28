@@ -65,8 +65,9 @@ test('真实并发进程在整个持有期间互斥，接管等待旧进程退�
   assert(results.some(r => r.acquired));
   await Promise.all(workers.map(async w => {
     if (!w.proc.connected) return;
+    // 检查通道后进程仍可能退出；后续统一等待 exit，确认清理完成。
     await new Promise((resolve, reject) => w.proc.send('release', error => {
-      if (error && error.code !== 'ERR_IPC_CHANNEL_CLOSED') reject(error);
+      if (error && !['ERR_IPC_CHANNEL_CLOSED', 'EPIPE'].includes(error.code)) reject(error);
       else resolve();
     }));
   }));
