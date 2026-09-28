@@ -69,7 +69,17 @@ export function resolveSandAutoReviewModes(args: { readonly settingsEnabled: boo
 }
 
 export function formatSandAutoReviewDeniedReason(classifierReason: string): string {
-  return `Auto-review blocked this action: ${classifierReason}. Do not retry the same action, and do not switch to another anonymous public file host, pastebin, disposable transfer link, or similar courier — that is the same unauthorized data-exposure crossing. Ask the user what they want next. Use a safer alternative only when it is a genuinely authorized path.`;
+  return `The user denied approval for this action. The action was not executed. Stop and wait for new user direction; do not retry automatically or change permissions to proceed. Original review context: ${classifierReason}`;
+}
+
+function formatSandAutoReviewExpiredReason(cause: SandAutoReviewExpiryCause, classifierReason: string): string {
+  if (cause === "quiesce") return formatSandAutoReviewInterruptedForUpdateReason(classifierReason);
+  const outcome = cause === "cancelled" ? "The approval request was cancelled."
+    : cause === "user_redirect" ? "A new user message invalidated the pending approval request."
+      : cause === "settings_change" ? "Changed Auto-review settings invalidated the pending approval request."
+        : cause === "session_end" ? "The session ended before the approval request was resolved."
+          : "The approval request expired before a decision was received.";
+  return `${outcome} The action was not executed. Stop and wait for new user direction before submitting another action. Original review context: ${classifierReason}`;
 }
 
 export function formatSandAutoReviewInterruptedForUpdateReason(classifierReason: string): string {
@@ -112,7 +122,7 @@ export class SandAutoReviewController {
 
   async requestApproval(request: SandAutoReviewRequest): Promise<SandAutoReviewDecision> {
     const agentId = request.agentId ?? this.options.agentId;
-    if (request.signal?.aborted === true) return { approved: false, reason: "The action was cancelled." };
+    if (request.signal?.aborted === true) return { approved: false, reason: formatSandAutoReviewExpiredReason("cancelled", request.reason) };
     if (this.#quiescingForHostWindDown) return { approved: false, reason: formatSandAutoReviewInterruptedForUpdateReason(request.reason) };
     if (!this.#approvalsResolvable) return { approved: false, reason: "This action needs Auto-review approval, which isn't available in this conversation. Run it from a direct chat with the assistant." };
     if ([...this.#pending.values()].filter((record) => record.approval.agentId === agentId).length >= this.#maxPendingPerAgent) return { approved: false, reason: "Too many actions are already waiting for Auto-review approval; resolve those first." };
@@ -130,13 +140,13 @@ export class SandAutoReviewController {
     return new Promise<SandAutoReviewDecision>((resolve) => {
       const expiryAbort = new AbortController();
       if (expiryPolicy === "ttl") {
-        const timer = setTimeout(() => { if (!expiryAbort.signal.aborted) this.#retire(approval.id, "ttl", { approved: false, reason: formatSandAutoReviewDeniedReason(approval.reason) }); }, this.#approvalTtlMs);
+        const timer = setTimeout(() => { if (!expiryAbort.signal.aborted) this.#retire(approval.id, "ttl", { approved: false, reason: formatSandAutoReviewExpiredReason("ttl", approval.reason) }); }, this.#approvalTtlMs);
         timer.unref?.();
         expiryAbort.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       }
       const record: PendingRecord = { approval, resolve, expiryAbort, ...(request.signal === undefined ? {} : { signal: request.signal }) };
       if (request.signal !== undefined) {
-        const abortListener = () => this.#retire(approval.id, "cancelled", { approved: false, reason: "The action was cancelled." });
+        const abortListener = () => this.#retire(approval.id, "cancelled", { approved: false, reason: formatSandAutoReviewExpiredReason("cancelled", approval.reason) });
         record.abortListener = abortListener;
         request.signal.addEventListener("abort", abortListener, { once: true });
       }
@@ -158,8 +168,8 @@ export class SandAutoReviewController {
   getPendingApprovalForAgent(agentId: string): SandAutoReviewApproval | undefined { return [...this.#pending.values()].find((record) => record.approval.agentId === agentId)?.approval; }
   subscribe(listener: (event: SandAutoReviewEvent) => void): () => void { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; }
   beginUserMessageEpoch(): void { this.#userMessageEpoch += 1; this.expire("user_redirect"); }
-  expireSurfaces(surfaces: ReadonlySet<SandAutoReviewSurface>): void { for (const [id, record] of [...this.#pending]) if (surfaces.has(record.approval.surface)) this.#retire(id, "settings_change", { approved: false, reason: "Auto-review settings changed; retry the action." }); }
-  expire(cause: SandAutoReviewExpiryCause): void { for (const [id, record] of [...this.#pending]) this.#retire(id, cause, { approved: false, reason: formatSandAutoReviewDeniedReason(record.approval.reason) }); }
+  expireSurfaces(surfaces: ReadonlySet<SandAutoReviewSurface>): void { for (const [id, record] of [...this.#pending]) if (surfaces.has(record.approval.surface)) this.#retire(id, "settings_change", { approved: false, reason: formatSandAutoReviewExpiredReason("settings_change", record.approval.reason) }); }
+  expire(cause: SandAutoReviewExpiryCause): void { for (const [id, record] of [...this.#pending]) this.#retire(id, cause, { approved: false, reason: formatSandAutoReviewExpiredReason(cause, record.approval.reason) }); }
   expireForQuiesce(): void { this.#quiescingForHostWindDown = true; for (const [id, record] of [...this.#pending]) this.#retire(id, "quiesce", { approved: false, reason: formatSandAutoReviewInterruptedForUpdateReason(record.approval.reason) }); }
   cancelQuiesce(): void { this.#quiescingForHostWindDown = false; }
   #retire(id: string, cause: SandAutoReviewExpiryCause, decision: SandAutoReviewDecision): void { const record = this.#pending.get(id); if (record === undefined) return; const approval: SandAutoReviewApproval = { ...record.approval, status: "expired" }; this.#deletePending(id, record); this.#emit({ type: "expired", approval, cause }); record.resolve(decision); }

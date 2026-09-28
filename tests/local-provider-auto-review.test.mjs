@@ -133,7 +133,8 @@ test("Shell BLOCK 首次调用等待人工卡片，批准后才执行真实命�
         assert.equal((await pending).result.case, "success");
         assert.equal(await readFile(path.join(directory, "approved.txt"), "utf8"), "approved");
       } else {
-        await assert.rejects(pending);
+        if (resolution === "denied") await assert.rejects(pending, /The user denied approval for this action/);
+        else await assert.rejects(pending);
         await assert.rejects(access(path.join(directory, `${resolution}.txt`)));
       }
       assert.equal(controller.getPendingApprovals().length, 0);
