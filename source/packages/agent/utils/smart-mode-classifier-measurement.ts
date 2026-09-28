@@ -1,11 +1,11 @@
 import type { Context } from "../../context/core.js";
 import { createKey } from "../../context/core.js";
 import { createLogger } from "../../context/logger.js";
-import type { Executor } from "../../agent-exec/remote.js";
+import type { SmartModeClassifierExecutor } from "../../agent-exec/smart-mode-classifier.js";
 import { SmartModeClassifierDecision, type SmartModeClassifierArgs, type SmartModeClassifierResult } from "../../proto/generated/agent/v1/smart_mode_classifier_exec_pb.js";
 import { withTimeout } from "../../utils/promise-extras.js";
 import { getAgentEventTracker } from "./event-tracking.js";
-import { parseSmartModeClassifierFailureMetadata } from "./smart-mode-classifier-error-metadata.js";
+import { parseSmartModeClassifierFailureMetadata, SmartModeClassifierFailure } from "./smart-mode-classifier-error-metadata.js";
 
 const logger = createLogger("@anysphere/agent:smart-mode-classifier");
 const SMART_MODE_CLASSIFIER_TIMEOUT_MS = 10_000;
@@ -31,7 +31,7 @@ export interface SmartModeClassifierMeasurementOptions {
 
 export async function executeSmartModeClassifierWithMeasurement(
   ctx: Context,
-  executor: Executor<SmartModeClassifierArgs, SmartModeClassifierResult>,
+  executor: SmartModeClassifierExecutor,
   args: SmartModeClassifierArgs,
   mode: string = "enforce",
   workspacePaths?: readonly string[],
@@ -40,9 +40,12 @@ export async function executeSmartModeClassifierWithMeasurement(
   const overallStartTime = performance.now();
   const actionKind = normalizeSmartModeClassifierActionKind(args.target?.action);
   const surfaceLabel = getSmartModeClassifierSurfaceLabel(args);
-  const maxAttempts = Math.max(1, options?.maxAttempts ?? SMART_MODE_CLASSIFIER_MAX_TOTAL_ATTEMPTS);
+  const policy = executor.executionPolicy;
+  if (policy !== undefined && (!Number.isFinite(policy.timeoutMs) || policy.timeoutMs <= 0 || !Number.isInteger(policy.maxAttempts) || policy.maxAttempts < 1)) throw new RangeError("Invalid classifier execution policy");
+  const maxAttempts = Math.max(1, Math.min(options?.maxAttempts ?? SMART_MODE_CLASSIFIER_MAX_TOTAL_ATTEMPTS, policy?.maxAttempts ?? Infinity));
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const timeoutMs = getSmartModeClassifierTimeoutMs();
+    ctx.signal.throwIfAborted();
+    const timeoutMs = policy?.timeoutMs ?? getSmartModeClassifierTimeoutMs();
     const timeoutMessage = `Smart Mode classifier timed out after ${timeoutMs}ms`;
     const attemptIndex = attempt - 1;
     const [cancelableAttemptCtx, cancelAttempt] = ctx.withCancel();
@@ -73,18 +76,19 @@ export async function executeSmartModeClassifierWithMeasurement(
       }, options?.suppressToolCallIdLogging === true ? undefined : args.toolCallId);
       return result;
     } catch (error: unknown) {
-      if (error instanceof Error && error.name === "AbortError") {
+      if (ctx.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
         recordSmartModeClassifierException(ctx, {
           mode,
           actionKind,
           surfaceLabel,
           latencyMs: elapsedMs(overallStartTime),
           retryCount: attempt - 1,
+          failureReason: "cancelled",
         }, options?.suppressToolCallIdLogging === true ? undefined : args.toolCallId);
-        throw error;
+        throw new SmartModeClassifierFailure("cancelled");
       }
       const failureReason = classifySmartModeClassifierException(error);
-      if (failureReason === "timeout_exception") cancelAttempt(new Error(timeoutMessage));
+      if (failureReason === "timeout_exception") cancelAttempt(new SmartModeClassifierFailure("timeout", timeoutMs));
       if (attempt < maxAttempts) continue;
       recordSmartModeClassifierException(ctx, {
         mode,
@@ -94,7 +98,9 @@ export async function executeSmartModeClassifierWithMeasurement(
         retryCount: attempt - 1,
         failureReason,
       }, options?.suppressToolCallIdLogging === true ? undefined : args.toolCallId);
-      throw error;
+      throw failureReason === "timeout_exception" ? new SmartModeClassifierFailure("timeout", timeoutMs) : error;
+    } finally {
+      cancelAttempt();
     }
   }
   throw new Error("Smart Mode classifier retry loop exited unexpectedly");
@@ -193,6 +199,7 @@ function isRetryableClassifierFailure(result: ClassifiedSmartModeClassifierResul
 }
 
 function classifySmartModeClassifierException(error: unknown): string {
+  if (error instanceof SmartModeClassifierFailure) return error.kind;
   if (error instanceof Error && (error.name === "TimeoutError" || error.message.includes("Smart Mode classifier timed out"))) {
     return "timeout_exception";
   }

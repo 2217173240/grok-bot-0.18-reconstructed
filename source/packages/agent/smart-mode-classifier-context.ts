@@ -315,10 +315,16 @@ function applySmartModeClassifierMessageCountLimits(messages: ClassifierMessage[
   });
 }
 
-function truncateSandAutoReviewClassifierContext(messages: ClassifierMessage[], options: { limits?: typeof SAND_AUTO_REVIEW_CLASSIFIER_CONTEXT_LIMITS; maxCharsPerMessage?: number } = {}): ClassifierMessage[] {
+export function truncateSandAutoReviewClassifierContext(messages: ClassifierMessage[], options: { limits?: typeof SAND_AUTO_REVIEW_CLASSIFIER_CONTEXT_LIMITS; maxCharsPerMessage?: number } = {}): ClassifierMessage[] {
   const limits = options.limits ?? SAND_AUTO_REVIEW_CLASSIFIER_CONTEXT_LIMITS;
   const maxCharsPerMessage = options.maxCharsPerMessage ?? SAND_AUTO_REVIEW_CLASSIFIER_MAX_MESSAGE_CHARS;
-  return applySmartModeClassifierMessageCountLimits(messages, limits).map(message => ({ ...message, content: truncateSandAutoReviewClassifierMessageContent(message.content, maxCharsPerMessage) })).filter(message => message.content.length > 0);
+  const bounded = applySmartModeClassifierMessageCountLimits(messages, limits).map(message => ({ ...message, content: truncateSandAutoReviewClassifierMessageContent(message.content, maxCharsPerMessage) })).filter(message => message.content.length > 0);
+  return truncateSmartModeClassifierContext(bounded, {
+    maxChars: SAND_AUTO_REVIEW_CLASSIFIER_MAX_STRUCTURAL_CONTEXT_CHARS,
+    maxAssistantMessages: limits.maxAssistantMessages,
+    maxUserMessages: limits.maxUserMessages,
+    maxQuestionMessages: limits.maxQuestionResults,
+  });
 }
 
 function truncateSmartModeClassifierContext(messages: ClassifierMessage[], options: { maxChars: number; maxAssistantMessages: number; maxUserMessages: number; maxQuestionMessages: number } = { maxChars: SMART_MODE_CLASSIFIER_MAX_CONTEXT_CHARS, maxAssistantMessages: SMART_MODE_CLASSIFIER_MAX_ASSISTANT_MESSAGES, maxUserMessages: SMART_MODE_CLASSIFIER_MAX_USER_MESSAGES, maxQuestionMessages: SMART_MODE_CLASSIFIER_MAX_QUESTION_RESULTS }): ClassifierMessage[] {

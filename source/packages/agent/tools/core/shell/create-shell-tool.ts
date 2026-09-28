@@ -51,6 +51,7 @@ import { AgentType } from "../../../utils/agent-config.js";
 import { loadSmartModeProjectPermissionsContext } from "../../../smart-mode-project-permissions.js";
 import { tryExtractSmartModeClassifierConversationContext } from "../../../smart-mode-classifier-context.js";
 import { executeSmartModeClassifierWithMeasurement } from "../../../utils/smart-mode-classifier-measurement.js";
+import { smartModeClassifierFailureReason } from "../../../utils/smart-mode-classifier-error-metadata.js";
 import { delayDevSmartModeClassifierIfRequested, type OneShotState } from "../../dev-smart-mode-classifier-block.js";
 import { withToolExecutionTimeoutSuspended } from "../../tool-timeout-suspension.js";
 import type { ConversationStateHandle } from "../../../state.js";
@@ -456,7 +457,7 @@ async function runShellSmartModeClassifier(
     if (error instanceof Error && error.name === "AbortError") throw error;
     if (error instanceof ShellToolRejectedError) throw error;
     if (signal.aborted) throw new ToolCallAbortedError();
-    return { kind: "reject", reason: SMART_MODE_SHELL_CLASSIFIER_ERROR_REASON };
+    return { kind: "reject", reason: smartModeClassifierFailureReason(error, SMART_MODE_SHELL_CLASSIFIER_ERROR_REASON) };
   }
 }
 
