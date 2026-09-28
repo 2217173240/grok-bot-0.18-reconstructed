@@ -30,6 +30,7 @@ export type CodexDirectOptions = {
   readonly executeTool?: (tool: CodexDirectTool, args: unknown, toolCallId: string) => Promise<unknown>;
   readonly maxSteps?: number;
   readonly signal?: AbortSignal;
+  readonly onReportedUsage?: (usage: Partial<CodexDirectUsage>) => void;
 };
 
 function record(value: unknown): Loose | null {
@@ -159,6 +160,15 @@ export async function* streamCodexDirectResponses(options: CodexDirectOptions): 
     }
     if (completed == null) throw new Error("Codex direct response ended without response.completed.");
     if (typeof completed.id === "string") responseId = completed.id;
+    const reported = record(completed.usage);
+    if (reported !== null) {
+      const cached = record(reported.input_tokens_details)?.cached_tokens;
+      options.onReportedUsage?.({
+        ...(Number.isFinite(reported.input_tokens) ? { inputTokens: reported.input_tokens } : {}),
+        ...(Number.isFinite(reported.output_tokens) ? { outputTokens: reported.output_tokens } : {}),
+        ...(Number.isFinite(cached) ? { cacheReadTokens: cached } : {}),
+      });
+    }
     usage = addUsage(usage, usageOf(completed));
     const output = Array.isArray(completed.output) && completed.output.length > 0 ? completed.output : observedOutput;
     const calls = toolCalls(output);

@@ -17,6 +17,7 @@ import type { SandLocalToolPermission } from "../../../shared/local-tool-permiss
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
 import { appendLocalPerformance, localPerformanceCorrelationHash } from "../../../shared/node/local-performance.js";
+import type { LocalPerformanceRecord } from "../../../shared/local-performance-record.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
@@ -29,6 +30,70 @@ type Loose = Record<string, any>;
 interface ProviderMessage extends LabelMessage { role: string; content: string | readonly unknown[] }
 type RoutedProvider = Exclude<SandInferenceProvider, "cursor">;
 type UsageRecord = { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number };
+
+export function createProviderPerformance(provider: RoutedProvider, invocationId: string, mode: "text-only" | "hosted" | "unhosted", signal?: AbortSignal) {
+  const started = performance.now();
+  const metrics: Partial<LocalPerformanceRecord> = {};
+  let cancelledAt: number | undefined;
+  let cleanupFailed = false;
+  let written = false;
+  const cancel = () => { cancelledAt ??= performance.now(); };
+  const mark = (key: "spawnMs" | "dispatchMs" | "firstOutputMs" | "firstTextMs") => { metrics[key] ??= performance.now() - started; };
+  const finish = (outcome: "success" | "failed" | "cancelled") => {
+    if (written) return;
+    written = true;
+    signal?.removeEventListener("abort", cancel);
+    if (cancelledAt !== undefined) metrics.cancelCleanupMs = performance.now() - cancelledAt;
+    // 诊断文件写入失败不改变请求或清理的结果。
+    try { appendLocalPerformance({ ...metrics, phase: "provider", provider, mode, outcome: cleanupFailed ? "failed" : outcome, durationMs: performance.now() - started, correlationHash: localPerformanceCorrelationHash(invocationId) }); } catch {}
+  };
+  return {
+    mark,
+    cleanupFailed() { cleanupFailed = true; },
+    timing(key: "cleanupMs" | "processCloseMs" | "bridgeCloseMs", start: number) { metrics[key] = performance.now() - start; },
+    usage(usage: UsageRecord, basis: "exclusive-input" | "inclusive-input") {
+      for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+        const value = usage[key];
+        if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) metrics[key] = value;
+      }
+      if (metrics.inputTokens !== undefined) metrics.usageBasis = basis;
+    },
+    async *wrap<T>(source: AsyncIterable<T>): AsyncGenerator<T> {
+      if (signal?.aborted) cancel();
+      else signal?.addEventListener("abort", cancel, { once: true });
+      const iterator = source[Symbol.asyncIterator]();
+      let complete = false;
+      let failed = false;
+      let originalError: unknown;
+      let outcome: "success" | "failed" | "cancelled" = "cancelled";
+      try {
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) { complete = true; outcome = signal?.aborted ? "cancelled" : "success"; break; }
+          const chunk = next.value as Loose;
+          if (["tool-call", "tool-call-delta", "tool-call-streaming-start"].includes(chunk?.type)
+            || ["text-delta", "reasoning"].includes(chunk?.type) && typeof chunk.textDelta === "string" && chunk.textDelta.length > 0) mark("firstOutputMs");
+          if (chunk?.type === "text-delta" && typeof chunk.textDelta === "string" && chunk.textDelta.length > 0) mark("firstTextMs");
+          yield next.value;
+        }
+      } catch (error) {
+        failed = true;
+        originalError = error;
+        outcome = signal?.aborted ? "cancelled" : "failed";
+        throw error;
+      } finally {
+        if (!complete && outcome === "cancelled") cancel();
+        try { if (!complete) await iterator.return?.(); }
+        catch (error) {
+          cleanupFailed = true;
+          if (failed) throw new AggregateError([originalError, error], "Provider stream failed while closing.", { cause: originalError });
+          throw error;
+        }
+        finally { finish(outcome); }
+      }
+    },
+  };
+}
 
 const GROK_ROUTER_SYSTEM_PROMPT = [
   "You are Grok Bot, a warm, concise desktop assistant.",
@@ -310,7 +375,7 @@ function codexTools(definitions: readonly Loose[] | undefined): CodexDirectTool[
   return tools.length === 0 ? undefined : tools;
 }
 
-function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions = GROK_ROUTER_SYSTEM_PROMPT) {
+function codexExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const credentials = codexCredentials();
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
@@ -318,16 +383,19 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
   const metadata = deferred<Record<string, unknown>>();
   const { model, reasoningEffort } = readCodexConfiguration();
   const tools = codexTools(definitions);
+  const measured = createProviderPerformance("codex", invocationId, instructions !== undefined ? "text-only" : definitions?.length ? "hosted" : "unhosted", signal);
   const fullStream = (async function* () {
     let text = "";
     const toolCalls: Loose[] = [];
     try {
+      measured.mark("dispatchMs");
       for await (const event of streamCodexDirectResponses({
         fetch: codexAuthenticatedFetch(credentials),
         endpoint: "https://chatgpt.com/backend-api/codex/responses",
         model,
         ...(reasoningEffort == null ? {} : { reasoningEffort }),
-        instructions,
+        instructions: instructions ?? GROK_ROUTER_SYSTEM_PROMPT,
+        onReportedUsage: usage => measured.usage(usage, "inclusive-input"),
         input: codexInput(messages),
         ...(tools == null ? {} : { tools }),
         maxSteps: 1,
@@ -365,7 +433,7 @@ function codexExecutor(messages: readonly ProviderMessage[], invocationId: strin
       }
     }
   })();
-  return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
+  return { fullStream: measured.wrap(fullStream), response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
 const CLAUDE_HOST_TOOL_PREFIX = "mcp__grok_bot_host_tools__";
@@ -546,18 +614,12 @@ function claudeRecordedMessage(
 function claudeExecutor(messages: readonly ProviderMessage[], invocationId: string, options?: ClaudeExecutorOptions) {
   const executable = resolveClaudeCodeCliPath();
   if (executable == null) throw new Error("Claude Code is not installed. Install and sign in to Claude Code, then reopen Grok Bot.");
+  const measured = createProviderPerformance("claude-code", invocationId, options?.textOnlyInstructions !== undefined ? "text-only" : options?.hostTools !== undefined ? "hosted" : "unhosted", options?.signal);
   const usage = deferred<{ promptTokens: number; completionTokens: number; totalTokens: number }>();
   const extendedUsage = deferred<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; maxTokens: number }>();
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
-    const startedPerfMs = performance.now();
-    let spawnMs: number | undefined;
-    let dispatchMs: number | undefined;
-    let firstTextMs: number | undefined;
-    let requestMode: "text-only" | "hosted" = options?.textOnlyInstructions !== undefined ? "text-only" : "hosted";
-    let usageRecord: UsageRecord | undefined;
-    let outcome: "success" | "failed" | "cancelled" = "failed";
     // 每次请求只持有当前 host 工具桥，关闭流时释放桥接资源。
     let hostBridge: ReturnType<typeof createHostToolsMcpBridge> | undefined;
     const pendingTools = new Map<string, string>();
@@ -565,7 +627,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     const abortController = new AbortController();
     const processes = createClaudeProcessOwner(child => {
       child.stderr?.resume();
-      spawnMs ??= performance.now() - startedPerfMs;
+      child.once("spawn", () => measured.mark("spawnMs"));
       appendLocalIntercept({ kind: "provider-process", provider: "claude-code", phase: "started", invocationId, pid: child.pid });
     });
     const abort = () => abortController.abort(options?.signal?.reason);
@@ -573,7 +635,6 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     else options?.signal?.addEventListener("abort", abort, { once: true });
     try {
       const textOnly = options?.textOnlyInstructions !== undefined;
-      requestMode = textOnly ? "text-only" : "hosted";
       const hosted = !textOnly && options?.hostTools !== undefined;
       const hostTools = textOnly ? undefined : options?.hostTools;
       const hostToolNames = new Set(hostTools?.definitions.map(definition => `mcp__grok_bot_host_tools__${definition.name}`) ?? []);
@@ -588,7 +649,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
           if (decision.behavior !== "allow") throw new Error(decision.message);
           return hostTools.execution.execute({ ...call, args: decision.updatedInput });
         },
-      }, abortController.signal);
+      }, abortController.signal, localPerformanceCorrelationHash(invocationId));
       let final: SDKResultMessage | undefined;
       let streamedText = "";
       const selectedModel = process.env.SAND_CLAUDE_MODEL?.trim();
@@ -596,7 +657,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       const toolGuidance = hosted
         ? `${claudeLocalToolsPrompt()}\nCurrently available tools: ${[...hostToolNames].join(", ")}. Tool actions use Grok Bot approvals.`
         : "This request has no tools. Respond from the supplied conversation.";
-      dispatchMs = performance.now() - startedPerfMs;
+      measured.mark("dispatchMs");
       try { for await (const message of queryClaude({ prompt: textOnly ? JSON.stringify(messages) : claudePrompt(messages, toolGuidance), options: {
         pathToClaudeCodeExecutable: executable,
         cwd: resolveAgentWorkspace(),
@@ -622,10 +683,14 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
+        if (message.type === "stream_event" && message.event.type === "content_block_delta" && (message.event.delta.type !== "text_delta" || message.event.delta.text.length > 0)
+          || message.type === "stream_event" && message.event.type === "content_block_start" && (message.event.content_block.type !== "text" || message.event.content_block.text.length > 0)
+          || message.type === "assistant" && message.error === undefined && message.message.content.some((block: Loose) => block.type !== "text" || block.text.length > 0)
+          || message.type === "result" && message.subtype === "success" && !message.is_error && typeof message.result === "string" && message.result.length > 0) measured.mark("firstOutputMs");
         if (message.type === "result") { final = message; continue; }
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
           const delta = message.event.delta.text;
-          firstTextMs ??= performance.now() - startedPerfMs;
+          if (delta.length > 0) measured.mark("firstTextMs");
           streamedText += delta;
           yield { type: "text-delta" as const, textDelta: delta };
           continue;
@@ -639,10 +704,10 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `Claude Code failed (${final.subtype}).`);
       if (pendingTools.size > 0) throw new Error("Claude Code ended before returning its tool results.");
       const text = streamedText || final.result;
-      if (firstTextMs === undefined && text.length > 0) firstTextMs = performance.now() - startedPerfMs;
+      if (typeof text === "string" && text.length > 0) measured.mark("firstTextMs");
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
-      usageRecord = { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite };
-      options?.onUsage?.(usageRecord);
+      measured.usage({ inputTokens: input, outputTokens: output, cacheReadTokens: final.usage.cache_read_input_tokens, cacheWriteTokens: final.usage.cache_creation_input_tokens }, "exclusive-input");
+      options?.onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
       extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
       metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
@@ -650,10 +715,8 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         recordedMessages.push({ role: "assistant", content: [{ type: "text", text }] });
       }
       resultResponse.resolve(response(text, invocationId, "claude-code", [], recordedMessages));
-      outcome = "success";
       if (streamedText.length === 0 && text.length > 0) yield { type: "text-delta" as const, textDelta: text };
     } catch (error) {
-      outcome = abortController.signal.aborted ? "cancelled" : "failed";
       for (const [id, name] of pendingTools) options?.onToolEvent?.({ id, name, status: "failed" });
       // Reject the deferreds for any late awaiter, then mark each rejection
       // handled: the error already propagates through fullStream, and an
@@ -668,20 +731,28 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       const cleanupStartedMs = performance.now();
       abortController.abort();
       try {
-        await processes.close();
+        const processCloseStarted = performance.now();
+        try { await processes.close(); }
+        catch (error) { measured.cleanupFailed(); throw error; }
+        finally { measured.timing("processCloseMs", processCloseStarted); }
         appendLocalIntercept({ kind: "provider-process", provider: "claude-code", phase: "closed", invocationId, processIds: processes.processIds });
       } finally {
         for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
           settled.reject(new Error("Claude stream closed before completing its result."));
           settled.promise.catch(() => undefined);
         }
-        await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
+        if (hostBridge !== undefined) {
+          const bridgeCloseStarted = performance.now();
+          try { await hostBridge.close(); }
+          catch (error) { measured.cleanupFailed(); appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }); }
+          finally { measured.timing("bridgeCloseMs", bridgeCloseStarted); }
+        }
         options?.signal?.removeEventListener("abort", abort);
-        appendLocalPerformance({ phase: "provider", provider: "claude-code", mode: requestMode, outcome, durationMs: performance.now() - startedPerfMs, ...(spawnMs === undefined ? {} : { spawnMs }), ...(dispatchMs === undefined ? {} : { dispatchMs }), ...(firstTextMs === undefined ? {} : { firstTextMs }), ...(usageRecord?.inputTokens === undefined ? {} : { inputTokens: usageRecord.inputTokens }), ...(usageRecord?.outputTokens === undefined ? {} : { outputTokens: usageRecord.outputTokens }), ...(usageRecord?.cacheReadTokens === undefined ? {} : { cacheReadTokens: usageRecord.cacheReadTokens }), ...(usageRecord?.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usageRecord.cacheWriteTokens }), cleanupMs: performance.now() - cleanupStartedMs, correlationHash: localPerformanceCorrelationHash(invocationId) });
+        measured.timing("cleanupMs", cleanupStartedMs);
       }
     }
   })();
-  return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
+  return { fullStream: measured.wrap(fullStream), response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
 }
 
 function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefined {
@@ -722,15 +793,21 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
   return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
 }
 
-export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions = GROK_ROUTER_SYSTEM_PROMPT) {
+export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const tools = toToolSet(definitions);
-  const result = streamText({ model, system: instructions, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
+  const measured = createProviderPerformance(provider, invocationId, instructions !== undefined ? "text-only" : tools !== undefined ? "hosted" : "unhosted", signal);
+  measured.mark("dispatchMs");
+  const result = streamText({ model, system: instructions ?? GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, ...(signal === undefined ? {} : { abortSignal: signal }) });
   const streamFailure = Promise.withResolvers<never>();
   void streamFailure.promise.catch(() => {});
   const fullStream = (async function* () {
     try {
       for await (const chunk of result.fullStream) {
         if (chunk.type === "error") throw chunk.error;
+        if (chunk.type === "finish") {
+          const cached = chunk.providerMetadata?.openai?.cachedPromptTokens;
+          measured.usage({ inputTokens: chunk.usage.promptTokens, outputTokens: chunk.usage.completionTokens, ...(typeof cached === "number" ? { cacheReadTokens: cached } : {}) }, "inclusive-input");
+        }
         yield chunk;
       }
     } catch (error) {
@@ -756,7 +833,7 @@ export function chatCompletionsExecutor(provider: RoutedProvider, model: Languag
   void providerMetadata.catch(() => {});
   void extendedUsage.catch(() => {});
   if (onUsage != null) void extendedUsage.then(onUsage, () => {}).catch(error => appendLocalIntercept({ kind: "inference-usage", provider, error: error instanceof Error ? error.message : String(error) }));
-  return { fullStream, response, usage, extendedUsage, providerMetadata, invocationId: Promise.resolve(invocationId) };
+  return { fullStream: measured.wrap(fullStream), response, usage, extendedUsage, providerMetadata, invocationId: Promise.resolve(invocationId) };
 }
 
 class ProviderPromptExecutor extends BasePromptExecutor<ProviderMessage> {
