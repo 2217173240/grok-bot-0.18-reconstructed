@@ -14,7 +14,7 @@ await mkdir(path.join(root, '.cache'), { recursive: true });
 const directory = await mkdtemp(path.join(root, '.cache/docker-lifecycle-'));
 const outfile = path.join(directory, 'lifecycle.mjs');
 await build({ entryPoints: [path.join(root, 'source/electron-main/box/local-docker-lifecycle.ts')], outfile, bundle: true, platform: 'node', format: 'esm', logLevel: 'silent' });
-const { createLocalDockerLifecycle, createDockerAvailabilityProbe } = await import(outfile);
+const { createLocalDockerLifecycle, createDockerAvailabilityProbe, createLocalDockerCircuitBreaker } = await import(outfile);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
 async function server(t) {
@@ -105,6 +105,23 @@ test('拒绝恢复的连接等待者得到失败，队列继续处理下一次�
   await assert.rejects(connection, /did not establish/);
   assert.deepEqual(await recovery, { status: 'rejected' });
   assert.equal(await lifecycle.connect(async () => readFile(outfile, 'utf8')), await readFile(outfile, 'utf8'));
+});
+
+test('breaker 配置错误不计数，共享成功结算清除失败，真实单调时间控制过期', async () => {
+  const breaker = createLocalDockerCircuitBreaker(3, 30);
+  for (const message of ['image is stale:', 'unexpected image', 'image is not built locally', 'unowned container']) {
+    assert.equal(breaker.failure(new Error(message)).failures, 0);
+  }
+  assert.equal(breaker.failure(new Error('stopped')).opened, false);
+  assert.equal(breaker.failure(new Error('stopped')).opened, false);
+  assert.equal(breaker.failure(new Error('stopped')).opened, true);
+  assert(breaker.state().remainingMs > 0);
+  breaker.reset();
+  assert.equal(breaker.state().remainingMs, 0);
+  assert.equal(breaker.state().failures, 0);
+  for (let count = 0; count < 3; count++) breaker.failure(new Error('stopped'));
+  await delay(40);
+  assert.equal(breaker.state().remainingMs, 0);
 });
 
 test('实际 Docker 不可达后刷新立即恢复，隔离容器写操作串行执行', { skip: !process.env.SAND_TEST_DOCKER_IMAGE, timeout: 30000 }, async () => {

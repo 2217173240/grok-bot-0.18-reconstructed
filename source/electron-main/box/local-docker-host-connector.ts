@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import type { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { RecreateResult } from "./box-recreate-commands.js";
-import { createDockerAvailabilityProbe, createLocalDockerLifecycle } from "./local-docker-lifecycle.js";
+import { createDockerAvailabilityProbe, createLocalDockerCircuitBreaker, createLocalDockerLifecycle } from "./local-docker-lifecycle.js";
 import { EnvDescriptorHostConnector, type SandRemoteHostConnector } from "./box-host-connector.js";
 import type { GatewayConnection } from "./gateway-descriptor-cache.js";
 import { isCommandCodeModelId, isSandInferenceProvider } from "../../shared/inference-router.js";
@@ -523,6 +523,7 @@ export async function getLocalDockerStatus(settingsPath: string): Promise<LocalD
 }
 
 const localDockerLifecycle = createLocalDockerLifecycle<GatewayConnection>();
+const localHostBreaker = createLocalDockerCircuitBreaker(LOCAL_HOST_AUTO_FAILURE_LIMIT, LOCAL_HOST_BREAKER_OPEN_MS);
 // 同一个本地容器共享探测结果；失败缓存缩短到 5 秒，主动恢复立即刷新。
 const probeDockerAvailable = createDockerAvailabilityProbe(async () => (await runDocker(["info", "--format", "{{.ServerVersion}}"])).ok);
 // Written once per process: the image choice is re-derived on every connect,
@@ -837,6 +838,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
         const reason = desktopProcessRebuildReason(await probeLocalDockerDesktopProcesses(LOCAL_DOCKER_BOX_CONTAINER));
         if (reason != null) throw new Error(reason);
       }
+      localHostBreaker.reset();
       return { baseUrl: LOCAL_DOCKER_GATEWAY_URL, token };
     }
     const state = await inspectContainer();
@@ -924,40 +926,26 @@ export function createSettingsRoutedHostConnector(
   settings: SandSettingsStore,
 ): SandRemoteHostConnector {
   if (remote instanceof EnvDescriptorHostConnector) return remote;
-  let localHostConsecutiveFailures = 0;
-  let localHostLastFailure = "unknown";
-  let localHostBreakerOpenUntilMs = 0;
-  const resetLocalHostBreaker = (): void => {
-    localHostConsecutiveFailures = 0;
-    localHostBreakerOpenUntilMs = 0;
-  };
   const localConnectCore = async (): Promise<GatewayConnection> => {
       if (isLocalAdminEnabled()) {
         // 容器连接失败时保留执行边界，由用户恢复 Docker。
-        if (Date.now() < localHostBreakerOpenUntilMs) {
-          const message = `Local computer circuit breaker is open after ${localHostConsecutiveFailures} consecutive failures; last error: ${localHostLastFailure} Retry from the computer settings or restart the app.`;
-          appendLocalIntercept({ kind: "local-computer", event: "breaker-open", remainingMs: localHostBreakerOpenUntilMs - Date.now() });
+        const breaker = localHostBreaker.state();
+        if (breaker.remainingMs > 0) {
+          const message = `Local computer circuit breaker is open after ${breaker.failures} consecutive failures; last error: ${breaker.lastFailure} Retry from the computer settings or restart the app.`;
+          appendLocalIntercept({ kind: "local-computer", event: "breaker-open", remainingMs: breaker.remainingMs });
           throw new Error(message);
         }
         resolveLocalAdminBox(process.env, await probeDockerAvailable.get());
         try {
           stopLocalAdminHost();
           const connection = await ensureLocalDockerBox(settings.settingsPath, undefined);
-          resetLocalHostBreaker();
           return connection;
         } catch (error) {
-          localHostLastFailure = error instanceof Error ? error.message : String(error);
-          // Deterministic configuration errors (stale pin, image mismatch,
-          // missing explicit image) are not transient failures — counting
-          // them toward the breaker burned 60s of "computer broken" on what
-          // is a rebuild-me instruction; they surface identically every time.
-          const isConfigurationError = /is stale:|unexpected image|is not built locally|unowned container/.test(localHostLastFailure);
-          if (!isConfigurationError) localHostConsecutiveFailures += 1;
-          if (localHostConsecutiveFailures >= LOCAL_HOST_AUTO_FAILURE_LIMIT) {
-            localHostBreakerOpenUntilMs = Date.now() + LOCAL_HOST_BREAKER_OPEN_MS;
-            appendLocalIntercept({ kind: "local-computer", event: "breaker-opened", failures: localHostConsecutiveFailures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
+          const failure = localHostBreaker.failure(error);
+          if (failure.opened) {
+            appendLocalIntercept({ kind: "local-computer", event: "breaker-opened", failures: failure.failures, openMs: LOCAL_HOST_BREAKER_OPEN_MS });
           }
-          appendLocalIntercept({ kind: "docker", event: "connect-failed", error: localHostLastFailure });
+          appendLocalIntercept({ kind: "docker", event: "connect-failed", error: failure.lastFailure });
           throw error;
         }
       }
@@ -989,7 +977,7 @@ export function createSettingsRoutedHostConnector(
         if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
         const restarted = await runDocker(["restart", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => ({ ok: false, output: "container not created yet" }));
         if (!restarted.ok) await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]).catch(() => undefined);
-        resetLocalHostBreaker();
+        localHostBreaker.reset();
         const connection = await localConnectCore();
         return { value: { status: "started-untrackable" }, connection };
       }
@@ -1015,7 +1003,7 @@ export function createSettingsRoutedHostConnector(
         resolveLocalAdminBox(process.env, await probeDockerAvailable.refresh());
         const inspected = await inspectContainer();
         if (inspected.exists && !inspected.owned) return { value: { status: "rejected", reason: `Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.` } };
-        resetLocalHostBreaker();
+        localHostBreaker.reset();
         const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
         if (!removed.ok && !/no such container/i.test(removed.output)) return { value: { status: "rejected", reason: removed.output } };
         const connection = await localConnectCore();

@@ -37,7 +37,7 @@ export function createDockerAvailabilityProbe(run: () => Promise<boolean>, succe
   const probe = (): Promise<boolean> => {
     const current = ++generation;
     const result = run().then(value => {
-      if (current === generation) cached = { expires: Date.now() + (value ? successTtlMs : failureTtlMs), value };
+      if (current === generation) cached = { expires: performance.now() + (value ? successTtlMs : failureTtlMs), value };
       return value;
     }).finally(() => { if (pending === result) pending = undefined; });
     pending = result;
@@ -46,9 +46,27 @@ export function createDockerAvailabilityProbe(run: () => Promise<boolean>, succe
   return {
     get(): Promise<boolean> {
       if (pending !== undefined) return pending;
-      if (cached !== undefined && cached.expires > Date.now()) return Promise.resolve(cached.value);
+      if (cached !== undefined && cached.expires > performance.now()) return Promise.resolve(cached.value);
       return probe();
     },
     refresh(): Promise<boolean> { cached = undefined; return probe(); },
+  };
+}
+
+export function createLocalDockerCircuitBreaker(failureLimit: number, openMs: number) {
+  let failures = 0;
+  let lastFailure = "unknown";
+  let openUntil = 0;
+  return {
+    reset(): void { failures = 0; openUntil = 0; },
+    failure(error: unknown) {
+      lastFailure = error instanceof Error ? error.message : String(error);
+      const configurationError = /is stale:|unexpected image|is not built locally|unowned container/.test(lastFailure);
+      if (!configurationError) failures += 1;
+      const opened = !configurationError && failures >= failureLimit;
+      if (opened) openUntil = performance.now() + openMs;
+      return { opened, failures, lastFailure };
+    },
+    state() { return { failures, lastFailure, remainingMs: Math.max(0, openUntil - performance.now()) }; },
   };
 }
