@@ -1,5 +1,4 @@
 import { isMessageAddress } from "../../../shared/message-reference.js";
-import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { sandDualSurfaceToolTelemetry } from "../../../shared/agents/agent-tool-names.js";
 import { SAND_REACTION_AGENT } from "../../../shared/transcript.js";
 import { UNKNOWN_CONNECTOR_TAG } from "../../../shared/observability/connector-auth-telemetry.js";
@@ -45,7 +44,7 @@ import type { LiveTranscriptSession } from "./session-runtime.js";
 
 export const MAX_REPLY_NUDGES = 3;
 export const REPLY_NUDGE_PROMPT =
-  "Your previous turn left the user without the result they're waiting on — you never called SendMessage that turn, or every SendMessage you tried failed to deliver. Either way they received nothing and are still waiting. Do not assume a send from an earlier turn covered it: an opening acknowledgement back then did not deliver this result (ack ≠ delivery). Deliver the result now by actually invoking the SendMessage tool — make a real tool/function call, not text you write. Plain assistant text is NEVER shown to the user; only a real SendMessage tool invocation reaches them, so if you don't call the tool they just keep seeing silence.";
+  "Deliver the pending result now by actually invoking the SendMessage tool. Use the answer already prepared in this turn; do not repeat completed work. Send only the user-facing answer, without mentioning this internal delivery reminder or apologizing for delivery mechanics. Plain assistant text is never shown to the user; a real SendMessage tool invocation is required.";
 export const CLOSING_SEND_NUDGE_PROMPT =
   "Your previous turn acknowledged the user and then ran tool calls, but ended without a follow-up SendMessage — the last thing the user saw is that opening acknowledgement, so whatever the tool calls produced after it never reached them. If that work produced the result or answer they are waiting on, deliver it now by actually invoking the SendMessage tool — make a real tool/function call, not text you write. Plain assistant text is NEVER shown to the user; only a real SendMessage tool invocation reaches them. If the work is genuinely unfinished, continue it and send the result once you have it.";
 export const TASK_ERROR_RESULT_CLASS = "task_error_result";
@@ -560,26 +559,11 @@ export class TurnRuntime {
     let attempts = 0;
     let delivered = !isDeliveryOwed(result);
     let streamOutputProduced = result.streamOutputProduced === true;
-    // Local-admin text delivery, checked BEFORE nudging: routed CLI sessions
-    // have no SendMessage tool, so nudging can never succeed — it would only
-    // burn extra turns. The settle result carries the run's accumulated text
-    // (turn-settle's collectText); deliver it through the stock pipeline.
-    const deliverUndeliveredText = (result: unknown): boolean => {
-      const undeliveredRaw = (result as { readonly text?: unknown }).text;
-      if (typeof undeliveredRaw !== "string") return false;
-      const undelivered = undeliveredRaw.trim();
-      if (undelivered.length === 0) return false;
-      if (epoch !== this.tm.sendPipeline.currentTurnEpoch(session)) return false;
-      this.handleAgentUpdate({
-        type: "send-message",
-        message: { type: "text", content: undelivered },
-        timestampMs: Date.now(),
-      }, session);
-      return true;
-    };
-    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     while (
-      isDeliveryOwed(latest) &&
+      !delivered &&
+      !latest.aborted &&
+      latest.awaitingUserSelection !== true &&
+      latest.quiescedForUpgrade !== true &&
       attempts < MAX_REPLY_NUDGES &&
       epoch === this.tm.sendPipeline.currentTurnEpoch(session)
     ) {
@@ -597,6 +581,7 @@ export class TurnRuntime {
     if (
       latest.endedOnSilentToolCalls === true &&
       !latest.aborted &&
+      latest.quiescedForUpgrade !== true &&
       latest.awaitingUserSelection !== true &&
       epoch === this.tm.sendPipeline.currentTurnEpoch(session)
     ) {
@@ -622,13 +607,6 @@ export class TurnRuntime {
         });
       }
     }
-    // Local-admin text delivery: stock semantics show the user ONLY
-    // SendMessage deliveries, and the nudge loop above exists to enforce that
-    // discipline. Routed CLI sessions (the local box plane) were never taught
-    // it and have no SendMessage tool — without this seam their completed
-    // answer stays invisible while the backend logs look perfectly green
-    // (observed live). When nudging cannot help, deliver the run's own text.
-    if (delivered !== true && latest.aborted !== true && latest.awaitingUserSelection !== true && isLocalAdminEnabled() && deliverUndeliveredText(latest)) delivered = true;
     return {
       result: latest,
       replyNudgeAttempts: attempts,
