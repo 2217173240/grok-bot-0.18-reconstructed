@@ -209,7 +209,7 @@ export interface ConversationAgentSummary {
 
 export type ConversationAgentLastEntry =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "attachment"; readonly count: number; readonly kinds: Readonly<Record<string, number>> }
+  | { readonly kind: "attachment"; readonly count: number; readonly kinds: ReadonlyArray<{ readonly kind: string; readonly count: number }> }
   | { readonly kind: "link"; readonly url: string };
 
 export type TranscriptDelivery = "sent" | "pending" | "queued" | "failed";
