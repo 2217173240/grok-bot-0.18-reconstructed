@@ -122,6 +122,7 @@ import { journalOutcomeTelemetry } from "./journal-outcome-telemetry.js";
 import { resolveSandBoxIdentityTags } from "../../ports/telemetry.js";
 import { AnalyticsService } from "../../../packages/proto/generated/aiserver/v1/analytics_connect.js";
 import { createSandCursorBackendClient } from "../../../shared/node/cursor-backend/cursor-inference.js";
+import { appendLocalPerformance, localPerformanceCorrelationHash } from "../../../shared/node/local-performance.js";
 
 export type LogLevel = "info" | "warn" | "error";
 export type Metadata = Record<string, string | undefined>;
@@ -349,6 +350,7 @@ export class SandStructuredLogTelemetry {
   ): void {
     const e = autoReviewApprovalTelemetry(r);
     this.enqueue("info", e.event, e.metadata);
+    try { const status = ["approved", "denied", "expired", "dismissed"].includes(String(r.status)) ? String(r.status) as "approved" | "denied" | "expired" | "dismissed" : "observed"; appendLocalPerformance({ phase: "approval", outcome: status, durationMs: Math.max(0, Number(r.ageMs)), correlationHash: localPerformanceCorrelationHash(String(r.approvalId)) }); } catch { /* 本地性能记录失败不能影响审批结果。 */ }
   }
   reportAutomationRun(r: Parameters<typeof automationRunTelemetry>[0]): void {
     this.mapped(automationRunTelemetry(r));
@@ -532,21 +534,25 @@ export class SandStructuredLogTelemetry {
   }
   reportTtft(r: Parameters<typeof ttftTelemetry>[0]): void {
     this.mapped(ttftTelemetry(r));
+    if (typeof r.ttftMs === "number" && Number.isFinite(r.ttftMs) && r.ttftMs >= 0) try { appendLocalPerformance({ phase: "ttft", outcome: "observed", durationMs: r.ttftMs, ...(typeof r.conversationId === "string" ? { correlationHash: localPerformanceCorrelationHash(r.conversationId) } : {}) }); } catch { /* 本地性能记录失败不能影响 TTFT。 */ }
   }
   reportSendDispatch(r: Parameters<typeof sendDispatchTelemetry>[0]): void {
     this.mapped(sendDispatchTelemetry(r));
+    if (typeof r.dispatchMs === "number" && Number.isFinite(r.dispatchMs) && r.dispatchMs >= 0) try { appendLocalPerformance({ phase: "dispatch", outcome: "observed", durationMs: r.dispatchMs, ...(typeof r.conversationId === "string" ? { correlationHash: localPerformanceCorrelationHash(r.conversationId) } : {}) }); } catch { /* 本地性能记录失败不能影响 dispatch。 */ }
   }
   reportQueueAccepted(r: Parameters<typeof queueAcceptedTelemetry>[0]): void {
     this.mapped(queueAcceptedTelemetry(r));
   }
   reportQueueDequeued(r: Parameters<typeof queueDequeuedTelemetry>[0]): void {
     this.mapped(queueDequeuedTelemetry(r));
+    if (typeof r.queueWaitMs === "number" && Number.isFinite(r.queueWaitMs) && r.queueWaitMs >= 0) try { appendLocalPerformance({ phase: "queue", outcome: "observed", durationMs: r.queueWaitMs, ...(typeof r.conversationId === "string" ? { correlationHash: localPerformanceCorrelationHash(r.conversationId) } : {}) }); } catch { /* 本地性能记录失败不能影响 queue。 */ }
   }
   reportQueueWatchdog(r: Parameters<typeof queueWatchdogTelemetry>[0]): void {
     this.mapped(queueWatchdogTelemetry(r));
   }
   reportAckObligation(r: Parameters<typeof ackObligationTelemetry>[0]): void {
     this.mapped(ackObligationTelemetry(r));
+    if (typeof r.timeToFirstVisibleAckMs === "number" && Number.isFinite(r.timeToFirstVisibleAckMs) && r.timeToFirstVisibleAckMs >= 0) try { appendLocalPerformance({ phase: "delivery", outcome: "observed", durationMs: r.timeToFirstVisibleAckMs, ...(typeof r.conversationId === "string" ? { correlationHash: localPerformanceCorrelationHash(r.conversationId) } : {}) }); } catch { /* 本地性能记录失败不能影响 delivery。 */ }
   }
   reportPendingWake(r: Parameters<typeof pendingWakeTelemetry>[0]): void {
     this.mapped(pendingWakeTelemetry(r));
