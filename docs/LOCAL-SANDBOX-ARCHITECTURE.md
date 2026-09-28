@@ -89,6 +89,22 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 8. 本地网络拦截在 Electron、host、coordinator 入口安装，多次安装保留同一 fetch 包装器。它是应用层保护，不能代替容器出口防火墙。
 9. 本地配置文件保留 HTTP headers，读取时区分文件缺失和内容损坏。HTTP MCP 使用 Streamable HTTP；显式配置的旧 SSE endpoint 会给出不支持提示。
 
+## 本地性能测量
+
+local admin 且 `SAND_DISABLE_TELEMETRY=1` 时，性能数据写入现有数据目录的 `local-intercept.jsonl`。记录使用固定阶段、provider、结果分类、毫秒耗时和 token 计数；关联标识保存为截短 SHA-256。性能字段不包含提示词、回复、工具名称、参数、模型地址或凭据。文件权限为 `0600`，沿用诊断文件的容量轮换规则，因此汇总反映文件中保留的样本。
+
+开发环境使用以下命令汇总指定文件；容器中的文件应复制到本地私有目录后读取，不提交到仓库：
+
+```sh
+node scripts/summarize-local-performance.mjs <local-intercept.jsonl>
+```
+
+汇总按阶段、provider、执行模式和结果分组，显示样本数量及 nearest-rank P50/P95。缺失字段保持未知，数值零保持零。Claude 的输入总数包含普通输入、缓存读取和缓存创建；OpenAI 兼容及 Codex 的输入数已经包含缓存读取。只有分母与对应缓存字段都存在时才计算比例。不同阶段可能互相包含，不能将所有耗时直接相加：`tool-bridge` 包含 bridge 与权限等待，`tool` 对应 host 执行；provider 总时间包含输出和清理，`firstOutputMs` 与 `firstTextMs` 分别表示首次有效输出和首次非空文字。
+
+记录在请求和阶段结束时产生，不逐 token 写入。诊断写入失败保持原请求和工具结果；执行与清理本身的失败仍按原路径报告。汇总程序对非法已知记录明确报错，错误信息仅包含输入序号和行号。当前记录格式为 schemaVersion 1。
+
+一万次连续写入并经历容量轮换的隔离测量中，当前 Node 22 容器 P50 为 0.010ms、P95 为 0.029ms、P99 为 0.098ms，最大值为 3.809ms。Mac Node 26 同批次 P95 为 0.156ms。该数据只覆盖诊断写入成本；当前保持同步写入，尚无证据支持增加异步队列与退出刷新状态。
+
 ## 重要与紧急矩阵
 
 | 顺序 | 重要程度 / 紧急程度 | 工作与完成标准 | 本次状态 |
