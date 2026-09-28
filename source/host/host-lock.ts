@@ -148,7 +148,14 @@ export async function acquireHostLock(options: { path?: string; pid?: number; is
       const holder = readLockRecord(path);
       if (holder !== null) {
         previousPid ??= holder.pid;
-        if ("ownerToken" in holder) outcome = outcome === "took-over" ? outcome : "reclaimed-stale";
+        if ("ownerToken" in holder) {
+          if (isAlive(holder.pid)) {
+            const start = readProcessStartId(holder.pid);
+            if (start === null) throw new Error("Cannot verify the live host lock owner");
+            if (start === holder.processStartId && hostCheck(holder.pid)) throw new Error("A live host still owns the metadata; the host lock guard may have been replaced");
+          }
+          outcome = outcome === "took-over" ? outcome : "reclaimed-stale";
+        }
         else if (holder.pid === pid) outcome = "reclaimed-stale";
         else if (!isAlive(holder.pid)) outcome = "reclaimed-dead";
         else if (!hostCheck(holder.pid)) outcome = "reclaimed-foreign";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, writeFile, readFile, stat, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile, stat, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -63,7 +63,13 @@ test('真实并发进程在整个持有期间互斥，接管等待旧进程退�
   const workers = await Promise.all(Array.from({ length: 12 }, () => worker(t, lockPath)));
   const results = await Promise.all(workers.map(w => w.go()));
   assert(results.some(r => r.acquired));
-  for (const w of workers) if (w.proc.exitCode === null && w.proc.signalCode === null) w.proc.send('release');
+  await Promise.all(workers.map(async w => {
+    if (!w.proc.connected) return;
+    await new Promise((resolve, reject) => w.proc.send('release', error => {
+      if (error && error.code !== 'ERR_IPC_CHANNEL_CLOSED') reject(error);
+      else resolve();
+    }));
+  }));
   await Promise.all(workers.map(w => w.ended));
   const active = new Set();
   for (const line of (await readFile(lockPath + '.events', 'utf8')).trim().split('\n')) {
@@ -165,4 +171,19 @@ test('既有 WAL guard 转为 rollback journal，真实 SQLite busy 不改元数
     await assert.rejects(acquireHostLock({ path: lockPath }), /remained busy/);
     await assert.rejects(stat(lockPath), { code: 'ENOENT' });
   } finally { guard.exec('ROLLBACK'); guard.close(); }
+});
+
+test('真实 guard 被改名替换后拒绝与存活 host 并行持有', async t => {
+  const lockPath = path.join(directory, 'replaced-guard.lock');
+  const child = await worker(t, lockPath);
+  assert.deepEqual(await child.go(), { acquired: true });
+  const metadata = await readFile(lockPath, 'utf8');
+  const originalInode = (await stat(lockPath + '.sqlite')).ino;
+  await rename(lockPath + '.sqlite', lockPath + '.sqlite.previous');
+  await assert.rejects(acquireHostLock({ path: lockPath }), /guard may have been replaced/);
+  assert.notEqual((await stat(lockPath + '.sqlite')).ino, originalInode);
+  assert.equal(await readFile(lockPath, 'utf8'), metadata);
+  process.kill(child.proc.pid, 0);
+  child.proc.send('release');
+  await child.ended;
 });
