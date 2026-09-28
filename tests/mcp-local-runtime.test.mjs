@@ -101,6 +101,8 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
   const marker = path.join(dir, "started");
   const loading = host.load(JSON.stringify({ mcpServers: { slow: { command: process.execPath, args: [path.join(root, "tests/fixtures/mcp-paged-server.mjs"), "--startup-marker", marker, ...(ignoreTermination ? ["--ignore-sigterm"] : [])] } } }));
   const rejected = assert.rejects(loading, /disposed/);
+  const repeatedLoading = host.load(JSON.stringify({ mcpServers: { slow: { command: process.execPath, args: [path.join(root, "tests/fixtures/mcp-paged-server.mjs"), "--startup-marker", marker, ...(ignoreTermination ? ["--ignore-sigterm"] : [])] } } }));
+  const repeatedRejected = assert.rejects(repeatedLoading, /disposed/);
   try {
     const deadline = Date.now() + 3_000;
     while (!existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
@@ -110,6 +112,7 @@ for (const ignoreTermination of [false, true]) test(`关闭正在初始化的真
     assert.equal(host.dispose(), closing);
     await closing;
     await rejected;
+    await repeatedRejected;
     await assertProcessStopped(pid);
   } finally {
     await host.dispose();
