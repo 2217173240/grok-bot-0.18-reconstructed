@@ -596,6 +596,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       const toolGuidance = hosted
         ? `${claudeLocalToolsPrompt()}\nCurrently available tools: ${[...hostToolNames].join(", ")}. Tool actions use Grok Bot approvals.`
         : "This request has no tools. Respond from the supplied conversation.";
+      dispatchMs = performance.now() - startedPerfMs;
       try { for await (const message of queryClaude({ prompt: textOnly ? JSON.stringify(messages) : claudePrompt(messages, toolGuidance), options: {
         pathToClaudeCodeExecutable: executable,
         cwd: resolveAgentWorkspace(),
@@ -621,7 +622,6 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
-        dispatchMs ??= performance.now() - startedPerfMs;
         if (message.type === "result") { final = message; continue; }
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
           const delta = message.event.delta.text;
@@ -639,6 +639,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       if (final.subtype !== "success") throw new Error(final.errors.join("\n") || `Claude Code failed (${final.subtype}).`);
       if (pendingTools.size > 0) throw new Error("Claude Code ended before returning its tool results.");
       const text = streamedText || final.result;
+      if (firstTextMs === undefined && text.length > 0) firstTextMs = performance.now() - startedPerfMs;
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
       usageRecord = { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite };
       options?.onUsage?.(usageRecord);
