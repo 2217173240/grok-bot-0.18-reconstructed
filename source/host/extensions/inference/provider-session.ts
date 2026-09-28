@@ -827,10 +827,10 @@ export function chatCompletionsExecutor(provider: RoutedProvider, model: Languag
       const cleanupStarted = performance.now();
       try {
         if (!complete) {
-          // AI SDK 的 iterable 没有 return；取消请求并关闭我们持有的 reader。
+          // 取消请求后读至终止，确保 SDK 合并流的异步工作完成再释放 reader。
           requestController.abort();
           streamFailure.reject(requestSignal.reason);
-          try { await reader.cancel(); }
+          try { while (!(await reader.read()).done) {} }
           catch (error) {
             if (error !== streamError && error !== requestSignal.reason) {
               measured.cleanupFailed();

@@ -172,3 +172,32 @@ test("真实 Codex HTTP transport 的稀疏 usage 与请求测量", { timeout: 1
     } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   }
 });
+
+test("文字分类提前拒绝超限文本和非法工具时保留原始错误并释放 HTTP", { timeout: 5000 }, async () => {
+  for (const scenario of ["oversize", "illegal-tool"]) for (const hold of [false, true]) {
+    const responseClosed = Promise.withResolvers();
+    const socketClosed = Promise.withResolvers();
+    const server = createServer(async (req, res) => {
+      res.once("close", responseClosed.resolve);
+      req.socket.once("close", socketClosed.resolve);
+      for await (const _chunk of req) {}
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const base = { id: scenario, object: "chat.completion.chunk", created: 1, model: "local" };
+      const delta = scenario === "oversize" ? { content: "x".repeat(16385) } : { tool_calls: [{ index: 0, id: "call", type: "function", function: { name: "unexpected", arguments: "{}" } }] };
+      res.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
+      if (!hold) res.end(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+    });
+    const url = await listen(server);
+    try {
+      const model = createOpenAI({ apiKey: "local", baseURL: `${url}/v1`, compatibility: "compatible" }).chat("local");
+      const ctx = api.createContext();
+      const result = api.chatCompletionsExecutor("openrouter", model, [{ role: "user", content: "Classify" }], scenario, [], undefined, ctx.signal, "Text only");
+      await assert.rejects(api.consumeTextOnlyCompletion(ctx, result), scenario === "oversize" ? /response is too large/ : /returned a tool call/);
+      if (hold) {
+        await closedBeforeServerCleanup(responseClosed.promise, `${scenario} response`);
+        await closedBeforeServerCleanup(socketClosed.promise, `${scenario} socket`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+  }
+});
