@@ -30,6 +30,7 @@ test("structured telemetry mapper writes only measured local phases", async () =
     assert.match(ledger, /"phase":"delivery"/);
     assert.match(ledger, /"phase":"approval"/);
     assert.doesNotMatch(ledger, /conversation-secret|approval-secret|computer/);
+    await telemetry.dispose();
   } finally {
     for (const [key, value] of Object.entries({ SAND_DATA_ROOT: previous.root, SAND_LOCAL_ADMIN: previous.admin, SAND_DISABLE_TELEMETRY: previous.disabled })) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(dataRoot, { recursive: true, force: true });
@@ -48,14 +49,21 @@ test("missing or invalid mapper durations and disabled local mode do not write r
     telemetry.reportTtft({ conversationId: "invalid", ttftMs: Number.NaN, skew: "none" });
     telemetry.reportTtft({ conversationId: "invalid", ttftMs: -1, skew: "none" });
     telemetry.reportQueueDequeued({ conversationId: "invalid", queueWaitMs: null });
-    await assert.rejects(readFile(path.join(dataRoot, "local-intercept.jsonl")));
+    for (const duration of [undefined, NaN, -1, null]) {
+      telemetry.reportAutoReviewApproval({ status: "pending", ageMs: duration });
+      telemetry.reportSendDispatch({ dispatchMs: duration });
+      telemetry.reportAckObligation({ timeToFirstVisibleAckMs: duration });
+    }
+    await assert.rejects(readFile(path.join(dataRoot, "local-intercept.jsonl")), { code: "ENOENT" });
     process.env.SAND_DISABLE_TELEMETRY = "0";
     telemetry.reportTtft({ conversationId: "disabled", ttftMs: 4, skew: "none" });
-    await assert.rejects(readFile(path.join(dataRoot, "local-intercept.jsonl")));
+    await assert.rejects(readFile(path.join(dataRoot, "local-intercept.jsonl")), { code: "ENOENT" });
     const notDir = path.join(dataRoot, "not-a-directory");
     await writeFile(notDir, "x");
     process.env.SAND_DATA_ROOT = notDir;
+    process.env.SAND_DISABLE_TELEMETRY = "1";
     assert.doesNotThrow(() => telemetry.reportTtft({ conversationId: "enotdir", ttftMs: 4, skew: "none" }));
+    await telemetry.dispose();
   } finally {
     for (const [key, value] of Object.entries({ SAND_DATA_ROOT: previous.root, SAND_LOCAL_ADMIN: previous.admin, SAND_DISABLE_TELEMETRY: previous.disabled })) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(dataRoot, { recursive: true, force: true });
@@ -76,10 +84,16 @@ test("ForwardingInteractionListener records only paired completed tools", async 
     await listener.sendUpdate({}, { message: { case: "partialToolCall", value: { callId: "call-1", toolCall } } });
     await listener.sendUpdate({}, { message: { case: "toolCallCompleted", value: { callId: "call-1", toolCall } } });
     await listener.sendUpdate({}, { message: { case: "toolCallCompleted", value: { callId: "unpaired", toolCall } } });
+    await listener.sendUpdate({}, { message: { case: "toolCallStarted", value: { callId: "unfinished", toolCall } } });
     await listener.sendUpdate({}, { message: { case: "turnEnded", value: {} } });
+    await listener.sendUpdate({}, { message: { case: "toolCallCompleted", value: { callId: "unfinished", toolCall } } });
+    const failed = { tool: { case: "mcpToolCall", value: { args: { providerIdentifier: "claude-code" }, result: { result: { case: "error", value: { error: "secret-error" } } } } } };
+    await listener.sendUpdate({}, { message: { case: "toolCallStarted", value: { callId: "failed", toolCall: failed } } });
+    await listener.sendUpdate({}, { message: { case: "toolCallCompleted", value: { callId: "failed", toolCall: failed } } });
     const ledger = await readFile(path.join(dataRoot, "local-intercept.jsonl"), "utf8");
-    assert.equal((ledger.match(/"phase":"tool"/g) ?? []).length, 1);
-    assert.doesNotMatch(ledger, /call-1|providerIdentifier|test/);
+    const rows = ledger.trim().split("\n").map(JSON.parse);
+    assert.deepEqual(rows.map(row => row.outcome), ["success", "failed"]);
+    assert.doesNotMatch(ledger, /call-1|providerIdentifier|test|secret-error/);
   } finally {
     for (const [key, value] of Object.entries({ SAND_DATA_ROOT: previous.root, SAND_LOCAL_ADMIN: previous.admin, SAND_DISABLE_TELEMETRY: previous.disabled })) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(dataRoot, { recursive: true, force: true });
@@ -99,9 +113,12 @@ test("SandTurnTelemetryImpl finalization records one local turn duration", async
     turn.finalize("success"); turn.finalize("error", undefined, { message: "secret-error-detail" });
     const cancelled = telemetry.startTurn({ conversationId: "cancel-secret", turnType: "user" });
     cancelled.finalize("cancelled");
+    const failed = telemetry.startTurn({ conversationId: "failed-secret", turnType: "user" });
+    failed.finalize("error", undefined, { message: "secret-error-detail" });
     const ledger = await readFile(path.join(dataRoot, "local-intercept.jsonl"), "utf8");
-    assert.equal((ledger.match(/"phase":"turn"/g) ?? []).length, 2);
-    assert.doesNotMatch(ledger, /turn-secret|cancel-secret|secret-error-detail/);
+    assert.deepEqual(ledger.trim().split("\n").map(JSON.parse).map(row => row.outcome), ["success", "cancelled", "failed"]);
+    assert.doesNotMatch(ledger, /turn-secret|cancel-secret|failed-secret|secret-error-detail/);
+    await telemetry.dispose();
   } finally {
     for (const [key, value] of Object.entries({ SAND_DATA_ROOT: previous.root, SAND_LOCAL_ADMIN: previous.admin, SAND_DISABLE_TELEMETRY: previous.disabled })) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(dataRoot, { recursive: true, force: true });
