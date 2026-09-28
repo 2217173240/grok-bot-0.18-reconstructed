@@ -1,0 +1,12 @@
+export { createLocalProviderSmartModeClassifierExecutor, parseLocalAutoReviewDecision, LOCAL_AUTO_REVIEW_INSTRUCTIONS } from "../../source/host/extensions/auto-review/local-provider-classifier.js";
+export { consumeTextOnlyCompletion } from "../../source/host/extensions/inference/text-only-completion.js";
+export { createRoutedTextOnlyInference } from "../../source/host/extensions/inference/inference-service.js";
+export { chatCompletionsExecutor, createProviderPromptSession, claudeToolsForRequest } from "../../source/host/extensions/inference/provider-session.js";
+export { createContext } from "../../source/packages/context/core.js";
+export { SmartModeClassifierArgs, SmartModeClassifierConversationMessage, SmartModeRiskTarget } from "../../source/packages/proto/generated/agent/v1/smart_mode_classifier_exec_pb.js";
+export { RegistryResourceAccessor } from "../../source/packages/agent-exec/resource-provider.js";
+export { smartModeClassifierExecutorResource } from "../../source/packages/agent-exec/smart-mode-classifier.js";
+export { runSandAutoReviewClassifier } from "../../source/host/runner/sand-auto-review-classifier-run.js";
+export { SandSettingsStore } from "../../source/shared/node/settings/sand-settings-store.js";
+export { resolveSandAutoReviewModes } from "../../source/host/runner/sand-auto-review.js";
+export { filterTurnToolsForLocalMode } from "../../source/host/runner/tools/turn-toolset.js";

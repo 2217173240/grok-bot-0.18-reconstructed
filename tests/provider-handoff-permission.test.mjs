@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -7,7 +7,7 @@ import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-test("human handoff permits only the exact Bash handback command", async () => {
+test("人工接管阻断 host 写入与原生工具，并保留接管文件", async () => {
   await mkdir(path.join(root, ".cache"), { recursive: true });
   const workspace = await mkdtemp(path.join(root, ".cache/provider-handoff-"));
   const previousAdmin = process.env.SAND_LOCAL_ADMIN;
@@ -24,12 +24,23 @@ test("human handoff permits only the exact Bash handback command", async () => {
     await mkdir(path.dirname(askPath), { recursive: true });
     await writeFile(askPath, "{}\n");
     assert.equal(awaitingHumanAskFilePath({ SAND_WORKSPACE_ROOT: workspace }), askPath);
-    assert.equal(claudeToolPermission("Bash", { command: "rm .grokbot/ask-human.json" }, "never").behavior, "allow");
-    assert.equal(claudeToolPermission("Bash", { command: `unlink ${askPath}` }, "never").behavior, "allow");
-    for (const command of ["touch x; rm .grokbot/ask-human.json", "rm .grokbot/ask-human.json; touch x", "echo ask-human.json && rm x"]) {
-      assert.equal(claudeToolPermission("Bash", { command }, "never").behavior, "deny", command);
+    for (const permission of ["never", "ask", "always", undefined]) {
+      for (const command of ["rm .grokbot/ask-human.json", `unlink ${askPath}`, "touch x; rm .grokbot/ask-human.json", "rm .grokbot/ask-human.json; touch x", "echo ask-human.json && rm x"]) {
+        const input = Object.freeze({ command });
+        for (const tool of ["Bash", "mcp__grok_bot_host_tools__Shell"]) {
+          assert.equal(claudeToolPermission(tool, input, permission).behavior, "deny", tool);
+          assert.deepEqual(input, { command });
+        }
+      }
+      for (const tool of ["Read", "ExternalRead", "Screenshot", "GetMcpTools"]) {
+        const input = Object.freeze({ path: askPath });
+        const decision = claudeToolPermission(`mcp__grok_bot_host_tools__${tool}`, input, permission);
+        assert.equal(decision.behavior, "allow", tool);
+        assert.equal(decision.updatedInput, input);
+      }
     }
     assert.equal(claudeToolPermission("Write", { command: "rm .grokbot/ask-human.json" }, "never").behavior, "deny");
+    assert.equal(await readFile(askPath, "utf8"), "{}\n");
   } finally {
     if (previousAdmin === undefined) delete process.env.SAND_LOCAL_ADMIN;
     else process.env.SAND_LOCAL_ADMIN = previousAdmin;

@@ -1,5 +1,6 @@
 import type { HostInferenceOptions } from "./inference-service.js";
 import type { SummarizationPromptSession } from "../../../packages/agent-summarization/summarization-handler.js";
+import type { TextOnlyInferenceOwner } from "./text-only-completion.js";
 
 export interface InferenceExtensionContext {
   deps: {
@@ -31,7 +32,7 @@ export interface AgentPromptSessionOwner {
  * preserves their identity instead of making the runner rediscover or
  * synthesize privacy/media behavior.
  */
-export interface AgentInferenceOwner extends AgentPromptSessionOwner {
+export interface AgentInferenceOwner extends AgentPromptSessionOwner, TextOnlyInferenceOwner {
   resolvePrivacyMode(): Promise<unknown> | unknown;
   getGeminiVideoAttachedMediaUrlProvider?(): unknown | undefined;
   createSummarizationSession?(

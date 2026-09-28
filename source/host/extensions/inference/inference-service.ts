@@ -8,6 +8,25 @@ import type { SandInferenceProvider } from "../../../shared/inference-router.js"
 import type { PromptExecutor } from "./sand-labeling.js";
 import { createProviderPromptSession } from "./provider-session.js";
 import { getSandRootDir } from "../../host-paths.js";
+import type { Context } from "../../../packages/context/core.js";
+import { consumeTextOnlyCompletion, type TextOnlyCompletionStream, type TextOnlyInferenceOwner } from "./text-only-completion.js";
+export function createRoutedTextOnlyInference(routerSettings: Pick<SandSettingsStore, "getInferenceProvider">): TextOnlyInferenceOwner {
+  return {
+    async completeTextOnly(context: Context, instructions: string, input: string): Promise<string> {
+      context.signal.throwIfAborted();
+      const provider = routerSettings.getInferenceProvider();
+      if (provider === "cursor") throw new Error("Auto-review requires a configured third-party provider in Settings → Router.");
+      const session = createProviderPromptSession(provider, { textOnlyInstructions: instructions });
+      const [requestContext, cancel] = context.withCancel();
+      try {
+        const executor = session.getExecutor([{ role: "user", content: input }]);
+        return await consumeTextOnlyCompletion(requestContext, executor.stream(requestContext, crypto.randomUUID(), []) as TextOnlyCompletionStream);
+      } finally {
+        cancel();
+      }
+    },
+  };
+}
 export interface HostInferenceOptions {
   auth: { getAccessToken(...args: unknown[]): Promise<string>; getMachineId(): string };
   experiments: { checkFeatureGate(name: string): boolean; getComputerUseModelOverride(): SandAgentModelSelection | undefined; getBrowserUseModelOverride(): SandAgentModelSelection | undefined; getSandModelExperimentState(): SandModelExperimentState | null | undefined; hasHydratedStatsigUserId(): boolean; getConfiguredDefaultModel(): SandAgentModelSelection | undefined; getConfiguredAutomationsModel(): SandAgentModelSelection | undefined };
@@ -55,6 +74,7 @@ export function createHostInference(options: HostInferenceOptions) {
   });
   return {
     ...cursor,
+    ...createRoutedTextOnlyInference(routerSettings),
     createSession(onRequestId: (requestId: string) => void, sessionOptions?: Parameters<typeof cursor.createSession>[1]) {
       const provider = routerSettings.getInferenceProvider();
       if (provider === "cursor") return routedSession(cursor.createSession(onRequestId, sessionOptions), provider);

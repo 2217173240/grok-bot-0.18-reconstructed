@@ -7,6 +7,9 @@ import {
   type AutoReviewServiceDeps,
 } from "./auto-review-service.js";
 import { createSandBackendSmartModeClassifierExecutor } from "./sand-backend-smart-mode-classifier-exec.js";
+import { createLocalProviderSmartModeClassifierExecutor } from "./local-provider-classifier.js";
+import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
+import type { TextOnlyInferenceOwner } from "../inference/text-only-completion.js";
 
 type AutoReviewAuth = Parameters<typeof createSandBackendSmartModeClassifierExecutor>[0];
 type AutoReviewClassifier = ReturnType<typeof createSandBackendSmartModeClassifierExecutor>;
@@ -31,6 +34,7 @@ export const autoReviewExtension = defineHostExtension<
     HostExtensions.Settings,
     HostExtensions.Telemetry,
     HostExtensions.Transcript,
+    HostExtensions.Inference,
   ],
   start: (context) => {
     const auth = context.deps[HostExtensions.Auth] as AutoReviewAuth;
@@ -48,8 +52,10 @@ export const autoReviewExtension = defineHostExtension<
       awaitingSink: transcript.createAwaitingStateSink(),
       transcript,
       hostGeneration: SAND_AUTO_REVIEW_HOST_GENERATION,
-      localMode: parseLocalAutoReviewMode(process.env.SAND_AUTO_REVIEW_MODE)!,
-      createClassifierExecutor: createSandBackendSmartModeClassifierExecutor,
+      localMode: isLocalAdminEnabled() ? "enforce" : parseLocalAutoReviewMode(process.env.SAND_AUTO_REVIEW_MODE)!,
+      createClassifierExecutor: isLocalAdminEnabled()
+        ? () => createLocalProviderSmartModeClassifierExecutor((context.deps[HostExtensions.Inference] as { readonly port: TextOnlyInferenceOwner }).port)
+        : createSandBackendSmartModeClassifierExecutor,
     });
     context.onStop(() => service.stop());
     const startedAtMs = Date.now();

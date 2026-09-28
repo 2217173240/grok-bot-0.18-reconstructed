@@ -21,7 +21,6 @@ import {
   type ShellWatchResourceAccessor,
 } from "./shell-terminal-watch.js";
 import type {
-  TurnAgentMcpTurnProvider,
   TurnAgentScope,
   TurnAgentSessions,
 } from "./turn-agent-composition.js";
@@ -29,7 +28,7 @@ import type {
   PromptSnapshotStore,
 } from "./system-prompt-assembly.js";
 import type { SummarizationPromptSession } from "../../packages/agent-summarization/summarization-handler.js";
-import { createProviderPromptSession, type HostMcpTools, type ProviderToolEvent } from "../extensions/inference/provider-session.js";
+import { createProviderPromptSession, type ProviderToolEvent } from "../extensions/inference/provider-session.js";
 import { getSandRootDir } from "../host-paths.js";
 import { SandSettingsStore } from "../../shared/node/settings/sand-settings-store.js";
 import type { AgentProfilePromptSnapshot } from "./sand-agent-profile-prompt.js";
@@ -93,8 +92,6 @@ export interface TurnAgentRunContextInput<ContextValue> {
   readonly conversationId: string;
   readonly requestId: string;
   readonly inference: TurnAgentInferenceOwner;
-  /** Plugin tools of this computer, for a CLI child that runs here. */
-  readonly mcp?: TurnAgentMcpTurnProvider;
   readonly onRequestId: (requestId: string) => void;
   readonly onProviderToolEvent?: (event: ProviderToolEvent) => void;
   readonly modelId?: string;
@@ -188,21 +185,6 @@ export async function createTurnAgentRunContext<ContextValue>(
   };
   const localSettings = new SandSettingsStore(join(getSandRootDir(), "settings.json"));
   const inferenceProvider = localSettings.getInferenceProvider();
-  // The plugin tools live on this computer's MCP host. The CLI child fetches
-  // them from a loopback bridge, so the session is given the two calls the
-  // bridge needs; without them the model has no plugin tools at all.
-  const withMcpRequestContext = async <T>(signal: AbortSignal, action: (ctx: Context) => Promise<T>): Promise<T> => {
-      const [callContext, cancel] = (input.context as Context).withCancel();
-      const abort = () => cancel(signal.reason);
-      if (signal.aborted) abort();
-      else signal.addEventListener("abort", abort, { once: true });
-      try { return await action(callContext); }
-      finally { signal.removeEventListener("abort", abort); cancel(); }
-  };
-  const mcpTools: HostMcpTools | undefined = input.mcp?.listTools == null || input.mcp.executeTool == null ? undefined : {
-    listTools: signal => withMcpRequestContext(signal, ctx => input.mcp!.listTools!(ctx)),
-    callTool: tool => withMcpRequestContext(tool.signal, ctx => input.mcp!.executeTool!(ctx, tool)),
-  };
   const agent = inferenceProvider === "cursor"
     ? input.inference.createSession(input.onRequestId, sessionOptions)
     // The box workspace is bind-mounted from the user's machine, so the local
@@ -210,7 +192,6 @@ export async function createTurnAgentRunContext<ContextValue>(
     // setting only governed the Mac-side tools and the agent kept acting here.
     : createProviderPromptSession(inferenceProvider, {
       localToolPermission: localSettings.getLocalToolPermission(),
-      ...(mcpTools === undefined ? {} : { mcp: mcpTools }),
       ...(input.onProviderToolEvent === undefined ? {} : { onToolEvent: input.onProviderToolEvent }),
     }) as unknown as TurnAgentPromptSession;
   const summarizationSession = inferenceProvider === "cursor" ? input.inference.createSummarizationSession?.(

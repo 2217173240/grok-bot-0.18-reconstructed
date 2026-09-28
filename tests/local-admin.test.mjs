@@ -137,32 +137,33 @@ test("the agent workspace converges on the shared box-workspace directory", asyn
   }
 });
 
-test("the Mac permission layer enforces the awaiting-human handoff", async () => {
+test("host 工具权限遵守人工接管并拒绝 Shell 删除接管文件", async () => {
   const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
-  const root = await mkdtemp(path.join(os.tmpdir(), "grok-awaiting-perm-"));
+  const root = await mkdtemp(path.join(repoRoot, ".cache", "grok-awaiting-perm-"));
   const previousRoot = process.env.SAND_DATA_ROOT;
   const previousAdmin = process.env.SAND_LOCAL_ADMIN;
   const previousOverride = process.env.SAND_AGENT_WORKSPACE;
+  const previousWorkspace = process.env.SAND_WORKSPACE_ROOT;
   process.env.SAND_DATA_ROOT = root;
-  process.env.SAND_ADMIN = "1";
   process.env.SAND_LOCAL_ADMIN = "1";
   delete process.env.SAND_AGENT_WORKSPACE;
+  process.env.SAND_WORKSPACE_ROOT = path.join(root, "box-workspace");
   try {
     const { claudeToolPermission } = loaded.module;
     await mkdir(path.join(root, "box-workspace", ".grokbot"), { recursive: true });
     const askPath = path.join(root, "box-workspace", ".grokbot", "ask-human.json");
-    // No ask file: local admin allows everything (unchanged behavior).
-    assert.equal(claudeToolPermission("Bash", { command: "docker exec xtest" }).behavior, "allow");
-    // Ask file present: box-driving tools pause with the waiting message…
+    assert.equal(claudeToolPermission("mcp__grok_bot_host_tools__Computer", {}).behavior, "allow");
     await writeFile(askPath, JSON.stringify({ reason: "auth", instruction: "sign in" }));
-    const denied = claudeToolPermission("Bash", { command: "docker exec -i grok-bot-local-vm python3 xtest-input-local.py :1" });
+    const denied = claudeToolPermission("mcp__grok_bot_host_tools__Computer", {});
     assert.equal(denied.behavior, "deny");
     assert.match(denied.message, /awaiting a human handoff/);
-    assert.match(denied.message, /novnc-url/);
-    // …reads stay available, and the hand-back command (rm the ask file) passes.
-    assert.equal(claudeToolPermission("Read", {}).behavior, "allow");
-    const handBack = claudeToolPermission("Bash", { command: `rm ${askPath}` });
-    assert.equal(handBack.behavior, "allow");
+    assert.match(denied.message, /Wait for the user to return control/);
+    assert.equal(claudeToolPermission("mcp__grok_bot_host_tools__Read", {}).behavior, "allow");
+    const handBack = claudeToolPermission("mcp__grok_bot_host_tools__Shell", { command: `rm ${askPath}` });
+    assert.equal(handBack.behavior, "deny");
+    assert.deepEqual(JSON.parse(await readFile(askPath, "utf8")), { reason: "auth", instruction: "sign in" });
+    await rm(askPath);
+    assert.equal(claudeToolPermission("mcp__grok_bot_host_tools__Computer", {}).behavior, "allow");
   } finally {
     if (previousRoot == null) delete process.env.SAND_DATA_ROOT;
     else process.env.SAND_DATA_ROOT = previousRoot;
@@ -170,6 +171,8 @@ test("the Mac permission layer enforces the awaiting-human handoff", async () =>
     else process.env.SAND_LOCAL_ADMIN = previousAdmin;
     if (previousOverride == null) delete process.env.SAND_AGENT_WORKSPACE;
     else process.env.SAND_AGENT_WORKSPACE = previousOverride;
+    if (previousWorkspace == null) delete process.env.SAND_WORKSPACE_ROOT;
+    else process.env.SAND_WORKSPACE_ROOT = previousWorkspace;
     await loaded.dispose();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
@@ -729,32 +732,32 @@ test("local admin never queries the Cursor privacy mode backend", async () => {
   }
 });
 
-test("claude tool permission allows everything in local admin and read-only outside", async () => {
+test("Claude 只允许当前 host 工具，非管理员模式保留只读能力", async () => {
   const loaded = await loadModule("source/host/extensions/inference/provider-session.ts");
-  const root = await mkdtemp(path.join(os.tmpdir(), "grok-tool-policy-"));
+  const root = await mkdtemp(path.join(repoRoot, ".cache", "grok-tool-policy-"));
   const previousAdmin = process.env.SAND_LOCAL_ADMIN;
   const previousRoot = process.env.SAND_DATA_ROOT;
   process.env.SAND_DATA_ROOT = root;
   try {
     process.env.SAND_LOCAL_ADMIN = "1";
-    const allowed = loaded.module.claudeToolPermission("Bash");
+    const allowed = loaded.module.claudeToolPermission("mcp__grok_bot_host_tools__Shell");
     assert.equal(allowed.behavior, "allow");
-    const readAllowed = loaded.module.claudeToolPermission("Read");
+    const readAllowed = loaded.module.claudeToolPermission("mcp__grok_bot_host_tools__Read");
     assert.equal(readAllowed.behavior, "allow");
 
     delete process.env.SAND_LOCAL_ADMIN;
-    const readStill = loaded.module.claudeToolPermission("Read");
+    const readStill = loaded.module.claudeToolPermission("mcp__grok_bot_host_tools__Read");
     assert.equal(readStill.behavior, "allow");
-    const bashDenied = loaded.module.claudeToolPermission("Bash");
+    const bashDenied = loaded.module.claudeToolPermission("mcp__grok_bot_host_tools__Shell");
     assert.equal(bashDenied.behavior, "deny");
     assert.match(bashDenied.message, /SAND_LOCAL_ADMIN=1/);
-    const writeDenied = loaded.module.claudeToolPermission("Write");
+    const writeDenied = loaded.module.claudeToolPermission("mcp__grok_bot_host_tools__Write");
     assert.equal(writeDenied.behavior, "deny");
 
     const interceptLog = path.join(root, "local-intercept.jsonl");
     const log = await readFile(interceptLog, "utf8");
     assert.match(log, /permission-denied/);
-    assert.match(log, /"tool":"Bash"/);
+    assert.match(log, /"tool":"mcp__grok_bot_host_tools__Shell"/);
   } finally {
     if (previousAdmin == null) delete process.env.SAND_LOCAL_ADMIN;
     else process.env.SAND_LOCAL_ADMIN = previousAdmin;
