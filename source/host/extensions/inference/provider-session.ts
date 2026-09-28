@@ -16,6 +16,7 @@ import { readCodexConfiguration } from "../../../shared/node/codex-config.js";
 import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
+import { appendLocalPerformance, localPerformanceCorrelationHash } from "../../../shared/node/local-performance.js";
 import { getSandRootDir } from "../../host-paths.js";
 import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-store.js";
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
@@ -550,6 +551,13 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
   const resultResponse = deferred<ReturnType<typeof response>>();
   const metadata = deferred<Record<string, unknown>>();
   const fullStream = (async function* () {
+    const startedPerfMs = performance.now();
+    let spawnMs: number | undefined;
+    let dispatchMs: number | undefined;
+    let firstTextMs: number | undefined;
+    let requestMode: "text-only" | "hosted" = options?.textOnlyInstructions !== undefined ? "text-only" : "hosted";
+    let usageRecord: UsageRecord | undefined;
+    let outcome: "success" | "failed" | "cancelled" = "failed";
     // 每次请求只持有当前 host 工具桥，关闭流时释放桥接资源。
     let hostBridge: ReturnType<typeof createHostToolsMcpBridge> | undefined;
     const pendingTools = new Map<string, string>();
@@ -557,6 +565,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     const abortController = new AbortController();
     const processes = createClaudeProcessOwner(child => {
       child.stderr?.resume();
+      spawnMs ??= performance.now() - startedPerfMs;
       appendLocalIntercept({ kind: "provider-process", provider: "claude-code", phase: "started", invocationId, pid: child.pid });
     });
     const abort = () => abortController.abort(options?.signal?.reason);
@@ -564,6 +573,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     else options?.signal?.addEventListener("abort", abort, { once: true });
     try {
       const textOnly = options?.textOnlyInstructions !== undefined;
+      requestMode = textOnly ? "text-only" : "hosted";
       const hosted = !textOnly && options?.hostTools !== undefined;
       const hostTools = textOnly ? undefined : options?.hostTools;
       const hostToolNames = new Set(hostTools?.definitions.map(definition => `mcp__grok_bot_host_tools__${definition.name}`) ?? []);
@@ -611,9 +621,11 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
+        dispatchMs ??= performance.now() - startedPerfMs;
         if (message.type === "result") { final = message; continue; }
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
           const delta = message.event.delta.text;
+          firstTextMs ??= performance.now() - startedPerfMs;
           streamedText += delta;
           yield { type: "text-delta" as const, textDelta: delta };
           continue;
@@ -628,7 +640,8 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       if (pendingTools.size > 0) throw new Error("Claude Code ended before returning its tool results.");
       const text = streamedText || final.result;
       const input = final.usage.input_tokens, output = final.usage.output_tokens, cacheRead = final.usage.cache_read_input_tokens ?? 0, cacheWrite = final.usage.cache_creation_input_tokens ?? 0;
-      options?.onUsage?.({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
+      usageRecord = { inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite };
+      options?.onUsage?.(usageRecord);
       usage.resolve({ promptTokens: input, completionTokens: output, totalTokens: input + output });
       extendedUsage.resolve({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite, maxTokens: 0 });
       metadata.resolve({ anthropic: { sessionId: final.session_id, totalCostUsd: final.total_cost_usd } });
@@ -636,8 +649,10 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         recordedMessages.push({ role: "assistant", content: [{ type: "text", text }] });
       }
       resultResponse.resolve(response(text, invocationId, "claude-code", [], recordedMessages));
+      outcome = "success";
       if (streamedText.length === 0 && text.length > 0) yield { type: "text-delta" as const, textDelta: text };
     } catch (error) {
+      outcome = abortController.signal.aborted ? "cancelled" : "failed";
       for (const [id, name] of pendingTools) options?.onToolEvent?.({ id, name, status: "failed" });
       // Reject the deferreds for any late awaiter, then mark each rejection
       // handled: the error already propagates through fullStream, and an
@@ -649,6 +664,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       }
       throw error;
     } finally {
+      const cleanupStartedMs = performance.now();
       abortController.abort();
       try {
         await processes.close();
@@ -660,6 +676,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         }
         await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
         options?.signal?.removeEventListener("abort", abort);
+        appendLocalPerformance({ phase: "provider", provider: "claude-code", mode: requestMode, outcome, durationMs: performance.now() - startedPerfMs, ...(spawnMs === undefined ? {} : { spawnMs }), ...(dispatchMs === undefined ? {} : { dispatchMs }), ...(firstTextMs === undefined ? {} : { firstTextMs }), ...(usageRecord?.inputTokens === undefined ? {} : { inputTokens: usageRecord.inputTokens }), ...(usageRecord?.outputTokens === undefined ? {} : { outputTokens: usageRecord.outputTokens }), ...(usageRecord?.cacheReadTokens === undefined ? {} : { cacheReadTokens: usageRecord.cacheReadTokens }), ...(usageRecord?.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usageRecord.cacheWriteTokens }), cleanupMs: performance.now() - cleanupStartedMs, correlationHash: localPerformanceCorrelationHash(invocationId) });
       }
     }
   })();
