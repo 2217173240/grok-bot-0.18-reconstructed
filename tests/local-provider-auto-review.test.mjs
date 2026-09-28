@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -17,6 +18,63 @@ const bundle = path.join(directory, "runtime.mjs");
 await build({ entryPoints: [path.join(root, "tests/fixtures/local-auto-review-runtime.ts")], outfile: bundle, bundle: true, format: "esm", packages: "external", platform: "node", logLevel: "silent" });
 const runtime = await import(pathToFileURL(bundle).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
+
+test("真实分类请求分别记录自动审查耗时，诊断文件错误保持原判定", { timeout: 10_000 }, async t => {
+  const privateValue = randomUUID();
+  const dataRoot = await mkdtemp(path.join(directory, "timing-"));
+  const previous = Object.fromEntries(["SAND_DATA_ROOT", "SAND_LOCAL_ADMIN", "SAND_DISABLE_TELEMETRY"].map(key => [key, process.env[key]]));
+  Object.assign(process.env, { SAND_DATA_ROOT: dataRoot, SAND_LOCAL_ADMIN: "1", SAND_DISABLE_TELEMETRY: "1" });
+  let scenario = "ALLOW";
+  let accepted;
+  const server = createServer(async (req, res) => {
+    for await (const _chunk of req) {}
+    if (scenario === "cancel") { accepted(); return; }
+    if (scenario === "failure") { res.writeHead(400); res.end(JSON.stringify({ error: { message: privateValue } })); return; }
+    const content = scenario === "invalid" ? privateValue : JSON.stringify({ decision: scenario, ...(scenario === "BLOCK" ? { blockReason: privateValue } : {}) });
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end(`data: ${JSON.stringify({ id: "classification", object: "chat.completion.chunk", created: 1, model: "local", choices: [{ index: 0, delta: { content }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+  });
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const model = createOpenAI({ apiKey: "local-protocol", baseURL: `http://127.0.0.1:${server.address().port}/v1`, compatibility: "compatible" }).chat("local");
+  const inference = { completeTextOnly: (ctx, instructions, input) => runtime.consumeTextOnlyCompletion(ctx, runtime.chatCompletionsExecutor("openrouter", model, [{ role: "user", content: input }], randomUUID(), [], undefined, ctx.signal, instructions)) };
+  const accessor = new runtime.RegistryResourceAccessor();
+  accessor.register(runtime.smartModeClassifierExecutorResource, runtime.createLocalProviderSmartModeClassifierExecutor(inference));
+  const run = ctx => runtime.runSandAutoReviewClassifier({ ctx, resourceAccessor: accessor, toolCallId: randomUUID(), mode: "enforce", buildTarget: () => new runtime.SmartModeRiskTarget({ action: "shell", arguments: Struct.fromJson({ command: privateValue }) }), loadConversationContext: async () => [new runtime.SmartModeClassifierConversationMessage({ role: "user", content: privateValue })], errorReason: "Classification failed" });
+  const ledger = path.join(dataRoot, "local-intercept.jsonl");
+  try {
+    for (const [value, kind] of [["ALLOW", "allow"], ["BLOCK", "block"], ["invalid", "reject"], ["failure", "reject"]]) {
+      scenario = value;
+      assert.equal((await run(runtime.createContext())).kind, kind);
+    }
+    scenario = "cancel";
+    const received = new Promise(resolve => { accepted = resolve; });
+    const [ctx, cancel] = runtime.createContext().withCancel();
+    const pending = run(ctx);
+    void pending.catch(() => {});
+    await Promise.race([received, pending.then(() => { throw new Error("Classifier finished before accepting cancellation fixture"); })]);
+    cancel(new Error("Cancel classification"));
+    await assert.rejects(pending, { name: "AbortError" });
+    const raw = await readFile(ledger, "utf8");
+    assert.equal(raw.includes(privateValue), false);
+    const rows = raw.trim().split("\n").map(JSON.parse).filter(row => row.phase === "classifier");
+    assert.deepEqual(rows.map(row => row.outcome), ["success", "success", "failed", "failed", "cancelled"]);
+    assert.ok(rows.every(row => row.mode === "text-only" && Number.isFinite(row.durationMs) && row.durationMs >= 0));
+    scenario = "ALLOW";
+    process.env.SAND_DISABLE_TELEMETRY = "0";
+    assert.equal((await run(runtime.createContext())).kind, "allow");
+    assert.equal(await readFile(ledger, "utf8"), raw);
+    process.env.SAND_DISABLE_TELEMETRY = "1";
+    const notDirectory = path.join(dataRoot, "file");
+    await writeFile(notDirectory, "private diagnostic fixture");
+    process.env.SAND_DATA_ROOT = notDirectory;
+    assert.equal((await run(runtime.createContext())).kind, "allow");
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
 
 test("严格分类 JSON 只接受 ALLOW 或完整 BLOCK", () => {
   assert.equal(runtime.parseLocalAutoReviewDecision('{"decision":"ALLOW"}').result.value.decision, 1);
