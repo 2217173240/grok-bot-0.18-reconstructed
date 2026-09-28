@@ -46,7 +46,7 @@ const token = randomBytes(32).toString("hex");
 let connector;
 
 async function startContainer() {
-  await docker("run", "--detach", "--name", name,
+  await docker("run", "--init", "--detach", "--name", name,
     "--security-opt", "seccomp=unconfined",
     "--entrypoint", "/usr/local/bin/box-init-exec",
     "--memory", "4g",
@@ -87,7 +87,7 @@ try {
   await mkdir(workspace);
   await chmod(workspace, 0o777);
   await docker("volume", "create", volume);
-  await docker("run", "--rm", "--user", "root", "--volume", `${volume}:/home/box/sand-data`, "--entrypoint", "sh", image, "-c", "chown -R box:box /home/box/sand-data");
+  await docker("run", "--init", "--rm", "--user", "root", "--volume", `${volume}:/home/box/sand-data`, "--entrypoint", "sh", image, "-c", "chown -R box:box /home/box/sand-data");
   const outfile = path.join(workRoot, "connector.mjs");
   await build({ entryPoints: [path.join(root, "source/electron-main/box/local-docker-host-connector.ts")], bundle: true, format: "esm", platform: "node", packages: "external", outfile, logLevel: "silent" });
   connector = await import(pathToFileURL(outfile).href);

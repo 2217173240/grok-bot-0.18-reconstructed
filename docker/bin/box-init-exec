@@ -4,8 +4,8 @@
 # （start-desktop.sh / box-common.sh / sand-window-router.mjs）。
 #
 #   桌面组件不监督不重启：死由探测暴露（xdpyinfo / VNC·noVNC 端口），
-#   修复走 recreate。exec 之后 node 就是 PID1，容器生命周期 == host 生命周期，
-#   后台组件归它收尸。
+#   修复走 recreate。Docker init 作为 PID1 回收孤儿进程，
+#   exec 后的 node 承载 host，host 退出后容器结束。
 set -u
 source /usr/local/bin/box-common.sh
 

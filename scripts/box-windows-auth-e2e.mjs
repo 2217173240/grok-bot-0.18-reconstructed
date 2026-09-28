@@ -34,7 +34,7 @@ let loaded;
 try {
   docker("image", "inspect", "grok-bot-exec-box:arm64");
   loaded = await loadWindows();
-  docker("run", "--rm", "--detach", "--name", container, "--entrypoint", "/bin/bash", "grok-bot-exec-box:arm64", "-lc", "sleep 300");
+  docker("run", "--init", "--rm", "--detach", "--name", container, "--entrypoint", "/bin/bash", "grok-bot-exec-box:arm64", "-lc", "sleep 300");
   inBox("mkdir -p /tmp/sand-window-tokens.d /tmp/sand-novnc-tokens.d /tmp/sand-desktop");
   docker("exec", "--detach", container, "websockify", "--web=/usr/share/novnc/", "--token-plugin=TokenFile", "--token-source=/tmp/sand-novnc-tokens.d", "6081");
 
