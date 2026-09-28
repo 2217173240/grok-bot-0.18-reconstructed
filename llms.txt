@@ -5,7 +5,7 @@
 
 ## What it does
 
-The repository rebuilds the Electron main process, coordinator, host, box-exec daemon, and protocols from readable TypeScript under `source/`, then runs the agent's turns inside a local Docker container whose base-image digest and original 0.18.0 release input are verified before use. Inference routes through Claude Code, Codex, OpenRouter, Command Code, or the preserved Cursor setting. The container runs file and shell tools and hosts the MCP servers listed in `mcp-servers.json` (stdio processes and Streamable HTTP endpoints). Packaging keeps the checksum-pinned 0.18.0 renderer and applies one narrow settings transform. It is written for people who want to inspect and build this desktop runtime, and for AI agents doing that work on their behalf.
+The repository rebuilds the Electron main process, coordinator, host, box-exec daemon, and protocols from readable TypeScript under `source/`, then runs the agent's turns inside a local Docker container whose base-image digest and original 0.18.0 release input are verified before use. Inference routes through Claude Code, Codex, OpenRouter, Command Code, or the preserved Cursor setting. File, shell, MCP and desktop tools share the host execution and approval pipeline. Auto-review uses the selected third-party provider; valid decisions requiring confirmation use an approval card, and classification errors stop execution. Packaging keeps the checksum-pinned 0.18.0 renderer with audited settings, transcript and composer patches. It is written for people who want to inspect and build this desktop runtime, and for AI agents doing that work on their behalf.
 
 ## Usage
 
@@ -27,6 +27,8 @@ docker/build-arm64-box.sh
 ```
 
 `start-local.sh` also accepts `stop`, `restart`, `logs`, and `status`. It reports an error when the Docker daemon, the pinned image, or the installed app is missing, and does not fall back to another computer. The container's shared workspace is `~/.grokbot-local/box-workspace`.
+
+The default model is `glm-5.3-flash`, verified with image input and desktop operations. Explicit `SAND_CLAUDE_MODEL` overrides remain supported; choose a vision-capable model for image and Computer tasks. Model mappings are passed into the container, and changed configuration recreates the container while retaining its data volume.
 
 The independent box-image repository supplies the pinned image Release archive and a unified artifact manifest for the official application installers. Follow the README's installation and model-token setup before starting the app.
 
