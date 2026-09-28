@@ -152,7 +152,7 @@ do_start() {
   export SAND_LOCAL_ADMIN=1
   export SAND_DISABLE_SENTRY=1
   export SAND_DISABLE_TELEMETRY=1
-  export SAND_CLAUDE_MODEL="${SAND_CLAUDE_MODEL:-glm-5.2}"
+  export SAND_CLAUDE_MODEL="${SAND_CLAUDE_MODEL:-glm-5.3-flash}"
   export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://open.bigmodel.cn/api/anthropic}"
   # The real token stays in the 0600 file; the provider layer injects it into
   # the CLI child only. This marker just satisfies the logged-in check.

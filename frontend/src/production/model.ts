@@ -81,12 +81,14 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-function parseLastEntryKinds(value: unknown): Readonly<Record<string, number>> | null {
-  if (!isRecord(value)) return null;
-  const kinds: Record<string, number> = {};
-  for (const [kind, count] of Object.entries(value)) {
-    if (kind.length === 0 || typeof count !== "number" || !Number.isInteger(count) || count <= 0) return null;
-    kinds[kind] = count;
+function parseLastEntryKinds(value: unknown): ReadonlyArray<{ readonly kind: string; readonly count: number }> | null {
+  if (!Array.isArray(value)) return null;
+  const kinds: Array<{ kind: string; count: number }> = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) return null;
+    const { kind, count } = entry;
+    if (typeof kind !== "string" || kind.length === 0 || typeof count !== "number" || !Number.isInteger(count) || count <= 0) return null;
+    kinds.push({ kind, count });
   }
   return kinds;
 }

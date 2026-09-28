@@ -127,7 +127,7 @@ import {
   createSandComputerUseSubagentConfig,
   isComputerUseSubagentType,
 } from "./runner/tools/sand-computer-use-subagent.js";
-import type { TurnUsage } from "./runner/turn-usage.js";
+import { createProductionSubagentSession, type ProductionSubagentRunner } from "./runner/production-subagent-session.js";
 import { createSandBrowserUseSubagentConfig } from "./runner/tools/sand-browser-use-subagent.js";
 import {
   createSystemPromptAssembly,
@@ -259,7 +259,7 @@ export function createPerTurnResourceAccessor(
   };
 }
 
-export interface ProductionSessionBoundRunner {
+export interface ProductionSessionBoundRunner extends ProductionSubagentRunner {
   readonly observation: Pick<ReturnType<typeof createTurnObservation>, "beginMcpExecObservation">;
   readonly subagents: {
     readonly sessions: Map<string, SubagentSession>;
@@ -273,7 +273,6 @@ export interface ProductionSessionBoundRunner {
   readonly computerUse: {
     allocateWindow(agentId: string): unknown | null;
     freeWindow(agentId: string): void;
-    recordTurnEnded?(usage: TurnUsage | undefined): void;
   } | undefined;
   run(prompt: string, options?: SubagentRunOptions): Promise<unknown>;
   interrupt(reason: string): unknown;
@@ -2566,13 +2565,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                   isSubagent: true,
                   subagentType: args.subagentType,
                   // 子 Agent 的增量留在本回合，完成后由子代理运行时向主 Agent 交付结果。
-                  transport: {
-                    onUpdate: (update: { readonly type: string; readonly usage?: unknown }) => {
-                      if (update.type === "turn-ended") {
-                        child.computerUse?.recordTurnEnded?.(update.usage as TurnUsage | undefined);
-                      }
-                    },
-                  },
+                  transport: { onUpdate: () => {} },
                   onRunLifecycle: () => {},
                   initialState: {
                     turns: [],
@@ -2586,27 +2579,7 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
                 bindSessionOwnedRunner(child);
                 child.setAgentConversationStateStructure(new ConversationStateStructure());
                 ownedRunners.add(child);
-                return {
-                  run: async (prompt, options) => {
-                    const result = await child.run(prompt, options);
-                    if (typeof result !== "object" || result == null) {
-                      throw new TypeError("production subagent result is not bound");
-                    }
-                    const text = Reflect.get(result, "text");
-                    const aborted = Reflect.get(result, "aborted");
-                    if (typeof text !== "string" || typeof aborted !== "boolean") {
-                      throw new TypeError("production subagent result is not bound");
-                    }
-                    return { text, aborted };
-                  },
-                  interrupt: reason => {
-                    child.interrupt(reason);
-                  },
-                  getResolvedOutline: () => child.getResolvedOutline(),
-                  getObservedToolCallCount: () => child.getObservedToolCallCount(),
-                  getActivitySnapshot: () => child.getActivitySnapshot(),
-                  getTranscriptPath: () => child.getTranscriptPath(),
-                };
+                return createProductionSubagentSession(child);
               };
               const computerUse = runner.computerUse;
               return {
@@ -2703,28 +2676,6 @@ export function createHostRunnerComposition<Runner extends ProductionSessionBoun
               mcp: {
                 getTools: (runContext: Context) => mcp.mcp.getTools(runContext),
                 refreshAccountConfig: () => mcp.mcp.refreshAccountConfig(),
-                // Tool listing and execution for a CLI child that runs on this
-                // computer: the same entry points the gateway's routed-tool
-                // commands use, so both planes reach the same executors.
-                ...(typeof mcp.mcp.listTools !== "function"
-                  ? {}
-                  : { listTools: (runContext: Context) => mcp.mcp.listTools(runContext) }),
-                ...(typeof mcp.mcp.createExecutor !== "function"
-                  ? {}
-                  : {
-                      // A tool row carries the label the model saw in `name` and
-                      // the server's own tool in `toolName`; the executor port
-                      // reads the server's tool from `name`, exactly as the
-                      // gateway's routed-tool command maps it.
-                      executeTool: async (runContext: Context, args: { readonly agentId?: string } & Record<string, unknown>) =>
-                        await mcp.mcp.createExecutor(undefined, undefined, { agentId: args.agentId }).execute(runContext, {
-                          name: args.toolName,
-                          toolName: args.name,
-                          providerIdentifier: args.providerIdentifier,
-                          args: args.args,
-                          toolCallId: args.toolCallId,
-                        }),
-                    }),
               },
             }
           : {}),

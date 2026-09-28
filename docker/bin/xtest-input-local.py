@@ -48,7 +48,10 @@ ALIASES = {
     "enter": "Return", "return": "Return", "esc": "Escape", "escape": "Escape",
     "tab": "Tab", "space": "space", "backspace": "BackSpace",
     "delete": "Delete", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    "ctrl": "Control_L", "control": "Control_L", "alt": "Alt_L",
+    "shift": "Shift_L", "super": "Super_L", "meta": "Meta_L",
 }
+ALIASES.update({f"f{number}": f"F{number}" for number in range(1, 36)})
 def die(msg):
     print(msg, file=sys.stderr)
     sys.exit(2)
@@ -74,6 +77,24 @@ def tap_key(dpy, name, shift=False):
     xtst.XTestFakeKeyEvent(dpy, code, False, NOW)
     if shift:
         xtst.XTestFakeKeyEvent(dpy, shift_code, False, NOW)
+def combination_keycodes(dpy, raw):
+    names = raw.split("+")
+    if any(not name.strip() for name in names):
+        die("invalid key combination " + raw)
+    names = [ALIASES.get(name.strip().lower(), name.strip()) for name in names]
+    if len(names) == 1 and len(names[0]) == 1 and names[0].isupper():
+        names = ["Shift_L", names[0].lower()]
+    # 全部键名验证完成后才发送事件，错误组合不会留下按住的 modifier。
+    return [keycode(dpy, name) for name in names]
+def press_keys(dpy, codes):
+    pressed = []
+    try:
+        for code in codes:
+            xtst.XTestFakeKeyEvent(dpy, code, True, NOW)
+            pressed.append(code)
+    finally:
+        for code in reversed(pressed):
+            xtst.XTestFakeKeyEvent(dpy, code, False, NOW)
 def move(dpy, screen, x, y):
     xtst.XTestFakeMotionEvent(dpy, screen, int(x), int(y), NOW)
 def tap_btn(dpy, button):
@@ -132,14 +153,12 @@ def main():
                 move(dpy, screen, body["x"], body["y"]); tap_btn(dpy, 1)
             type_text(dpy, body["text"])
         elif action == "key":
+            raw = str(body["key"])
+            # 可选点击也必须在按键校验后执行。
+            codes = combination_keycodes(dpy, raw)
             if body.get("x") is not None and body.get("y") is not None:
                 move(dpy, screen, body["x"], body["y"]); tap_btn(dpy, 1)
-            raw = str(body["key"])
-            name = ALIASES.get(raw.lower(), raw)
-            if len(name) == 1 and "A" <= name <= "Z":
-                tap_key(dpy, name.lower(), shift=True)
-            else:
-                tap_key(dpy, name)
+            press_keys(dpy, codes)
         else:
             die("unknown action")
         x11.XSync(dpy, False)

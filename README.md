@@ -79,7 +79,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 ./start-local.sh status
 ```
 
-Put your model provider's token in `anthropic-token` as a single line; the file stays in the local data directory and is passed to the provider process inside the container. The launcher defaults to `https://open.bigmodel.cn/api/anthropic` with model `glm-5.2`; set `ANTHROPIC_BASE_URL` and `SAND_CLAUDE_MODEL` for another compatible service. Agent files are shared under `~/.grokbot-local/box-workspace`.
+Put your model provider's token in `anthropic-token` as a single line; the file stays in the local data directory and is passed to the provider process inside the container. The launcher defaults to `https://open.bigmodel.cn/api/anthropic` with the vision-capable model `glm-5.3-flash`; set `ANTHROPIC_BASE_URL` and `SAND_CLAUDE_MODEL` for another compatible service. Agent files are shared under `~/.grokbot-local/box-workspace`.
 
 `./start-local.sh` also takes `stop`, `restart`, and `logs`. Local admin mode executes turns inside the container, and `start` fails loudly when the image or the installed app is missing.
 

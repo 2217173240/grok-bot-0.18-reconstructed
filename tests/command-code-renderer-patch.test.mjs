@@ -6,6 +6,7 @@ import test from "node:test";
 import { createPackage } from "@electron/asar";
 
 import { applyOriginalRendererRouterPatch } from "../scripts/lib/router-renderer-patch.mjs";
+import { RENDERER_ENTRY_TEXT_ANCHORS } from "../scripts/lib/router-renderer-patch.mjs";
 import { verifyChecksumPinnedRendererPackage } from "../scripts/lib/macos-package-verification.mjs";
 import { officialMacReleaseAsarHash } from "../scripts/lib/macos-shell-invariant.mjs";
 
@@ -22,7 +23,7 @@ test("Command Code renderer extension preserves the original renderer hash chain
     await mkdir(assets, { recursive: true });
     await writeFile(path.join(assets, "registry.js"), 'const wDn=[{id:"general",label:"General",icon:"settings-gear"},{id:"usage",label:"Usage & Billing",icon:"chart-bars"},{id:"beta",label:"Updates",icon:"cloud-download"}]');
     await writeFile(path.join(assets, "panel.js"), 'function Sa(s){}Q=x==="general"?a.jsx(Te,{children:a.jsx(Sa,{auth:t})}):null;Z=x==="usage"?a.jsx(Te,{children:a.jsx(Na,{})}):null');
-    await writeFile(path.join(assets, "entry.js"), 'function A_n(n){switch(n.kind){case"message":return n.content;case"send-message":return n.message.type==="text"?n.message.content:"";case"notice":return n.text;default:return""}}function Fpt(n){const e=[];for(const t of n.matchAll(I_n)){');
+    await writeFile(path.join(assets, "entry.js"), `function A_n(n){switch(n.kind){case"message":return n.content;case"send-message":return n.message.type==="text"?n.message.content:"";case"notice":return n.text;default:return""}}function Fpt(n){const e=[];for(const t of n.matchAll(I_n)){${RENDERER_ENTRY_TEXT_ANCHORS.draftRestoreBefore}`);
     await cp(path.join(stageRoot, "dist/renderer"), sourceRendererRoot, { recursive: true });
     const files = ["assets/entry.js", "assets/panel.js", "assets/registry.js"];
     const records = [];

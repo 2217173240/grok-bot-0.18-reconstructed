@@ -48,6 +48,10 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install the locked dependency graph
         run: npm ci --no-audit --no-fund
+      - name: Select the installed Chromium CDP runtime
+        run: |
+          google-chrome --version
+          echo "DESKTOP_PROBE_CHROMIUM=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Run source and publication checks
         run: npm run check
       - name: Build the editable frontend

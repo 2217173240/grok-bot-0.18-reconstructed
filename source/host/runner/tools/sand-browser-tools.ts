@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { buildHostShellArgs } from "../../box/box-shell-command.js";
-import { navigationProbeCommand, normalizeNavigationUrl, parseNavigationProbeOutput } from "../sand-action-audit.js";
+import { navigationProbeCommand, navigationProbeOutput, normalizeNavigationUrl, parseNavigationProbeOutput } from "../sand-action-audit.js";
 import { SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE } from "../../ports/box.js";
 import { shellExecutorResource } from "../../../packages/agent-exec/shell.js";
 import type { ResourceAccessor } from "../../../packages/agent-exec/resource-provider.js";
@@ -420,20 +420,19 @@ async function captureBrowserReviewState(args: {
     throw new SandBrowserAutoReviewBlockedError("Browser Auto-review could not identify this agent's own display; retry once the box desktop is ready.");
   }
   if (displayNumber === undefined) throw new SandBrowserAutoReviewBlockedError(SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE);
-  let result: any;
+  let stdout: string | undefined;
   try {
-    result = await (args.resourceAccessor.get(shellExecutorResource) as { execute(ctx: OperationContext, args: unknown): Promise<any> }).execute(args.ctx, buildHostShellArgs({
+    const result = await args.resourceAccessor.get(shellExecutorResource).execute(args.ctx, buildHostShellArgs({
       command: `${navigationProbeCommand(displayNumber)} && echo ${BROWSER_REVIEW_STATE_MARKER} && (cat ${SAND_BROWSER_DRIVER_BOX_DIR}/views-${displayNumber}.json 2>/dev/null || true)`,
       name: "curl",
       workingDirectory: "/workspace",
       toolCallId: `${args.toolCallId}:auto-review-state`,
     }));
+    stdout = navigationProbeOutput(result);
   } catch {
     throw new SandBrowserAutoReviewBlockedError("Browser Auto-review could not capture the current page state.");
   }
-  if (result?.result?.case !== "success") throw new SandBrowserAutoReviewBlockedError("Browser Auto-review could not capture the current page state.");
-  if (result.result.value.exitCode !== 0) return { displayStateIdentity: "chrome-unreachable" };
-  const stdout = result.result.value.stdout ?? "";
+  if (stdout === undefined) return { displayStateIdentity: "chrome-unreachable" };
   const markerIndex = stdout.indexOf(BROWSER_REVIEW_STATE_MARKER);
   const probePart = markerIndex >= 0 ? stdout.slice(0, markerIndex) : stdout;
   const statePart = markerIndex >= 0 ? stdout.slice(markerIndex + BROWSER_REVIEW_STATE_MARKER.length) : "";

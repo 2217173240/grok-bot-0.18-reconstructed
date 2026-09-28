@@ -119,6 +119,7 @@
     "react": "19.2.1",
     "react-dom": "19.2.1",
     "rxjs": "8.0.0-alpha.14",
+    "sharp": "0.35.5",
     "smol-toml": "1.9.0",
     "tar": "7.5.21",
     "tree-sitter": "0.21.1",
@@ -131,6 +132,9 @@
     "zod-to-json-schema": "3.24.5"
   },
   "overrides": {
+    "extract-zip": {
+      "yauzl": "3.4.0"
+    },
     "node-addon-api": "8.5.0",
     "@tiptap/extension-bubble-menu": "3.14.0",
     "@tiptap/extension-floating-menu": "3.14.0"

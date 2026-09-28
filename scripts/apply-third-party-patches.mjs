@@ -7,6 +7,22 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 
 const targets = [
   {
+    path: "node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
+    stockSha256: "790fe5dc5e5051cf12f3d1550c1f1651b8a73579b1ee275c7abb5e5ab2f00bd2",
+    patchedSha256: "bbcdf608b9a9a14846f6f4dc3398b3a77f87116e3935db62b2dad4b5b910e3a9",
+    transform(source) {
+      const anchor = "          this.handleControlRequest(message);\n";
+      if (source.indexOf(anchor) < 0 || source.indexOf(anchor) !== source.lastIndexOf(anchor)) throw new Error("Claude SDK control-request patch anchor is not unique");
+      return source.replace(anchor, [
+        "          this.handleControlRequest(message).catch((error) => {",
+        "            this.inputStream.error(error);",
+        "            this.cleanup(error);",
+        "          });",
+        "",
+      ].join("\n"));
+    },
+  },
+  {
     path: "node_modules/@connectrpc/connect/dist/esm/protocol-connect/transport.js",
     stockSha256: "5d9e5b823eaeee1d18f9a98ef7dc4c392b46f8b6d0f6c843116c9e85dd27cd92",
     patchedSha256: "ac07be449192be33f9082b10db53416018e7fc068614093b2dda9c9c62411445",
@@ -54,7 +70,7 @@ for (const target of targets) {
   if (before === target.patchedSha256) continue;
   if (before !== target.stockSha256) {
     throw new Error(
-      `Refusing to patch unexpected @connectrpc/connect input ${target.path}: ${before}`,
+      `Refusing to patch unexpected dependency input ${target.path}: ${before}`,
     );
   }
   let patched;
@@ -71,7 +87,7 @@ for (const target of targets) {
   }
   const after = sha256(patched);
   if (after !== target.patchedSha256) {
-    throw new Error(`Connect patch output drifted for ${target.path}: ${after}`);
+    throw new Error(`Dependency patch output drifted for ${target.path}: ${after}`);
   }
   await writeFile(absolute, patched);
 }

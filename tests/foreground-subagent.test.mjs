@@ -20,6 +20,7 @@ async function setup(t) {
     export { createSubagentExecutor } from "./source/packages/agent-exec/subagent.ts";
     export { SubagentArgs } from "./source/packages/proto/generated/agent/v1/subagent_exec_pb.ts";
     export { createContext } from "./source/packages/context/core.ts";
+    export { createProductionSubagentSession } from "./source/host/runner/production-subagent-session.ts";
   `, resolveDir: root }, outfile, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
   const api = await import(pathToFileURL(outfile).href);
   const events = [];
@@ -41,7 +42,7 @@ async function setup(t) {
   const adapter = new api.SandSubagentHostAdapter(runtime.sessions, () => {
     session = new ProcessSession(path.join(workspace, "result.txt"));
     t.after(() => session.child?.kill());
-    return session;
+    return api.createProductionSubagentSession(session);
   }, {
     isRunning: runtime.isRunning,
     allocateComputerUseWindow: id => { windows.add(id); return id; },
@@ -110,6 +111,9 @@ for (const runInBackground of [undefined, false, true]) {
     assert.equal(env.events.filter(([kind]) => kind === "armed").length, runInBackground === true ? 1 : 0);
     assert.equal(env.events.filter(([kind]) => kind === "usage").length, 1);
     assert.equal(env.events.filter(([kind]) => kind === "audit").length, 1);
+    assert.equal(env.events.find(([kind]) => kind === "usage")[1].turnEndedCount, 1);
+    assert.equal(env.events.find(([kind]) => kind === "audit")[1].action.actionCount, 1);
+    assert.deepEqual(env.events.find(([kind]) => kind === "audit")[1].action.actionCounts, { process: 1 });
     assert.equal(env.windows.size, 0);
     assert.equal(env.runtime.sessions.size, 0);
     assert.equal(env.runtime.listSubagents()[0].status, "done");
@@ -153,6 +157,7 @@ for (const action of ["cancel", "fail"]) {
     assert.equal(env.events.filter(([kind]) => ["completed", "armed", "disarmed"].includes(kind)).length, 0);
     assert.equal(env.events.filter(([kind]) => kind === "usage").length, 1);
     assert.equal(env.events.filter(([kind]) => kind === "audit").length, 1);
+    assert.equal(env.events.find(([kind]) => kind === "usage")[1].turnEndedCount, 0);
     assert.equal(getEventListeners(context.signal, "abort").length, action === "cancel" ? 0 : 1);
   });
 }

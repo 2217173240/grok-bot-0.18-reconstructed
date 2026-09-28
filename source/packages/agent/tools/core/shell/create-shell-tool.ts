@@ -51,6 +51,7 @@ import { AgentType } from "../../../utils/agent-config.js";
 import { loadSmartModeProjectPermissionsContext } from "../../../smart-mode-project-permissions.js";
 import { tryExtractSmartModeClassifierConversationContext } from "../../../smart-mode-classifier-context.js";
 import { executeSmartModeClassifierWithMeasurement } from "../../../utils/smart-mode-classifier-measurement.js";
+import { smartModeClassifierFailureReason } from "../../../utils/smart-mode-classifier-error-metadata.js";
 import { delayDevSmartModeClassifierIfRequested, type OneShotState } from "../../dev-smart-mode-classifier-block.js";
 import { withToolExecutionTimeoutSuspended } from "../../tool-timeout-suspension.js";
 import type { ConversationStateHandle } from "../../../state.js";
@@ -456,7 +457,7 @@ async function runShellSmartModeClassifier(
     if (error instanceof Error && error.name === "AbortError") throw error;
     if (error instanceof ShellToolRejectedError) throw error;
     if (signal.aborted) throw new ToolCallAbortedError();
-    return { kind: "reject", reason: SMART_MODE_SHELL_CLASSIFIER_ERROR_REASON };
+    return { kind: "reject", reason: smartModeClassifierFailureReason(error, SMART_MODE_SHELL_CLASSIFIER_ERROR_REASON) };
   }
 }
 
@@ -577,7 +578,7 @@ export function createShellTool(resourceAccessor: ShellToolResourceAccessor, opt
   const promptVersion = options.promptVersion ?? "dsv3-1205";
   const sandboxEnabled = options.sandboxEnabled ?? false;
   const defaultBlockUntilMs = options.defaultBlockUntilMs ?? (options.agentType === "background" ? BACKGROUND_SHELL_DEFAULT_BLOCK_UNTIL_MS : DEFAULT_TIMEOUT_MS);
-  const smartModeApprovalParametersEnabled = options.agentType !== AgentType.BACKGROUND && options.smartModeClassifierMode === true;
+  const smartModeApprovalParametersEnabled = options.smartModeApprovalProvider === undefined && options.agentType !== AgentType.BACKGROUND && options.smartModeClassifierMode === true;
   const parameters = addSmartModeApprovalParameters(options.parametersSchema ?? getParametersSchemaDsv3(sandboxEnabled, promptVersion, { isReadonly: options.isReadonly, enableBlockUntilMs: options.enableBlockUntilMs, requireBlockUntilMs: options.requireBlockUntilMs, defaultBlockUntilMs }), smartModeApprovalParametersEnabled);
   const executor = resourceAccessor.get(shellStreamExecutorResource);
   const execute = async (ctx: Context, interaction: ShellToolInteractionHandler, rawArgs: Record<string, unknown>, meta: ShellToolExecutionMeta): Promise<ShellResult> => {
@@ -612,9 +613,8 @@ export function createShellTool(resourceAccessor: ShellToolResourceAccessor, opt
     let approvedShellBinding: { readonly executionStateIdentity?: string; readonly targetEnrichmentHash?: string } | undefined;
     let smartModeApprovalProviderApproved = false;
     if (smartModeDecision.kind === "block") {
-      const approvalRequested = rawArgs.request_smart_mode_approval === true;
       const approvalProvider = options.smartModeApprovalProvider;
-      if (!approvalRequested || approvalProvider === undefined) {
+      if (approvalProvider === undefined) {
         throw new ShellToolRejectedError(command, workingDirectory, smartModeDecision.reason);
       }
       const approvalStateIdentity = options.smartModeShellApprovalState?.getIdentity();

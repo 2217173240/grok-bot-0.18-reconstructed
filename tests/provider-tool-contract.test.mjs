@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { build } from "esbuild";
 import { jsonSchema } from "ai";
 import { z } from "zod";
@@ -16,6 +17,9 @@ test("provider 参数保留真实 AI SDK Schema、Zod 与 JSON 的内容", async
     const output = path.join(directory, "provider.mjs");
     await build({ entryPoints: [path.join(root, "source/host/extensions/inference/provider-session.ts")], outfile: output, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
     const { routedToolSchema, codexInput, claudePrompt } = await import(pathToFileURL(output).href);
+    const serdeOutput = path.join(directory, "serde.mjs");
+    await build({ entryPoints: [path.join(root, "source/packages/agent/serde.ts")], outfile: serdeOutput, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+    const { coreMessageSerde } = await import(pathToFileURL(serdeOutput).href);
     const raw = { type: "object", properties: { command: { type: "string" } }, required: ["command"], additionalProperties: false };
     assert.deepEqual(routedToolSchema({ parameters: jsonSchema(raw) }), raw);
     assert.deepEqual(routedToolSchema({ inputSchema: raw }), raw);
@@ -59,6 +63,40 @@ test("provider 参数保留真实 AI SDK Schema、Zod 与 JSON 的内容", async
     const remoteMessages = [];
     for await (const prompt of remotePrompt) remoteMessages.push(prompt);
     assert.deepEqual(remoteMessages[0].message.content.at(-2), { type: "image", source: { type: "url", url: "https://example.com/photo.png" } });
+    for (const result of [
+      { result: [{ type: "text", text: "Screenshot captured" }, { type: "image", source: { type: "base64", media_type: "image/png", data: imageBase64 } }] },
+      { result: "Screenshot captured", experimental_content: [{ type: "text", text: "Screenshot captured" }, { type: "image", data: imageBase64, mimeType: "image/png" }] },
+    ]) {
+      const history = [
+        { role: "tool", content: [{ type: "tool-result", toolCallId: "screenshot-1", toolName: "Screenshot", ...result }] },
+        { role: "user", content: "描述上一张截图" },
+      ];
+      const prompt = claudePrompt(history);
+      assert.equal(typeof prompt, "object");
+      const messages = [];
+      for await (const message of prompt) messages.push(message);
+      const content = messages[0].message.content;
+      assert.deepEqual(content.filter(part => part.type === "image"), [{ type: "image", source: { type: "base64", media_type: "image/png", data: imageBase64 } }]);
+      assert.ok(content.some(part => part.type === "text" && part.text === "Screenshot captured"));
+      assert.ok(content.every(part => part.type !== "text" || !part.text.includes(imageBase64)));
+    }
+    const databasePath = path.join(directory, "messages.db");
+    const db = new DatabaseSync(databasePath);
+    db.exec("CREATE TABLE messages (seq INTEGER PRIMARY KEY, data BLOB NOT NULL)");
+    const histories = [
+      { role: "user", content: [{ type: "image", image: Uint8Array.from(image), mimeType: "image/png" }] },
+      { role: "user", content: [{ type: "text", text: "比较两张图片" }, { type: "image", image: Uint8Array.from(image), mimeType: "image/png" }, { type: "image", image: Uint8Array.from(image), mimeType: "image/png" }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "screenshot-2", toolName: "Screenshot", result: [{ type: "image", source: { type: "base64", media_type: "image/png", data: imageBase64 } }] }] },
+    ];
+    for (const message of histories) db.prepare("INSERT INTO messages(data) VALUES (?)").run(coreMessageSerde.serialize(message));
+    db.close();
+    const reopened = new DatabaseSync(databasePath, { readOnly: true });
+    const restored = reopened.prepare("SELECT data FROM messages ORDER BY seq").all().map(row => coreMessageSerde.deserialize(row.data));
+    reopened.close();
+    restored.push({ role: "user", content: "描述之前的附件和截图" });
+    const restoredMessages = [];
+    for await (const message of claudePrompt(restored)) restoredMessages.push(message);
+    assert.equal(restoredMessages[0].message.content.filter(part => part.type === "image").length, 4);
     assert.throws(() => codexInput([{ role: "user", content: [{ type: "image", image: new URL("file:///tmp/secret.png"), mimeType: "image/png" }] }]), /HTTP\(S\)/);
   } finally {
     await rm(directory, { recursive: true, force: true });

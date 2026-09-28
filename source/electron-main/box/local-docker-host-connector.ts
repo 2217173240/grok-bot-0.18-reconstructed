@@ -143,6 +143,23 @@ export interface LocalDockerRunPlan {
   readonly custom: boolean;
 }
 
+const LOCAL_DOCKER_INFERENCE_ENV_NAMES = [
+  "ANTHROPIC_BASE_URL", "SAND_CLAUDE_MODEL", "ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+] as const;
+export const LOCAL_DOCKER_INFERENCE_CONFIG_LABEL = "com.grok-bot.local-vm.inference-config";
+
+export function localDockerInferenceEnvironment(env: NodeJS.ProcessEnv): string[] {
+  return LOCAL_DOCKER_INFERENCE_ENV_NAMES.flatMap(name => env[name] === undefined ? [] : [`${name}=${env[name]}`]);
+}
+
+export function localDockerInferenceConfigHash(env: NodeJS.ProcessEnv, hostTurn: boolean): string {
+  return createHash("sha256").update(JSON.stringify(hostTurn ? localDockerInferenceEnvironment(env) : [])).digest("hex");
+}
+
 export function localDockerRunPlan(options: {
   readonly image?: string;
   readonly hostMainPath: string;
@@ -155,6 +172,7 @@ export function localDockerRunPlan(options: {
   readonly depsPin?: string;
   readonly desktop?: boolean;
   readonly hostTurn?: boolean;
+  readonly inferenceEnv?: NodeJS.ProcessEnv;
   readonly anthropicTokenPath?: string;
   readonly authMounts?: readonly string[];
   readonly inferenceCredential?: InferenceCredential;
@@ -172,6 +190,7 @@ export function localDockerRunPlan(options: {
   const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
   const dataVolume = options.dataVolume ?? (custom ? "grok-bot-local-vm-data-arm64" : "grok-bot-local-vm-data");
   const hasCredential = options.inferenceCredential != null;
+  const inferenceEnv = options.inferenceEnv ?? process.env;
   // One workspace, one owner — on BOTH images: /workspace is a bind mount of
   // the Mac-side directory (Finder-visible, Archive's MAC_BOT_WORKSPACE_HOST
   // lesson), and every file-facing surface in the box is pinned to it: the
@@ -190,6 +209,7 @@ export function localDockerRunPlan(options: {
     "--label", `com.grok-bot.local-vm.schema-version=${LOCAL_DOCKER_SCHEMA_VERSION}`,
     "--label", `${LOCAL_DOCKER_DESKTOP_LABEL}=${options.desktop === true ? "1" : "0"}`,
     "--label", `${LOCAL_DOCKER_HOST_TURN_LABEL}=${options.hostTurn === true ? "1" : "0"}`,
+    "--label", `${LOCAL_DOCKER_INFERENCE_CONFIG_LABEL}=${localDockerInferenceConfigHash(inferenceEnv, options.hostTurn === true)}`,
     "--label", `${SELF_BUILT_DEPS_PIN_LABEL}=${options.depsPin ?? "unknown"}`,
     // Memory cap: ~200MB base + ~800MB per Chromium, inside a 6GiB Colima VM
     // — the desktop plane gets headroom for several browsers, the exec plane
@@ -220,8 +240,7 @@ export function localDockerRunPlan(options: {
     "--env", `SAND_LOCAL_ADMIN_DESKTOP=${options.desktop === true ? "1" : "0"}`,
     ...(options.hostTurn !== true ? [] : [
       "--env", "CLAUDE_CODE_PATH=/home/box/deps/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
-      ...(process.env.ANTHROPIC_BASE_URL == null ? [] : ["--env", `ANTHROPIC_BASE_URL=${process.env.ANTHROPIC_BASE_URL}`]),
-      ...(process.env.SAND_CLAUDE_MODEL == null ? [] : ["--env", `SAND_CLAUDE_MODEL=${process.env.SAND_CLAUDE_MODEL}`]),
+      ...localDockerInferenceEnvironment(inferenceEnv).flatMap(value => ["--env", value]),
       ...(options.anthropicTokenPath == null ? [] : ["--mount", `type=bind,src=${options.anthropicTokenPath},dst=/home/box/sand-data/anthropic-token,readonly`]),
     ]),
     ...(hasCredential ? ["--env", "SAND_DEV_INFERENCE_TOKEN_FILE=/run/grok-bot/inference.json", "--env", `SAND_BACKEND_URL=${options.inferenceCredential!.backendUrl}`] : []),
@@ -455,7 +474,7 @@ export function desktopProcessRebuildReason(processes: LocalDockerDesktopProcess
   return `Local Docker VM desktop processes are unhealthy (router: ${processes.router}, session-sync: ${processes.sessionSync}). Use Reset Grok Bot's Computer to rebuild the container with one owner of each process.`;
 }
 
-async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; hasPluginsMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean }> {
+async function inspectContainer(): Promise<{ exists: boolean; running: boolean; owned: boolean; image: string; hostSha256: string; boxExecDaemonSha256: string; hasInferenceCredential: boolean; hasCodexAuthMount: boolean; hasClaudeAuthMount: boolean; hasPluginsMount: boolean; schemaVersion: string; depsPin: string; desktop: boolean; hostTurn: boolean; inferenceConfigHash?: string }> {
   const result = await runDocker(["inspect", "--format", "{{json .}}", LOCAL_DOCKER_BOX_CONTAINER]);
   if (!result.ok) return { exists: false, running: false, owned: false, image: "", hostSha256: "", boxExecDaemonSha256: "", hasInferenceCredential: false, hasCodexAuthMount: false, hasClaudeAuthMount: false, hasPluginsMount: false, schemaVersion: "", depsPin: "", desktop: false, hostTurn: false };
   try {
@@ -475,6 +494,7 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
       depsPin: typeof value.Config?.Labels?.[SELF_BUILT_DEPS_PIN_LABEL] === "string" ? value.Config.Labels[SELF_BUILT_DEPS_PIN_LABEL] as string : "",
       desktop: value.Config?.Labels?.[LOCAL_DOCKER_DESKTOP_LABEL] === "1",
       hostTurn: value.Config?.Labels?.[LOCAL_DOCKER_HOST_TURN_LABEL] === "1",
+      inferenceConfigHash: typeof value.Config?.Labels?.[LOCAL_DOCKER_INFERENCE_CONFIG_LABEL] === "string" ? value.Config.Labels[LOCAL_DOCKER_INFERENCE_CONFIG_LABEL] as string : "",
     };
   } catch { throw new Error("Docker returned malformed container inspection data."); }
 }
@@ -749,7 +769,8 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
   // reporting itself current, and staged-runtime pruning may then delete the
   // directory it is still reading.
   const daemonDrifted = inspected.boxExecDaemonSha256 !== hostBundle.boxExecDaemonSha256;
-  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || !inspected.hasPluginsMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
+  const inferenceConfigDrifted = hostTurn && inspected.inferenceConfigHash !== localDockerInferenceConfigHash(process.env, hostTurn);
+  const drifted = inspected.exists && (inspected.schemaVersion !== LOCAL_DOCKER_SCHEMA_VERSION || inspected.hostSha256 !== hostBundle.sha256 || daemonDrifted || pinDrifted || inferenceConfigDrifted || inspected.desktop !== desktop || inspected.hostTurn !== hostTurn || inspected.hasCodexAuthMount || inspected.hasClaudeAuthMount !== claudeMount || !inspected.hasPluginsMount || (inferenceCredential != null && !inspected.hasInferenceCredential));
   if (drifted) {
     const removed = await runDocker(["rm", "--force", LOCAL_DOCKER_BOX_CONTAINER]);
     if (!removed.ok) throw new Error(`Could not replace the local VM with the current app runtime: ${removed.output}`);

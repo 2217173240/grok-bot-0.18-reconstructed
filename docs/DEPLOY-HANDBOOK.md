@@ -175,7 +175,7 @@ env -u ELECTRON_RUN_AS_NODE PATH="/usr/local/bin:$PATH" npm run package
 | `GROKBOT_IMAGE` | 自建 arm64 | 钉任意镜像 tag；缺省时自建缺失→官方 ECR/QEMU 回退（**带账本标注**，状态面有黄字） |
 | `GROKBOT_DATA_ROOT` | `~/.grokbot-local` | 数据根重定向 |
 
-**推理配置（已内置，通常零配置）**：`start-local.sh` 导出 `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic`、`SAND_CLAUDE_MODEL=glm-5.2`，并把 fable/haiku/opus/sonnet/主模型/子代理全部映射到 GLM 系列（glm-5.2 / glm-5.3 / glm-5.3-flash）。要换模型就改脚本这些行；key 见 §5 的 0600 文件，永远不进环境变量明文、不进 git。
+**推理配置（已内置，通常零配置）**：`start-local.sh` 默认导出 `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic`、`SAND_CLAUDE_MODEL=glm-5.3-flash`，并把 fable/haiku/opus/sonnet/主模型/子代理映射到该模型。通过启动前设置 `SAND_CLAUDE_MODEL` 或对应的 `ANTHROPIC_DEFAULT_*_MODEL` 可以覆盖配置；模型映射会传入容器，配置变化会在下次连接时重建容器并保留数据卷。key 见 §5 的 0600 文件，永远不进环境变量明文、不进 git。
 
 其他子命令：`stop`（走 Apple quit 事件回收 host；容器**有意保留**——桌面会话/登录态/接管 URL 跨 App 重启存活）、`restart`、`status`（体检全量：计算机形态/镜像警告/工作区双径/插件数/host/gateway/接管 URL）、`logs`。
 
