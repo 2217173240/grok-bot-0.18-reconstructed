@@ -196,7 +196,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   // Local admin selects Docker before connecting, then returns the container
   // gateway. A failed Docker connection must propagate instead of switching
   // to a Mac host process.
-  assert.match(localDocker, /resolveLocalAdminBox\(process\.env, await probeDockerAvailable\(\)\)/);
+  assert.match(localDocker, /resolveLocalAdminBox\(process\.env, await probeDockerAvailable\.get\(\)\)/);
   assert.match(localDocker, /const connection = await ensureLocalDockerBox\(settings\.settingsPath, undefined\)/);
   assert.doesNotMatch(localDocker, /ensureLocalAdminHost\(/);
   assert.match(localDocker, /resolveLocalAdminBox/);
