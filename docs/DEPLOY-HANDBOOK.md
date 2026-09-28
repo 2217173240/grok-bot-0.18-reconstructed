@@ -1,237 +1,95 @@
-# 全套本地 Grok Bot 部署手册（另一台 Mac 从零跑起来）
+# macOS arm64 本地部署手册
 
-> 基线：`origin/main@671541a`（PR #28 已含第二轮翻转：**轮次默认在盒内执行**、桌面默认开）。
-> 撰写时 PR #29（盒内回合 text-delivery seam）open 未合并——若已合并则直接用 main 最新。
-> 本手册按"构建链 → 打包链 → 数据面 → 启动链 → 验证链"完整展开，来源为源机逐项扫描，非记忆。
+本手册描述当前 `main` 的最终部署路径：macOS Apple Silicon、Docker 计算机、local-admin、本地已配置的第三方推理 provider，以及固定构建输入的原版 renderer。当前验收基线记录在 `5a95fe6`；后续状态与待办以 [ROADMAP.md](../ROADMAP.md) 为准。
 
-## 0. 你要在新 Mac 上复刻的是什么
+## 运行条件
 
-```text
-/Applications/Grok Bot 0.18 Reconstructed.app   ← 界面+协调器（Electron，本地打包）
-~/.grokbot-local/                               ← 数据面（token/设置/工作区/账本）
-Colima VM (aarch64) ── grok-bot-local-vm 容器    ← 计算机（Linux 桌面+浏览器+执行）
-        box-init-exec（桌面后台） → node host-main.cjs（PID1）
-        → host 拉起 box-exec-daemon(1337) → gateway(1340) → App 连接
-推理：GLM 的 Anthropic 兼容端点（`open.bigmodel.cn`）——唯一运行期外部依赖，**只需要一个 GLM API key**，其余全部内置（见 §6）
-```
+- macOS Apple Silicon（arm64）。
+- Xcode Command Line Tools、Git、Node `26.5.0`（`.node-version`）、Docker CLI。
+- Colima，默认 profile 为 `grokbot`；OrbStack 作为 Colima 候选不可用时的最后候选。
+- 运行期需要 local-admin、Docker 和一个已配置的第三方 inference provider。当前生产启动脚本默认 `claude-code`，Codex 仅在隔离验收范围内验证，本手册不指导 Mac 回合使用 Codex。
+- 构建需要访问仓库锁定的下载源、npm registry、GitHub 以及基础镜像独立仓库的固定构件。
 
-三条链，缺一不可：
+不要把真实 key 写入 shell 命令、shell history、日志或 Git。需要保存 Claude provider token 时，使用本地文本编辑器创建 `$GROKBOT_DATA_ROOT/anthropic-token`，文件权限设为 `0600`。启动脚本会检查该文件；provider 层读取它并只注入 Claude CLI 子进程。启动环境中的 `ANTHROPIC_API_KEY=local-file` 是非秘密登录标记，不能当作真实凭据。
 
-| 链 | 产物 | 一次性/常驻 |
-| --- | --- | --- |
-| 构建链 | `grok-box-base:arm64`（Archive Dockerfile，31 步）+ `grok-bot-exec-box:arm64`（薄层） | 一次性（deps-pin 变更才重建） |
-| 打包链 | `dist/Grok Bot 0.18 Reconstructed.app` → 拷入 `/Applications` | 每次 app 代码变更 |
-| 启动链 | `start-local.sh start` → App → 容器 → 网关健康 | 每次开机后 |
-
-## 1. 前置条件（新 Mac 清单）
-
-自建执行镜像的基础输入由 `docker/base-image.json` 指定不可变 digest，并参与应用、镜像和门禁共用的依赖 pin。
-迁移时需要保留该 digest 对应的基础镜像。构建脚本拒绝缺失或平台不符的基础镜像；更新基础镜像需要显式修改此文件并重新构建、验证。
-`GROKBOT_BUILD_IMAGE` 可指定候选镜像标签，用于验证时保留正在使用的镜像标签。
-
-`mcp-servers.json` 是受信执行配置：能够修改其中 `command`、`args`、`env`、`cwd` 的操作者，可以让插件以容器内 box 用户的权限执行代码。
-工作目录、浏览器会话和配置给插件的凭据均属于它可能访问的资源。容器工作目录的 bind mount 写入会影响对应的宿主机目录。
-
-基础镜像 digest 固定已构建的系统软件层；Archive 中的 `apt-get install` 仍使用发行源当时的软件包集合。
-因此从 Archive 配方重新生成同一镜像尚无逐字节复现保证。要重新生成并更新受信基线，需要同时固定 Debian 基础镜像、软件源快照、直接与传递软件包版本，并验证更新后的完整镜像。
-
-- macOS **Apple Silicon**（arm64 原生是整个方案的前提；Intel Mac 会整体落 QEMU，性能失义）
-- Xcode Command Line Tools：`xcode-select --install`（原生模块编译需要）
-- **mise**（Node 版本管理；仓库钉 `.node-version`=26.5.0）：`brew install mise` 并启用 shims。打包环境实测要求：mise node 26.5.0、`CXX=clang++`、`CXXFLAGS=-std=c++20`（tree-sitter 原生编译，c++17 会撞 Node 24+ 的 V8 头）
-- Docker CLI + **Colima**：`brew install docker colima`
-- Git；Git LFS（`brew install git-lfs && git lfs install`——仅 research-archives 指针需要，无 LFS 也可走 URL 下载）
-- 磁盘：≥25GB（Colima 磁盘 30GB + 镜像 ~5.4GB + 仓库/构建 ~5GB）
-- 一个 **GLM API key**（[open.bigmodel.cn](https://open.bigmodel.cn) 的 Anthropic 兼容端点；这是运行期唯一推理依赖——不需要 Cursor/xAI/Claude/OpenRouter 的任何账号或 key。本项目通过 Anthropic 协议兼容层把 Claude Code 工具链整体路由到 GLM，模型位映射已内置）
-- 网络可达（一次性构建期）：downloads.cursor.com（官方 0.18 DMG，SHA 钉死）、nodejs.org、github.com（bun/uv/node 资产）、registry.npmjs.org；运行期：`open.bigmodel.cn`（推理）+ 盒内浏览器的目标站点
-
-## 2. 取代码（两个仓库）
+## 获取代码与固定基础镜像
 
 ```sh
-# 主仓库（重建版 bot）
 git clone https://github.com/2217173240/grok-bot-0.18-reconstructed.git
 cd grok-bot-0.18-reconstructed
-
-# box 镜像源仓库（base 镜像 grok-box-base:arm64 的全部构建输入）
 git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
-# 内容：box-image/Dockerfile + box-image/bin 全套治理脚本 + box-service + .dockerignore
-# 注意：仓库路径任意，但必须在 /Users 下（见 §3 Colima 挂载限制）
 ```
 
-## 3. 获取固定基础镜像并构建执行镜像
+基础镜像由 `docker/base-image.json` 选择。使用独立 `grok-bot-box-image` 仓库提供的固定 Release 构件和 fetch 工具，按其 manifest、镜像 digest、平台与 OCI source label 校验。导入基础镜像后构建本仓库执行镜像：
 
 ```sh
 colima start --profile grokbot --cpu 4 --memory 6 --disk 30 --arch aarch64
-export DOCKER_HOST="unix://$HOME/.colima/grokbot/docker.sock"
 node .cache/box-image/scripts/fetch-artifact.mjs base-arm64 --load
 docker/build-arm64-box.sh
 ```
 
-基础镜像归档由 `grok-bot-box-image` 的 `base-d12224a-arm64` Release 提供。
-获取脚本按独立仓库的 `artifacts/manifest.json` 核对文件大小与 SHA-256，导入后核对镜像 digest、平台与源码 label。
-主仓库继续按 `docker/base-image.json` 验证固定输入；获取归档不修改此文件，因此不会改变现有依赖 pin。
-导入只加载镜像，不启动或替换生产容器。已有 `.cache/box-image` 时复用该检出，不重复 clone。
+`scripts/lib/docker-socket.sh` 与 `source/electron-main/box/local-docker-host-connector.ts` 维护同一候选顺序：显式 `DOCKER_HOST`、`GROKBOT_COLIMA_PROFILE` 指定的 profile（默认 `grokbot`）、系统 socket、无 profile/default Colima socket、按名称排序的其余 Colima profile、OrbStack socket。若需要指定 socket，可以在当前 shell 设置 `DOCKER_HOST=unix://<socket>`。
 
-原版 0.18.0 应用也由独立仓库登记官方地址与 SHA；主仓库 `npm run bootstrap` 已支持直接获取和校验。
-需要提前准备时执行 `node .cache/box-image/scripts/fetch-artifact.mjs upstream-macos-0.18.0`，
-再把下载文件复制到本仓库 `.cache/downloads/Grok_Bot_0.18.0.dmg`；bootstrap 会再次校验。
-
-### 维护者构建新基础镜像
+## 构建和安装 App
 
 ```sh
-cd .cache/box-image
-docker build --platform linux/arm64 --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -f box-image/Dockerfile -t grok-box-base:arm64 .
-```
-
-基础镜像需要与 `docker/base-image.json` 的 digest、源码提交和平台匹配。构建源码应检出其中的 `sourceRevision`；APT 软件源变更仍可能改变产物，因此重新生成的镜像需经过验收并显式更新清单。构建脚本同时检查 OCI 源仓库与提交 label。
-
-依赖 pin 的输入由 `scripts/lib/deps-pin.mjs` 统一列举，包括基础镜像清单、依赖锁文件和本仓库镜像脚本。App 的 build-stamp、执行镜像 label 和门禁 G0 使用相同的 pin；输入改变后需重新构建执行镜像。
-
-## 4. 打包链（App 本体）
-
-```sh
-cd <grok-bot-repo>
-npm ci                # postinstall 自动跑 native:patch（tree-sitter binding.gyp 的 c++20 补丁）
-                      # ⚠ node_modules 重装会冲掉补丁——postinstall 会重打，但若手动 npm install 后构建报
-                      #   "concept/requires" 编译错，先跑: npm run native:patch
-npm run bootstrap     # 下载官方 0.18 DMG（downloads.cursor.com/sand/…，SHA-256 钉死校验）
-                      #   缓存 Electron 运行时、hydrate src/app。
-                      #   已有原版 App 可 GROKBOT_BOT_018_APP=<path> 跳过下载（重建版 App 会被拒）
-npm run package       # check(typecheck×2+测试) → 编译 → asar → ad-hoc 签名 → dist/
-# 产物：dist/Grok Bot 0.18 Reconstructed.app
+npm ci
+npm run bootstrap
+npm run package
+npm run verify
 ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Reconstructed.app"
 ```
 
-排错要点：
-- **打包静默失败**是这个仓库栽过的坑——装完后看 `Contents/Resources/build-stamp.json` 的 `sourceRevision` 是否等于 `git rev-parse HEAD`；不等 = 旧包，重跑 `npm run package`。
-- `.cache/` 运行时缓存被删 → bootstrap 会重新下载 DMG，属正常路径，不要往缓存里塞重建版 App（校验会拒，且曾污染打包）。
+`bootstrap` 获取并校验固定的官方 0.18 构建输入，固定 renderer 允许作为构建输入。安装前确认 `Contents/Resources/build-stamp.json` 的 `sourceRevision` 与仓库提交一致。
 
-## 5. 数据面（`~/.grokbot-local/`）
+## 数据根和 MCP
 
-**手工必备（只有一项）**：
+默认数据根是 `~/.grokbot-local`，可通过 `GROKBOT_DATA_ROOT` 指定。首次启动会创建 settings、profile、Docker runtime 状态、workspace、gateway token 和本地诊断账本。不要手工创建 gateway token、runtime staging 目录或生产容器数据卷。
 
-```sh
-mkdir -p ~/.grokbot-local
-echo '把你的 GLM API key 原样粘到这里' > ~/.grokbot-local/anthropic-token   # ← 全项目唯一要填的密钥
-chmod 600 ~/.grokbot-local/anthropic-token
-```
+可选 MCP 配置放在数据根的 `mcp-config/shared/mcp-servers.json`。其服务器 `command`、`args`、`env`、`cwd` 由容器内 box 用户执行，服务器可以访问配置授予的工作目录和凭据；只配置信任的服务器。配置变化由应用重新加载连接。MCP 参数通过现有 protobuf/JSON 边界传递，服务器的 HTTP 配置使用当前支持的 Streamable HTTP 路径。
 
-**为什么只需这一个 key**：推理走 GLM 的 Anthropic 兼容端点（`start-local.sh` 已写死 `ANTHROPIC_BASE_URL` 并把 Claude Code 的全部模型位映射到 GLM）；真 key 只住这个 0600 文件，由 provider 层在拉起 CLI 子进程时注入——环境变量里的 `ANTHROPIC_API_KEY` 只是过登录检查的非秘密标记。Cursor 认证被本地 JWT 短路、xAI 后端被钉死到 loopback 拒连，两者都不需要任何凭据。
+## 启动、停止和状态
 
-**自动生成（勿手工造）**：`settings.json`（首启 seed：claude-code + local-docker）、`local-docker-vm.json`（容器 gateway token）、`local-docker-runtime/v3-*`（staged host 树，App 自动维护）、`box-workspace/`（容器 /workspace 的 Mac 侧）、`local-intercept.jsonl`（审计账本）、`box-mode`。
-
-`local-docker-runtime/` 的保留规则：每次宿主 bundle 变化都会生成一个新的 `v<layout>-<hostSha>-<daemonSha>` 目录，App 在 staging 之后保留最新 3 个并删除更早的（含旧 layout 版本的目录）。容器挂载的总是最新那一个，因此清理不会碰到在用目录。同一规则可重复执行，第二次不再删除任何内容；不需要人工清理。
-
-**可选迁移（从源机拷）**：`mcp-config/shared/mcp-servers.json` + 对应插件的服务器文件（本地 MCP 插件源，服务器文件的路径按共享工作区写，
-例如 `/workspace/demo-mcp-server.cjs`）、`box-secrets.json`（Saved keys 镜像）。不拷则插件面为空，不影响主线。
-
-`mcp-servers.json` 放在 Mac 数据根的 `mcp-config/shared/` 目录中，该目录总是以只读方式绑定到 `/home/box/sand-data/mcp-config/shared`，即盒内定义源
-读取的位置。目录绑定支持以替换方式保存的改动和容器创建后才新建的文件。`mcp-config/` 权限为 0700，保护宿主访问；`shared/` 权限为 0755，配置文件权限为 0644，允许容器 box 用户读取。
-数据根下的 `mcp-servers.json` 会在下次启动或界面编辑时移入 `mcp-config/shared/`。盒子里的 stdio 插件服务器由盒内
-exec-daemon 启动，日志在容器日志里（`box-exec-daemon: mcp:` 前缀），可以用
-`docker logs grok-bot-local-vm | grep "box-exec-daemon: mcp"` 看每个插件的启动、工具列举与每次调用。
-Colima 共享文件系统的属性缓存可能让容器在原子保存后短暂读取到不完整的 JSON；配置读取会报告错误并保留文件，缓存更新后重新加载即可。
-新增依赖 `@modelcontextprotocol/sdk`，因此依赖 pin 变化后必须用 `docker/build-arm64-box.sh` 重建盒子镜像。
-
-**可选挂载**：`~/.codex`、`~/.claude` 存在即被只读挂进容器（`/root/.codex`、`/root/.claude`）。自建镜像以 `box`
-用户运行，家目录是 `/home/box`，这两个目录对本部署的盒内进程不可读，`CODEX_HOME` 也没有指向它们。盒内轮次选择
-Codex 时会读取 `auth.json` 并得到一条指明路径与平面的错误（`provider-session.ts` 的 `codexCredentials`）。
-要用盒内 Codex，需要在盒内可读的位置放置该平面的登录凭据（例如把 `CODEX_HOME` 指向盒内数据卷中的目录），
-或者改用 Mac 平面执行轮次（`GROKBOT_TURN=mac`）。默认推理路线是 claude-code，不需要这些凭据。
-
-## 6. 启动链
-
-```sh
-cd <grok-bot-repo>
-./start-local.sh start
-```
-
-**启动 shell 必须先剔除 `ELECTRON_RUN_AS_NODE`**。该变量存在时 Electron 以纯 Node 模式启动，
-二进制拒绝 `--user-data-dir` 并立即退出，日志只有一行
-`bad option: --user-data-dir=...`。脚本在开头无条件清除该变量，因此直接调用脚本即可；另外
-`npm test` 与 `npm run package` 里的 asar 相关用例需要用真实 Node 运行，否则会出现 `ENOTEMPTY`
-假失败（那个 `node` 指向的是 Electron）。
+准备好 token、Docker 和已配置 provider 后：
 
 ```sh
 ./start-local.sh start
-env -u ELECTRON_RUN_AS_NODE PATH="/usr/local/bin:$PATH" npm run package
+./start-local.sh status
+./start-local.sh logs
+./start-local.sh stop
+./start-local.sh restart
 ```
 
-脚本做的事（顺序即依赖序）：回收孤儿 host → 判定 1340 端口持有者（Docker 计算机的端口转发是合法持有者）→ seed settings → 导出环境（见下表）→ 校验 build-stamp ↔ HEAD → **直启 binary**（不走 `open`，否则环境被剥）→ 有界等待 45s 网关健康（`127.0.0.1:1340/health` + Bearer）。
+`start-local.sh` 只接受 Docker 计算机路径：它设置 `SAND_LOCAL_ADMIN=1`、`SAND_LOCAL_ADMIN_BOX=docker`、`SAND_LOCAL_ADMIN_TURN=host`，默认启用 desktop plane；设置 `GROKBOT_DESKTOP=0` 才使用 headless exec plane。脚本通过 macOS LaunchServices 显式传递非敏感 `--env`。
 
-判定的前置条件是 Docker socket 可达。发现顺序是显式的：`DOCKER_HOST` → 本项目自己的 Colima profile
-（`GROKBOT_COLIMA_PROFILE`，默认 `grokbot`；两个 shell 脚本与连接器共用 `scripts/lib/docker-socket.sh` 的选择逻辑）
-→ 通用的 `~/.colima/docker.sock` 与 `default` → 其余 profile 按名称排序。仓库里不写别的项目的 profile 名，
-换机器只需 `colima start --profile grokbot`，或把 `GROKBOT_COLIMA_PROFILE` 指向已有的运行时，或直接
-`export DOCKER_HOST=…`。socket 不可达时脚本无法把 1340 的持有者认成计算机的端口转发，会以
-`port 1340 is held by something that is not our app or computer` 拒绝启动。
+脚本默认使用 `/Applications/Grok Bot 0.18 Reconstructed.app`，健康地址为 `http://127.0.0.1:1340/health`，就绪等待默认 45 秒。可使用 `GROKBOT_READY_TIMEOUT_S` 调整等待时间，使用 `GROKBOT_IMAGE` 指定已经校验的执行镜像标签。启动时若发现非本应用或健康 Docker computer 占用 1340 端口会终止启动。
 
-**环境开关表**（`start-local.sh` 识别的）：
+`status` 可能显示 handover URL。该 URL 含访问 token，分享日志、截图或诊断文本前必须隐藏整行。
 
-| 变量 | 默认 | 语义 |
-| --- | --- | --- |
-| `GROKBOT_BOX` | auto | `docker` 强制容器 / `host` 强制 Mac-host 进程 / auto=Docker 可达即容器 |
-| `GROKBOT_TURN` | host（in-box） | `mac` 退回 Mac 协调器轮次面（结构回退，非默认） |
-| `GROKBOT_DESKTOP` | 1 | `0` 退回无头 exec 面 |
-| `GROKBOT_IMAGE` | 自建 arm64 | 钉任意镜像 tag；缺省时自建缺失→官方 ECR/QEMU 回退（**带账本标注**，状态面有黄字） |
-| `GROKBOT_DATA_ROOT` | `~/.grokbot-local` | 数据根重定向 |
-
-**推理配置（已内置，通常零配置）**：`start-local.sh` 默认导出 `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic`、`SAND_CLAUDE_MODEL=glm-5.3-flash`，并把 fable/haiku/opus/sonnet/主模型/子代理映射到该模型。通过启动前设置 `SAND_CLAUDE_MODEL` 或对应的 `ANTHROPIC_DEFAULT_*_MODEL` 可以覆盖配置；模型映射会传入容器，配置变化会在下次连接时重建容器并保留数据卷。key 见 §5 的 0600 文件，永远不进环境变量明文、不进 git。
-
-其他子命令：`stop`（走 Apple quit 事件回收 host；容器**有意保留**——桌面会话/登录态/接管 URL 跨 App 重启存活）、`restart`、`status`（体检全量：计算机形态/镜像警告/工作区双径/插件数/host/gateway/接管 URL）、`logs`。
-
-## 7. 验证链（按序，全绿才算部署成功）
+## 验收
 
 ```sh
 ./start-local.sh status
-# 期望：app running；computer: desktop plane；gateway: healthy；
-#       handover: http://127.0.0.1:6080/…（浏览器能打开 = noVNC 面通）
-
-# 容器门禁（desktop profile，G0-G4 + D1-D5 十项，约 2-3 分钟）
 docker/container-gates.sh --profile desktop
-#   G0 镜像 pin / G1 网关有界就绪+冷启动哨兵 / G2 daemon ready / G3 1337 真执行链精确输出 / G4 无头纪律
-#   D1 几何 / D2 端口 / D3 noVNC 双向鉴权（对 token 通、错 token 拒）/ D4 Computer 往返 / D5 桌面死语义
-
-# 零远端证明（可选但推荐跑一次）
-scripts/zero-remote-live.sh   # 断言账本零 cursor/xai 出网行
-
-# UI 冒烟（最终判据）
-# 问 bot："检查能否与云端的 sandbox 沟通"
-# 期望：从本地现实作答（"我运行在 Linux 容器里，没有云端"），
-#       它亮出的 uname/hostname 应是 Linux 指纹（in-box turn 生效的判据），
-#       且不发任何对 grok.com/cursor.sh 的连通性验证。
 ```
 
-## 8. 故障速查（按症状）
+确认 status 显示 app、Docker computer、gateway healthy；桌面验收确认 noVNC handover 能打开。对已配置 provider 执行一次真实文本回合、一次本地文件回合、一次 host MCP 回合，再检查 transcript 和目标工作目录。不要在没有对应账号或 key 时声称其他 provider 已验收。
 
-| 症状 | 首查 | 常因 |
-| --- | --- | --- |
-| `start` 报 missing token | `~/.grokbot-local/anthropic-token` | §5 手工项没做 |
-| App 启动即退出，日志 `bad option: --user-data-dir` | `echo $ELECTRON_RUN_AS_NODE` | 启动 shell 带着该变量；`start-local.sh` 会自行清除它，若仍出现说明调用方不是该脚本 |
-| `npm test` 出现 `ENOTEMPTY`（asar 用例） | `node -e 'console.log(process.versions.electron)'` | `node` 是 Electron 而不是 Node；用真实 Node 运行（`PATH=/usr/local/bin:$PATH`） |
-| `start` 报 port 1340 held by something else | `lsof -nP -iTCP:1340 -sTCP:LISTEN` 与 `colima list` | Docker socket 不可达；脚本按 `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE`（默认 `grokbot`）→ 通用 socket 的顺序自行发现，也可显式 `export DOCKER_HOST=…` |
-| UI 出现 “Something went wrong” 且控制台报 `matchAll` | 打包后 asar 是否带 renderer 提取器补丁 | renderer 产物自身的条目字段名与它的转录投影不一致；补丁在 `scripts/lib/router-renderer-patch.mjs`，随 `npm run package` 生效 |
-| 网关 45s 不健康 | `./start-local.sh logs` + `box-logs/sand-host.log` 尾部 | 容器崩溃循环：看 `docker logs grok-bot-local-vm`（历史两案：数据卷 root 属主 EACCES、镜像 pin 过期） |
-| `computer: docker unreachable` | `colima list` | Colima 没起；起后脚本自动发现 `~/.colima/*/docker.sock`（`/var/run/docker.sock` 不存在是常态，别手工造） |
-| 镜像警告 self-built missing | `docker/build-arm64-box.sh` | 薄层没建（§3）；不建则默认走 QEMU 回退（能用但慢 8-16×，状态面有黄字标注） |
-| G0 pin mismatch | 同上 | 仓库依赖变了：重建薄层即可，base 不用动。`docker/arm64-exec-box.Dockerfile` 的**注释**也计入 pin，改注释就要重建镜像 |
-| `stale-image-refused` 账本行 | `docker image inspect grok-bot-exec-box:arm64` 的 pin label | 镜像存在但与当前 deps-pin 不符：重建薄层。连接器拒绝使用过期镜像，并且**不会**退回 QEMU |
-| tree-sitter 编译报 concept/requires | `npm run native:patch` 后重跑 package | node_modules 重装冲掉 c++20 补丁 |
-| App 行为像旧代码 | `Contents/Resources/build-stamp.json` vs `git rev-parse HEAD` | 打包静默失败装了旧包（启动时也会大声警告） |
-| noVNC 白屏/连不上 | `./start-local.sh status` 的 handover URL 是否本次启动签发 | token 随容器重启重签即作废——重新让 bot ask（这是设计，URL 不跨重启） |
-| 容器替换循环 | `docker inspect grok-bot-local-vm` 的 labels（schema/pin/host-sha） | 契约漂移自动替换是正常自愈；若反复替换→对照 §3/§4 的 pin 与 staging |
+可选地运行本地零远端检查：
 
-## 9. 出网白名单（部署后网络审计用）
+```sh
+scripts/zero-remote-live.sh
+```
 
-- **运行期必需**：`open.bigmodel.cn`（推理）；容器内浏览器访问的业务站点
-- **一次性构建**：`downloads.cursor.com`（官方 DMG）、`nodejs.org`、`github.com`（bun/uv/node）、`registry.npmjs.org`
-- **永不**：`api2/api3.cursor.sh`、`*.cursor.com`、`*.x.ai`（local-admin 拦截层设计性阻断；zero-remote 脚本可随时证明）
-- 可选：`SAND_BOT_PROXY=<http代理>` 给盒内浏览器走代理（Clash 环境治 DNS 投毒；fake-IP 段已有部署级适配）
+该检查用于当前 local-admin 网络边界和本地诊断账本。它不能替代容器出口防火墙，也不能证明所有第三方网站均可访问。
 
-## 10. 源机特异性备忘（新机不需要复制，但要知道差异）
+## 故障边界
 
-- Colima profile 名不写进仓库：默认用 `GROKBOT_COLIMA_PROFILE`（缺省 `grokbot`），也可以直接 `export DOCKER_HOST=…`
-  指向已有的运行时。源机当前借用的是别的项目的 profile，运行时按 socket 发现，与 profile 名无关
-- 源机 Clash fake-IP（198.18/15 段）触发了 egress 门的部署级适配；新机无 Clash 则走默认严格模式，行为更纯
-- `docs/LEARNING-PYRAMID.md` 与 `docs/LEARNING-PYRAMID.html` 是分析文档（架构链路与工程取舍的学习材料），随仓库
-  一起版本化；部署与运行都不需要读它们，内容以 `.md` 为准，`.html` 是排版版本
-- 源机工作区曾有未提交实验（已全部随 PR #28 合并）；新机从 git 干净起步，无此负担
+- `missing .../anthropic-token`：使用文本编辑器保存 token 文件并设置 `chmod 600`，不要把 token 写进命令行。
+- `no Docker socket found`：启动 Colima `grokbot` profile，启动 OrbStack，或设置正确的 `DOCKER_HOST`。
+- gateway 超时：查看 `./start-local.sh logs`、Docker container logs 和 host 日志，确认镜像 pin、数据卷权限、runtime staging 与 1340 端口状态。
+- installed app 行为与源码不同：比较 build stamp 的 `sourceRevision` 和当前仓库提交，重新执行 `npm run package`、`npm run verify` 后重新 `ditto`。
+- handover URL 失效：重新执行 `status` 获取当前 URL，并在任何外部分享前隐藏完整 URL 行。
+- MCP 服务器失败：确认 `mcp-servers.json` 的结构、command/cwd/args、服务器权限和 HTTP endpoint；应用会报告连接、工具发现或工具调用失败，不会自动重放有外部副作用的调用。
+
+容器写入 bind-mounted workspace 会影响宿主机对应目录。外部工具已经发生的副作用不会因取消、网络中断或应用退出自动撤销。
