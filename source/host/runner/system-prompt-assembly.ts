@@ -252,8 +252,10 @@ export function createSystemPromptAssembly(deps: SystemPromptAssemblyDependencie
     const sections = [base];
     if (deps.isSpotlightEnabled?.() !== false) sections.push(spotlightPromptSection({ canSendMessage: !deps.isSubagentRunner }));
     const profile = deps.isSharedRoomRunner ? profileSection(resolveProfileForPrompt(), true) : snapshot?.profileSection ?? profileSection(resolveProfileForPrompt(), false);
-    if (profile != null) sections.push(profile);
-    if (deps.isSharedRoomRunner) return sections.join("\n\n");
+    if (deps.isSharedRoomRunner) {
+      if (profile != null) sections.push(profile);
+      return sections.join("\n\n");
+    }
     const add = (value: string | null | undefined): void => { if (value != null && value.length > 0) sections.push(value); };
     add(getUserIdentitySection());
     if (!deps.isSubagentRunner && !deps.isSystemPromptOverridden && deps.isMultitaskEnabled?.() === true) add(deps.multitaskSection);
@@ -262,6 +264,8 @@ export function createSystemPromptAssembly(deps: SystemPromptAssemblyDependencie
     add(getTimeZoneSection());
     add(getMemorySection()); add(getAutomationsSection()); add(getWorkflowsSection()); add(getChannelsSection()); add(getAgentDirectorySection());
     add(deps.mcpCustomInstructionsSection()); add(deps.mcpDiscoveryStatusSection()); add(deps.remoteBoxSection()); add(deps.computerSection());
+    // 将包含 agent 身份的 profile 放在末尾，使前面内容相同时能够复用 provider 的缓存前缀。
+    add(profile);
     return sections.join("\n\n");
   }
 
