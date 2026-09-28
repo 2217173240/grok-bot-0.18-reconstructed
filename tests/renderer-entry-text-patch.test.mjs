@@ -18,10 +18,13 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { access, readFile } from "node:fs/promises";
+import path from "node:path";
 
 import {
   RENDERER_ENTRY_TEXT_ANCHORS,
   patchOriginalEntryTextExtractor,
+  patchOriginalComposerDraftRestore,
 } from "../scripts/lib/router-renderer-patch.mjs";
 
 const {
@@ -29,6 +32,8 @@ const {
   entryTextAfter,
   prScanBefore,
   prScanAfter,
+  draftRestoreBefore,
+  draftRestoreAfter,
 } = RENDERER_ENTRY_TEXT_ANCHORS;
 
 function extractFunction(source, name) {
@@ -48,15 +53,16 @@ function extractFunction(source, name) {
 
 test("the packaged renderer extractor tolerates every entry spelling the app produces", async () => {
   // A fixture carrying both anchors in the order the real chunk has them.
-  const fixture = `const I_n=/https?:\\/\\/[^\\s<>()[\\]]+/g;${entryTextBefore}${prScanBefore}const s=t[0].replace(/[.,;:!?]+$/,""),r=Rpt(s);r!=null&&e.push({prNumber:r.prNumber,title:null,url:r.url})}return e}`;
-  const patched = patchOriginalEntryTextExtractor(fixture);
+  const fixture = `const I_n=/https?:\\/\\/[^\\s<>()[\\]]+/g;${entryTextBefore}${prScanBefore}const s=t[0].replace(/[.,;:!?]+$/,""),r=Rpt(s);r!=null&&e.push({prNumber:r.prNumber,title:null,url:r.url})}return e}${draftRestoreBefore}`;
+  const patched = patchOriginalComposerDraftRestore(patchOriginalEntryTextExtractor(fixture));
 
   assert.ok(patched.includes(entryTextAfter), "the extractor must gain the fallback");
   assert.ok(patched.includes(prScanAfter), "the scan must gain the string guard");
+  assert.ok(patched.includes(draftRestoreAfter), "draft restoration must remeasure the editor layout");
   assert.ok(!patched.includes(entryTextBefore), "the original extractor must be gone");
   assert.equal(
     patched.length,
-    fixture.length + (entryTextAfter.length - entryTextBefore.length) + (prScanAfter.length - prScanBefore.length),
+    fixture.length + (entryTextAfter.length - entryTextBefore.length) + (prScanAfter.length - prScanBefore.length) + (draftRestoreAfter.length - draftRestoreBefore.length),
   );
 
   const extractBefore = eval(`(${extractFunction(fixture, "A_n")})`);
@@ -90,4 +96,24 @@ test("the packaged renderer extractor tolerates every entry spelling the app pro
 
   // A moved anchor must fail loudly rather than quietly skip the repair.
   assert.throws(() => patchOriginalEntryTextExtractor("const nothing = 1;"), /anchor is missing or ambiguous/);
+});
+
+test("composer draft restore requests a fresh field measurement after setContent", async () => {
+  const fixture = `function e9n(){${draftRestoreBefore}}`;
+  const patched = patchOriginalComposerDraftRestore(fixture);
+  assert.ok(patched.includes(draftRestoreAfter));
+  assert.throws(() => patchOriginalComposerDraftRestore("function e9n(){}"), /anchor is missing or ambiguous/);
+});
+
+const stockRenderer = path.resolve(import.meta.dirname, "../src/app/dist/renderer/assets/index-UbX-y3il.js");
+let stockRendererAvailable = true;
+try { await access(stockRenderer); } catch { stockRendererAvailable = false; }
+
+test("stock composer restore anchor is present in the pinned renderer", { skip: !stockRendererAvailable }, async () => {
+  const source = await readFile(stockRenderer, "utf8");
+  assert.equal(source.includes(draftRestoreBefore), true);
+  const start = source.indexOf(draftRestoreBefore);
+  const context = source.slice(Math.max(0, start - 7000), start + draftRestoreBefore.length + 300);
+  assert.match(context, /onUpdate:\(\{editor:X\}\)=>\{[^}]*E\(\)\}/);
+  assert.equal(patchOriginalComposerDraftRestore(source).includes(draftRestoreAfter), true);
 });

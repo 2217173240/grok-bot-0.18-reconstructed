@@ -19,6 +19,8 @@ const ENTRY_TEXT_BEFORE = 'function A_n(n){switch(n.kind){case"message":return n
 const ENTRY_TEXT_AFTER = 'function A_n(n){switch(n.kind){case"message":return n.content??n.text??"";case"send-message":return n.message.type==="text"?n.message.content??n.message.text??"":"";case"notice":return n.text??"";default:return""}}';
 const PR_SCAN_BEFORE = 'function Fpt(n){const e=[];for(const t of n.matchAll(I_n)){';
 const PR_SCAN_AFTER = 'function Fpt(n){const e=[];const s0=typeof n==="string"?n:"";for(const t of s0.matchAll(I_n)){';
+const DRAFT_RESTORE_BEFORE = 'restore:({prompt:se,richText:le})=>{const Q=_m(f.current);Q?.chain().command(iVe).setContent(rVe(le,se)).focus("end").run()}';
+const DRAFT_RESTORE_AFTER = 'restore:({prompt:se,richText:le})=>{const Q=_m(f.current);Q?.chain().command(iVe).setContent(rVe(le,se)).focus("end").run(),E()}';
 // Exported so the regression guard can exercise the transform without the
 // pinned artifact: `src/app/dist` is a bootstrap output that a fresh checkout
 // (and therefore CI) does not carry.
@@ -27,6 +29,8 @@ export const RENDERER_ENTRY_TEXT_ANCHORS = Object.freeze({
   entryTextAfter: ENTRY_TEXT_AFTER,
   prScanBefore: PR_SCAN_BEFORE,
   prScanAfter: PR_SCAN_AFTER,
+  draftRestoreBefore: DRAFT_RESTORE_BEFORE,
+  draftRestoreAfter: DRAFT_RESTORE_AFTER,
 });
 
 const COMPONENT_SOURCE = String.raw`
@@ -104,6 +108,10 @@ export function patchOriginalEntryTextExtractor(source) {
   return patched;
 }
 
+export function patchOriginalComposerDraftRestore(source) {
+  return replaceExactlyOnce(source, DRAFT_RESTORE_BEFORE, DRAFT_RESTORE_AFTER, "composer draft restore");
+}
+
 export function patchOriginalSettingsPanel(source) {
   let patched = replaceExactlyOnce(source, COMPONENT_ANCHOR, `${COMPONENT_SOURCE}${COMPONENT_ANCHOR}`, "component insertion");
   patched = replaceExactlyOnce(patched, GENERAL_BEFORE, GENERAL_AFTER, "Router panel switch");
@@ -152,7 +160,8 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
     throw new Error(`Expected one renderer chunk carrying the entry text extractor, found ${entryTextCandidates.length}.`);
   }
   for (const candidate of entryTextCandidates) {
-    const patched = patchOriginalEntryTextExtractor(candidate.source);
+    let patched = patchOriginalEntryTextExtractor(candidate.source);
+    patched = patchOriginalComposerDraftRestore(patched);
     await writeFile(candidate.target, patched);
     changes.push({
       role: "entry-text-extractor",
@@ -166,7 +175,7 @@ export async function applyOriginalRendererRouterPatch({ stageRoot }) {
     mode: "original-renderer-settings-extension",
     chunks: changes,
     features: ["settings-router-provider", "settings-command-code-model", "settings-local-docker-vm", "usage-current-provider", "transcript-entry-text-shape"],
-    transformations: ["settings-registry", "router-panel", "usage-panel", "entry-text-extractor"],
+    transformations: ["settings-registry", "router-panel", "usage-panel", "entry-text-extractor", "composer-draft-restore"],
   };
   const provenancePath = path.join(stageRoot, "dist", "renderer-router-extension.json");
   await writeFile(provenancePath, `${JSON.stringify(record, null, 2)}\n`);
