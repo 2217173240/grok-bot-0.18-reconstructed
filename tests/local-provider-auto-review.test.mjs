@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 import { createOpenAI } from "@ai-sdk/openai";
-import { Struct } from "@bufbuild/protobuf";
+import { MethodKind, Struct } from "@bufbuild/protobuf";
+import { createPromiseClient } from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-node";
 
 const root = path.resolve(import.meta.dirname, "..");
 await mkdir(path.join(root, ".cache"), { recursive: true });
@@ -21,6 +23,129 @@ test("严格分类 JSON 只接受 ALLOW 或完整 BLOCK", () => {
   assert.equal(runtime.parseLocalAutoReviewDecision('{"decision":"BLOCK","blockReason":"Needs permission"}').result.value.decision, 2);
   for (const invalid of ['{"decision":"UNKNOWN"}', '{"decision":"allow"}', '{"decision":"BLOCK"}', '{"decision":"BLOCK","blockReason":" "}', '{"decision":"ALLOW","blockReason":"ignored"}', '```json\n{"decision":"ALLOW"}\n```', '{', 'null']) {
     assert.throws(() => runtime.parseLocalAutoReviewDecision(invalid));
+  }
+});
+
+test("Computer enforce 拒绝 screenshot 后追加需要审核的动作", () => {
+  const parameters = runtime.buildComputerParameters({ mode: "enforce" });
+  for (const action of [{ action: "type", text: "send" }, { action: "key", key: "ENTER" }, { action: "click", x: 1, y: 1 }, { action: "drag", x: 1, y: 1, x2: 2, y2: 2 }]) {
+    assert.equal(parameters.safeParse({ action: "screenshot", then: [action] }).success, false);
+  }
+  assert.equal(parameters.safeParse({ action: "screenshot", then: [{ action: "wait", durationMs: 0 }] }).success, true);
+});
+
+test("Auto-review 提示说明等待当前卡片以及分类失败后停止", () => {
+  const prompt = runtime.SAND_SYSTEM_PROMPT_CLOUD_AGENTS_DISABLED;
+  assert.match(prompt, /host raises an approval card and waits within that tool call/);
+  assert.match(prompt, /If classification fails.*stop the action and report the error/);
+  assert.doesNotMatch(prompt, /approval-retry|same-tool approval retry|same-command retry|request_smart_mode_approval|requestSmartModeApproval/);
+});
+
+test("Shell BLOCK 首次调用等待人工卡片，批准后才执行真实命令", { timeout: 30_000 }, async () => {
+  let completion = '{"decision":"BLOCK","blockReason":"Ask before writing the review file"}';
+  const server = createServer(async (request, response) => {
+    for await (const _chunk of request) {}
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({ id: "approval-classifier", object: "chat.completion.chunk", created: 1, model: "protocol-model", choices: [{ index: 0, delta: { content: completion }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const daemon = await runtime.startBoxExecDaemon({ port: 0, workspaceRoot: directory, terminalsDirectory: path.join(directory, "terminals") });
+  const client = createPromiseClient({ typeName: runtime.ExecService.typeName, methods: { exec: { ...runtime.ExecService.methods.exec, kind: MethodKind.ServerStreaming } } }, createConnectTransport({ baseUrl: daemon.url, httpVersion: "1.1" }));
+  const model = createOpenAI({ apiKey: "protocol-test", baseURL: `http://127.0.0.1:${server.address().port}/v1`, compatibility: "compatible" }).chat("protocol-model");
+  const inference = { completeTextOnly: (ctx, instructions, input) => runtime.consumeTextOnlyCompletion(ctx, runtime.chatCompletionsExecutor("openrouter", model, [{ role: "user", content: input }], "classification", [], undefined, ctx.signal, instructions)) };
+  const accessor = new runtime.RegistryResourceAccessor();
+  accessor.register(runtime.smartModeClassifierExecutorResource, runtime.createLocalProviderSmartModeClassifierExecutor(inference));
+  const executed = [];
+  accessor.register(runtime.shellStreamExecutorResource, {
+    async *execute(ctx, args) {
+      executed.push(args);
+      const stream = client.exec(new runtime.ExecServerMessage({ id: 1, execId: args.toolCallId, message: { case: "shellStreamArgs", value: args } }), { signal: ctx.signal, headers: { authorization: "Bearer local" } });
+      for await (const event of stream) {
+        if (event.element.case === "execClientMessage" && event.element.value.message.case === "shellStream") yield event.element.value.message.value;
+        else if (event.element.case === "execClientControlMessage" && event.element.value.message.case === "throw") throw new Error(event.element.value.message.value.message);
+      }
+    },
+  });
+  const updates = [];
+  const recorded = [];
+  const interaction = new runtime.InteractionHandler({ sendUpdate: async (_ctx, update) => { updates.push(update); } }, { recordToolCall: call => { recorded.push(call); } }, "approval-test");
+  const controller = new runtime.SandAutoReviewController({ agentId: "approval-test", hostGeneration: "test" });
+  const gate = runtime.createAutoReviewGate({ baseModes: runtime.SAND_AUTO_REVIEW_MODES_ENFORCE, controller: () => controller, resolveBoxId: () => "local" });
+  accessor.register(runtime.computerUseExecutorResource, {
+    async execute(ctx, args) {
+      for await (const event of client.exec(new runtime.ExecServerMessage({ id: 2, execId: args.toolCallId, message: { case: "computerUseArgs", value: args } }), { signal: ctx.signal, headers: { authorization: "Bearer local" } })) {
+        if (event.element.case === "execClientMessage" && event.element.value.message.case === "computerUseResult") return event.element.value.message.value;
+      }
+      throw new Error("Computer executor did not return a result");
+    },
+  });
+  const computer = runtime.createComputerTool(runtime.createHostComputerToolDependencies({
+    resourceAccessor: accessor,
+    autoReview: { mode: gate.currentModes().computer, agentId: "approval-test", boxIdentity: { boxId: "local", windowGeneration: "test" }, autoReviewController: controller, resolveDisplayNumber: async () => 1 },
+  }));
+  const state = gate.shellApprovalState("box_shell");
+  const options = {
+    smartModeClassifierMode: true, requestContext: { env: { smartModeClassifierAutoModeEnabled: true } },
+    smartModeApprovalProvider: runtime.createSandShellApprovalProvider({ controller, agentId: "approval-test", surface: "box_shell", getExpiryPolicy: () => "park" }),
+    smartModeShellApprovalState: state,
+  };
+  const tool = runtime.createShellTool(accessor, options);
+  const streamArgs = async function* (args) { yield JSON.stringify(args); };
+  const run = (id, ctx = runtime.createContext(), currentTool = tool) => currentTool.execute(ctx, interaction, streamArgs({ command: `printf approved > ${id}.txt`, working_directory: directory }), { toolCallId: id });
+  const nextApproval = () => new Promise(resolve => {
+    const unsubscribe = controller.subscribe(event => { if (event.type === "created") { unsubscribe(); resolve(event.approval); } });
+  });
+  try {
+    for (const action of [{ action: "type", text: "send" }, { action: "key", key: "ENTER" }, { action: "click", x: 1, y: 1 }, { action: "drag", x: 1, y: 1, x2: 2, y2: 2 }]) {
+      await assert.rejects(computer.execute({ action: "screenshot", then: [action] }, { context: runtime.createContext(), toolCallId: "computer-follow-up" }), { name: "ZodError" });
+    }
+    for (const resolution of ["approved", "denied", "cancelled", "expired", "changed"]) {
+      const [ctx, cancel] = runtime.createContext().withCancel();
+      const created = nextApproval();
+      const pending = run(resolution, ctx);
+      void pending.catch(() => {});
+      const card = await created;
+      assert.equal(card.reason, "Ask before writing the review file");
+      assert.equal(card.command, `printf approved > ${resolution}.txt`);
+      assert.match(card.fingerprint, /^[a-f0-9]{64}$/);
+      await assert.rejects(access(path.join(directory, `${resolution}.txt`)));
+      if (resolution === "cancelled") cancel(new Error("cancel review"));
+      else if (resolution === "expired") controller.beginUserMessageEpoch();
+      else {
+        if (resolution === "changed") state.markSideEffectStart();
+        controller.resolveApproval(card.id, resolution === "denied" ? "denied" : "approved");
+      }
+      if (resolution === "approved") {
+        assert.equal((await pending).result.case, "success");
+        assert.equal(await readFile(path.join(directory, "approved.txt"), "utf8"), "approved");
+      } else {
+        await assert.rejects(pending);
+        await assert.rejects(access(path.join(directory, `${resolution}.txt`)));
+      }
+      assert.equal(controller.getPendingApprovals().length, 0);
+      assert.equal(controller.resolveApproval(card.id, "approved"), undefined);
+    }
+    const readonlyTool = runtime.createShellTool(accessor, { ...options, sandboxEnabled: true, isReadonly: true });
+    const readonlyCard = nextApproval();
+    const readonlyResult = readonlyTool.execute(runtime.createContext(), interaction, streamArgs({ command: "pwd", working_directory: directory }), { toolCallId: "readonly" });
+    controller.resolveApproval((await readonlyCard).id, "approved");
+    assert.equal((await readonlyResult).result.case, "success");
+    assert.equal(executed.at(-1).requestedSandboxPolicy.toJson().type, "TYPE_WORKSPACE_READONLY");
+    const noProvider = runtime.createShellTool(accessor, { ...options, smartModeApprovalProvider: undefined });
+    await assert.rejects(run("no-provider", runtime.createContext(), noProvider));
+    assert.equal(controller.getPendingApprovals().length, 0);
+    await assert.rejects(access(path.join(directory, "no-provider.txt")));
+    completion = "invalid classifier response";
+    await assert.rejects(run("invalid"));
+    assert.equal(controller.getPendingApprovals().length, 0);
+    await assert.rejects(access(path.join(directory, "invalid.txt")));
+    assert.ok(updates.length > 0);
+    assert.ok(recorded.length > 0);
+  } finally {
+    controller.expire("session_end");
+    await daemon.stop();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
   }
 });
 
