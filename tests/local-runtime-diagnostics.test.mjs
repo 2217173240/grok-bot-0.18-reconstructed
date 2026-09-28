@@ -72,22 +72,29 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
   test(`实际 Docker 日志与 app 日志在 ${signal} 后清理 followers`, { skip: process.env.SAND_TEST_RUNTIME_DIAGNOSTICS !== "1", timeout: 10_000 }, async () => {
     const marker = `app-diagnostic-${signal}`;
     await writeFile(path.join(directory, "app.log"), `${marker}\n`);
-    const containerLogs = await execute("docker", ["logs", "--tail", "1", "grok-bot-local-vm"], { env });
-    const lastContainerLine = (containerLogs.stdout + containerLogs.stderr).trim();
+    // 同时跟随容器日志，持续覆盖 launcher 启动期间的新记录。
+    const reference = spawn("docker", ["logs", "--tail", "40", "--follow", "grok-bot-local-vm"], { env, stdio: ["ignore", "pipe", "pipe"] });
+    let referenceStdout = "", referenceStderr = "";
+    reference.stdout.on("data", chunk => { referenceStdout += chunk; });
+    reference.stderr.on("data", chunk => { referenceStderr += chunk; });
+    const referenceEnded = once(reference, "close");
+    const hasContainerOutput = output => [referenceStdout, referenceStderr].some(stream =>
+      stream.split("\n").slice(0, -1).some(line => line.length > 0 && output.includes(line)));
     const run = launch("logs", env);
     let followers = [];
     try {
-      for (let attempt = 0; attempt < 50; attempt++) {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
         try {
           const { stdout } = await execute("pgrep", ["-P", String(run.child.pid)]);
           followers = stdout.trim().split(/\s+/).filter(Boolean).map(Number);
         } catch { followers = []; }
-        if (followers.length >= 2 && run.output().includes(marker)) break;
+        if (followers.length === 2 && run.output().includes(marker) && hasContainerOutput(run.output())) break;
         await delay(50);
       }
       assert.equal(run.output().includes("Docker grok-bot-local-vm logs"), true);
       assert.equal(run.output().includes(marker), true);
-      if (lastContainerLine) assert.equal(run.output().includes(lastContainerLine), true);
+      assert.equal(hasContainerOutput(run.output()), true);
       assert.equal(followers.length, 2);
       run.child.kill(signal);
       const [code] = await run.ended;
@@ -98,6 +105,8 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
         run.child.kill("SIGTERM");
         await run.ended;
       }
+      if (reference.exitCode === null && reference.signalCode === null) reference.kill("SIGTERM");
+      await referenceEnded;
     }
   });
 }
