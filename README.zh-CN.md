@@ -79,7 +79,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 ./start-local.sh status
 ```
 
-将模型服务的 token 写入 `anthropic-token`，只占一行；该文件保存在本地数据目录，并提供给容器内的模型进程。启动脚本默认使用 `https://open.bigmodel.cn/api/anthropic` 与模型 `glm-5.2`；改用其他兼容服务时设置 `ANTHROPIC_BASE_URL` 与 `SAND_CLAUDE_MODEL`。agent 的共享文件位于 `~/.grokbot-local/box-workspace`。
+将模型服务的 token 写入 `anthropic-token`，只占一行；该文件保存在本地数据目录，并提供给容器内的模型进程。启动脚本默认使用 `https://open.bigmodel.cn/api/anthropic` 与支持图片输入的模型 `glm-5.3-flash`；改用其他兼容服务时设置 `ANTHROPIC_BASE_URL` 与 `SAND_CLAUDE_MODEL`。agent 的共享文件位于 `~/.grokbot-local/box-workspace`。
 
 `./start-local.sh` 还提供 `stop`、`restart` 与 `logs`。本地管理员模式在容器内执行回合；镜像或已安装应用缺失时，`start` 会明确报错。
 
