@@ -33,12 +33,13 @@ Then install the app and start the container computer: [Run the local container 
 | Runs the agent on your machine | Local admin mode starts the host, execution daemon, desktop, browser, and agent turns in a Docker container. Files live in a bind-mounted workspace; settings and transcripts stay local. | A missing Docker daemon or a missing pinned image produces an error instead of a fallback. |
 | Routes inference | Settings → Router offers Claude Code, Codex, OpenRouter, and Command Code alongside the preserved Cursor setting. `start-local.sh` defaults to Claude Code with an Anthropic-compatible API. | Account-specific providers need their own credentials and a model that account supports. |
 | Connects local tools and plugins | The container runs file and shell tools and hosts the MCP servers configured in `mcp-servers.json`, including stdio processes and Streamable HTTP endpoints. | Plugin commands run inside the container with the mounted workspace in reach; review them before use. |
-| Rebuilds the desktop runtime | Readable TypeScript under `source/` supplies Electron main, coordinator, host, execution, and protocol behaviour. | Packaging retains the checksum-pinned 0.18.0 renderer and applies one narrow, hash-recorded settings transform. |
+| Reviews actions locally | Auto-review uses the selected third-party provider and the host tool pipeline; actions needing a decision wait for an approval card. | Classification errors stop execution; approval applies to the reviewed action. |
+| Rebuilds the desktop runtime | Readable TypeScript under `source/` supplies Electron main, coordinator, host, execution, and protocol behaviour. | Packaging retains the checksum-pinned 0.18.0 renderer with narrow, hash-recorded settings, transcript, and composer patches. |
 | Keeps the build traceable | Bootstrap verifies the original release input; native patches and renderer edits check their expected hashes. | The resulting app has its own bundle identity and an ad-hoc signature. |
 
 ![Router settings in the reconstructed desktop app](docs/assets/router-settings.png)
 
-The tested local path uses a third-party model service, and does not need a Cursor or xAI response for the verified conversation, file, and MCP flow. It still needs that model service plus any website or remote MCP server a task touches. The original 0.18.0 app is required as a **build input**; the copy installed on your Mac is left untouched. See [Provenance](PROVENANCE.md) for the origin and the limits of the reconstruction.
+The tested local path uses a third-party model service for conversation, files, MCP, image understanding, and desktop operations without requiring a Cursor or xAI response. It still needs that model service plus any website or remote MCP server a task touches. The original 0.18.0 app is required as a **build input**; the original copy installed on your Mac is left untouched. See [Provenance](PROVENANCE.md) for the origin and the limits of the reconstruction.
 
 ## Requirements
 
@@ -99,10 +100,10 @@ To add a local MCP server, create `~/.grokbot-local/mcp-config/shared/mcp-server
 
 | Check | Result |
 | --- | --- |
-| CI on `main` and on pull requests | TypeScript checks, regression tests, editable frontend build, clean Git archive check; **160 tests passed** for the reliability update on 2026-09-24 |
+| CI on `main` and on pull requests | TypeScript checks, regression tests, editable frontend build, publication checks and secret scanning; current evidence is recorded in [ROADMAP](docs/ROADMAP.md) |
 | macOS package | repository tests, package verification, and the native `arm64` container's execution and desktop gates |
-| Local-admin UI, live | real GLM-backed conversation, container file write and read, MCP echo call, image attachment analysis |
-| Computer plane, live | `Task` → `computerUse` → `Computer` mouse move plus a 1280×800 PNG screenshot |
+| Local-admin UI, live | conversation, container files, MCP echo, image attachments and image Read; approval denial prevents execution and Allow once executes once |
+| Computer plane, live | `glm-5.3-flash` opens example.com, reads the heading, moves the pointer, uses keyboard navigation and returns a screenshot; audit counts reflect the actions |
 | Egress ledger | no Cursor/xAI egress recorded during the verified path, in both the Mac and container intercept ledgers |
 | Renderer | the checksum-pinned 0.18.0 renderer is preserved, and its extension hash chain is covered by tests |
 

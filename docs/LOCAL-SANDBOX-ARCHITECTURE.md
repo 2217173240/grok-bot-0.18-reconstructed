@@ -15,14 +15,15 @@ flowchart TD
   Turn --> Provider[provider session]
   Provider --> CLI[容器 Claude SDK CLI]
   CLI --> API[用户指定第三方模型 API]
-  CLI --> Files[Bash / Read / Write / 工作目录]
-  CLI --> Bridge[每回合回环 MCP bridge]
-  Bridge --> MCP[MCP extension / discovery]
+  CLI --> Bridge[每回合 host tools MCP bridge]
+  Bridge --> Tools[Grok host 工具集与执行前审查]
+  Tools --> Files[Shell / Read / 工作目录]
+  Tools --> MCP[MCP extension / discovery]
   MCP --> Exec[Connect ExecService :1337]
   Exec --> Host[BoxMcpHost]
   Host --> Stdio[容器 stdio 插件进程]
   Host --> HTTP[用户配置的 HTTP MCP]
-  Turn --> Desktop[Xvfb / Chromium / XTEST]
+  Tools --> Desktop[Xvfb / Chromium / XTEST]
   Desktop --> Takeover[本地 noVNC 接管]
   Turn --> Store[本地会话 / 设置 / 附件持久化]
   Store --> UI
@@ -125,7 +126,7 @@ local admin 的通用密钥由 box 数据卷持久化，Mac 发送本会话的�
 
 ## 代码保证的准确范围
 
-- 本地部署的 host 与第三方 provider CLI 均在 Docker 容器运行，工具经容器 daemon 或 CLI 执行。Mac coordinator 负责命令路由与连接；工作目录 bind mount 使容器文件操作同步到宿主目录。
+- 本地部署的 host 与第三方 provider CLI 均在 Docker 容器运行。Claude CLI 通过每回合 host tools MCP bridge 调用当前工具集，原生 CLI 文件和 Shell 工具不参与生产执行；分类会话不提供工具。Mac coordinator 负责命令路由与连接；工作目录 bind mount 使容器文件操作同步到宿主目录。
 - 盒内权限仍有约束：`claudeToolPermission` 处理人工接管与 `never` 设置；容器 bind mount 使盒内写入可影响用户文件。凭据可保存在 Mac 数据根，再以只读文件提供给容器。
 - `allowedPurpose` 先允许 SAFE，再允许 `UNSAFE_ALWAYS_ALLOWED`，随后拒绝其他用途下的 CREDENTIALS / UNSPECIFIED。最终值是否经过策略还取决于 enforcement 开关，其默认值为 false。
 - 纯函数与查表都可以配合类型约束、运行时校验和穷尽测试；包装器的字段占位、错误信息和日志可以独立保留。当前实现的选择不能推出查表必然丢失这些保证。
@@ -150,30 +151,18 @@ Archive 的 18765 服务协议与当前产品不同。复用脚本、行为和�
 
 ## 执行证据与边界
 
-- 2026-09-24，PR #71、#74、#75、#76、#77、#78、#79、#80、#81 已合入 main。本轮 `8b4cf52` 完成完整 package、verify、codesign 核对与安装。主窗口与 noVNC webview 的 renderer 进程均包含 `enable-sandbox`；实际桌面显示、鼠标打开 terminal、键盘输入生成工作目录文件和重新打开 noVNC 均通过。
-- Router UI 用无效 OpenRouter 标记保存后，重启应用与 VM 仍保留；增加 Command Code 标记后旧键保留；删除 OpenRouter 后 Command Code 保留，再次重启结果不变。随后在原本不存在的 Mac `user-secrets.json` 创建包含非法嵌套字段的测试文件，UI 显示读取错误与重试入口，文件 SHA 和 box 测试键均未改变。移除自建文件并重启后恢复，两个测试键已经全部删除，生产路由恢复 Claude。本轮没有使用新的有效 API key。
-- 隔离容器中只读使用现有 Codex auth，真实 `gpt-6-astra` 经生产工具装配连接官方 SDK MCP fixture，`GetMcpTools` 与 `CallMcpTool` 各执行一次；transcript 包含两次调用和两次结果，最终回答返回成功 nonce。此证据覆盖工具装配与真实 provider 往返，完整 Codex UI 与 host 初始化仍未覆盖。
-- PR #82 正在修正桌面 CDP 探测退出码 7/28 的失败处理及 CI，使探测失败进入正常审批路径。最终 Computer UI 回合等待该修复，本轮完整 Computer 验收尚未完成。
+- 2026-09-28，`c386cb7` 完成完整 `package`、`verify`、签名核对、安装及启动脚本重启。247 项测试中，246 项在 Mac 运行通过；Linux XTEST 测试在同一执行镜像中单独通过。包体核对覆盖 14 个可执行源码运行模块、原生依赖、ASAR、身份与签名。
+- 执行镜像为 `sha256:601cd3410d4b1f817a6023b1265715348546ffa4e863fba1fb74dde1fb5392a7`，deps pin 为 `602e93959244647350767f5a56699974b1c1381b11d1fb2d43fdd062b7db3430`。exec 与 desktop 门禁通过，包含真实 RPC、缓存和 profile 写入、noVNC 正反鉴权、桌面归属及桌面退出后的健康报告。
+- 启动直接进入 local admin。模型与 Claude 子模型映射均为用户选定的 `glm-5.3-flash`，由容器环境独立核对。模型配置变化后的容器重建已用真实 Docker 验证，数据卷继续保留。
+- 真实 UI 完成文件创建、修改、搜索、读取和 MCP echo。图片 Read 正确识别 `ORBIT 7319` 与形状颜色；纯图片消息正确识别另一张未提供答案的 `COMET 4826` 图片，刷新后可以继续回答。纯图片首轮在 SQLite 中仅有一条成功投递的回复。
+- 审批卡等待期间文件不存在；选择 Deny 后文件仍不存在；新请求选择 Allow once 后文件内容与预期逐字节一致。工具记录确认拒绝提案没有执行，批准后的 Shell 只有一次成功调用。
+- 前台 Computer Task 在真实 Chromium 打开 example.com，读取 `Example Domain`，完成鼠标移动和 Tab 导航并返回截图。界面打开该截图后可见标题与 Learn more 链接焦点。审计记录 11 次动作、3 张截图；附件 SHA-256 为 `d944b23d9475cc259b77e292e95550ff052c12a9f6e2086f74403bd6d45c8413`。
+- 已有会话的十二行草稿在刷新、切换会话再返回后保持文字与输入区高度。原版 renderer 的修改通过唯一锚点和完整补丁哈希链验证。
+- 本地分类使用当前 provider 的单次有界请求，保留取消，历史文本总量受限，完整动作与权限规则保留。真实 `glm-5.3-flash` 分类在 16.353 秒返回 BLOCK，零重试。超时测试核对真实 HTTP 连接关闭，取消不产生审批或工具执行。
+- 主窗口及 noVNC webview 的 sandbox 启用、真实桌面鼠标键盘及连接恢复已验证。Router 通用密钥的保存、应用与 VM 重启、选择性增删、非法文件保持原样与 UI 错误提示均已用无效测试标记验收；标记已删除，真实凭据未进入报告或仓库。
+- Codex 仅在隔离容器只读使用现有账号，验证文本、工具续接、取消、转录及生产 MCP 工具装配。Command Code 的真实无效密钥调用返回 HTTP 401。有效 OpenRouter/Command Code 账号、生产 Codex UI、passkey 与真人接管继续遵循上文已确定的验收条件。
+- 基础镜像归档在独立网络 namespace 的空 Docker 中导入后仍解析为固定 digest，16 层秘密扫描通过。真实双 Chromium 的同步和独立数据卷重建验证覆盖 cookie/localStorage 保留与旧锁恢复。
+- 网络保护证据覆盖已执行的场景：已有 Mac 与容器拦截记录没有 Cursor/xAI 外发；隔离网络测试仅允许指定模型 endpoint。应用层 guard 与出口防火墙具有不同的作用范围。
+- `Task` 默认等待前台子任务结果，显式后台模式注册后续通知；真实子进程测试覆盖完成、错误、取消、资源释放与单次用量归集。显式 gateway 地址保留指定鉴权，本地模式的官方 dashboard 连接入口明确报告不支持。
 
-- 2026-09-24 从远端 main `1eaa2ed63bb8a72ece6f8953ab3315e735c7128b` 完成依赖安装、完整 package/verify、桌面应用安装和 `start-local.sh` 启动。160 项测试与两项类型检查通过，零跳过；14 个可执行源码运行模块、原生依赖、签名和 ASAR 组成校验通过。安装后 ASAR SHA-256 为 `b2a723d33e541c32f606397d8e24ca3cd6aa96a2e8d9c6ff2e4bc52b6c531cd6`，应用和镜像 deps pin 均为 `6a9093c70512188e963f645ac98c02ef21b4758952d7c5836f4fe4040e71809f`。
-- 同次真实桌面 UI 直接进入 local admin；Claude 路由在容器返回 Linux、文件 SHA-256 `d6df65cd1aea483bf9042aaf18bda9c72386e03125ecc8fccb0466644c96c8f9`、MCP echo 和前台 Computer Task 结果。独立读取文件核对摘要，并读取截图 PNG 头确认 1280×800、11047 字节。
-- UI 切换到未配置密钥的 Command Code 后明确显示 `Command Code needs COMMAND_CODE_API_KEY`，容器的 `/root/.claude` 挂载同时移除。恢复 Claude 后，新消息收到 `RECOVERED-1eaa2ed`；失败消息要求创建的文件仍不存在，Claude 挂载恢复。测试没有新增或修改 API key，也没有挂载 Codex 账号。
-- 新镜像的 exec 与 desktop 门禁全部通过，涵盖真实 daemon RPC、noVNC 正反鉴权、XTEST/截图、桌面服务归属及桌面退出后的状态报告。隔离的无网络、无凭据容器在 Node 22.23.2 上验证 Codex TOML 有效配置读取及非法配置拒绝。
-
-- 显式 `SAND_HOST_GATEWAY_URL` 使用 `EnvDescriptorHostConnector`，保留指定地址和鉴权。local-exec credential issuer 为可选能力；默认 Docker 选择与不可用时报错的行为继续保留。
-- 本地模式不查询官方 Slack/GitHub dashboard 连接状态，连接入口明确报告不支持；用户提供的自定义 dashboard 实现保留自己的连接能力。
-- `scripts/ui-sandbox-smoke.mjs` 仅在 Linux 容器中运行，通过真实 Electron CDP 输入任务并读取 DOM。隔离网络中创建 Bot、发送任务，收到 Linux、文件 SHA256 和 MCP echo 回复。容器文件独立计算的 SHA256 为 `b9fb3a42d2e8df8f50f0221b7b13e39545416da389fd70f88cdc49a5e7e40876`，与 UI 回复一致；工具记录含对应 `mcp__grok_bot_plugins__echo__echo` 请求及成功结果。该场景使用 Claude SDK 和 GLM 5.2。
-- UI 验收启动前需要通过产品设置或带 `version: 1` 的有效设置文件选择 `inferenceProvider: "claude-code"`。测试数据根、网关和浏览器 profile 均独立于生产。验收脚本输出随机文件名，需另外在 provider 容器核对文件内容和工具执行记录。
-
-- macOS 完整构建执行 `npm run package`，包括前端与源码类型检查及全部自动化测试。`npm run verify` 核对 14 个可执行源码运行模块、ASAR、原生依赖、包体身份与签名。
-- `Task` 默认在当前回合等待子代理结果，显式 `run_in_background: true` 才注册后续回合通知。父任务取消会终止前台子任务；两种模式共享状态、用量、审计和窗口释放流程。6 项真实子进程测试覆盖两种模式、取消与错误清理；`tests/provider-live-foreground-task.mjs` 在隔离容器经真实 Claude SDK / GLM API 和 host MCP bridge 验证子任务结果返回父任务，执行各一次、后台通知为零。
-- `1eaa2ed` 验收期间重新构建 `grok-bot-exec-box:arm64` 后，exec 门禁 G0–G5 与 desktop 门禁 D1–D6 全部通过，涵盖真实 Connect RPC 工具往返、缓存写入、1280×800 桌面、noVNC 访问控制、XTEST 截图与桌面进程持有者。
-- `/Applications` 中的新包启动后，local admin 直接显示会话输入，不显示登录按钮。真实 GLM 回合完成容器内文件写入与读取、SHA-256、stdio MCP echo；独立读取的文件与界面回复一致。
-- 真实 UI 请求经 `Task` 派发 `computerUse` 子代理，子代理用 `Computer` 完成鼠标移动和截图；独立检查持久化文件为 1280×800 PNG。截图 MIME、扩展名与文件内容一致。
-- 真实 UI 上传仓库自带的 Router 设置页 PNG，发送后的用户转录含 `[Image]`；配置的 GLM 服务完成图像分析并识别 Router 页面。附件暂存使用 `node:crypto` 的 `randomUUID` 独立导出，避免未绑定方法在 Electron 主进程产生 `ERR_INVALID_THIS`。
-- `scripts/command-code-invalid-key-smoke.mjs` 在只读隔离容器中调用 Command Code 的真实 `/chat/completions` 接口。固定无效密钥收到 HTTP 401；流、响应、用量和元数据五项均在超时前返回清晰的鉴权错误。该检查不使用生产凭据，也不验证有效账号的功能。
-- 镜像仓库的真实双 Chromium 探针通过 22 项断言，涵盖忙态恢复、无效状态、人工接管、origin 变更和常驻刷新上限。`scripts/box-profile-persistence-e2e.mjs` 在独立数据卷写入真实 cookie/localStorage，随后强制结束并替换容器，验证数据保留及旧 Chromium 锁的恢复。
-- Mac 拦截记录扫描 4171 行，包含 2114 次受阻的 Cursor/xAI 请求，零外发记录；容器记录扫描 961 行，零 Cursor/xAI 外发记录。这个证据覆盖已执行的回合与记录范围。早期网络隔离测试还在 Docker `--internal` 网络中只允许 GLM endpoint，并拒绝 Cursor/xAI 目标。
-- 旧 `finonelib` profile 中与 Grok Bot 相关的容器、卷和镜像已清理，profile 本身因属于其他项目而保留并停止。运行中的项目专用 `grokbot` profile 只保留生产容器、生产数据卷、当前执行镜像和构建所需的基础镜像。
-
-“零官方依赖”应以实际场景、实际拒绝网络条件和可观察结果表述。拦截日志没有记录出网、源码中存在保护判断，以及 provider smoke 成功，分别提供不同范围的证据；它们不能单独证明所有产品功能已经完整替代官方服务。
+验收以实际场景、工具结果和可观察输出为依据；CI、产物校验及真实回合分别提供对应范围的证据。历史验证记录可在 Git 历史中查阅，最新维护状态见 [ROADMAP.md](ROADMAP.md)。

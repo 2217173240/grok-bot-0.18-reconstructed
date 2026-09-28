@@ -1,6 +1,6 @@
 # 本地运行维护计划
 
-更新日期：2026-09-24。PR #71、#74、#75、#76、#77、#78、#79、#80、#81 已合入 main。PR #82 的桌面探测失败处理与 CI 修正进行中，最终 Computer UI 回合仍待完成。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
+更新日期：2026-09-28。本轮 PR #86–#97 已合入；代码验收基线为 `c386cb7`。完整构建、安装重启与实际桌面验收覆盖审批、图片和 Computer。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
 
 ## 已交付能力
 
@@ -24,7 +24,7 @@
 | 7 | Episode 记忆维护 | 失败保留待处理队列，成功摘要或明确 NONE 只消费本批次；SQLite 写入失败明确报告 | #70 已合入并安装；真实 SQLite 写锁、重启、HTTP 及文件异常测试通过 |
 | 8 | 结构化日志 checkpoint | 恢复超限记录复用 overflow 计数与通知 | #70 已合入并安装；1001 条 checkpoint 与 HTTP 确认测试通过 |
 | 9 | 本地 host 生命周期测试 | 使用测试持有的端口与真实进程；不因生产服务占用 1340 而跳过 | #70 已合入；组合 160 项测试通过，零跳过 |
-| 10 | 默认模型 | `glm-5.2`、`openai/gpt-5.2`、`gpt-5.4`、`deepseek/deepseek-v4-flash` 的可用性由账号及服务端决定；保留显式模型配置和清晰 API 错误 | 已登记；没有有效账号证据时不自动换模型，也不扩展本轮账号验收 |
+| 10 | 默认模型 | `glm-5.3-flash`、`openai/gpt-5.2`、`gpt-5.4`、`deepseek/deepseek-v4-flash` 的可用性由账号及服务端决定；保留显式模型配置和清晰 API 错误 | glm-5.3-flash 已用现有账号验证并由用户选择；其他 provider 保留已确定的账号验收范围 |
 | 11 | 厂商虚拟终端路径 | `BOX_TERMINALS_FOLDER` 与 daemon 的 `BOX_TERMINAL_VIRTUAL_PREFIX` 保持一致；逻辑路径映射到实际 terminalsDirectory | 已评审登记；当前保留 renderer/转录兼容路径，修改时需覆盖历史终端引用与路径边界测试 |
 | 12 | provider 重连同步 | 连接恢复时发送明确保存的 provider/model；没有选择时保留 host；显式选择 cursor 会同步 | #74 已合入；六项真实 HTTP、生产 dispatcher 和持久化测试通过 |
 | 13 | Electron renderer sandbox | 主窗口、Dev Controls 和所有 webview 启用 sandbox，保留 preload 与 IPC 权限检查 | #76 已合入；8b4cf52 安装包的主窗口和 noVNC webview 进程均包含 enable-sandbox，桌面鼠标与键盘操作通过 |
@@ -32,11 +32,19 @@
 | 15 | MCP 配置目录挂载 | 编辑前迁移，目录挂载支持原子替换与首次安装，配置和可写插件缓存分开 | #75 已合入；隔离 Docker 测试已验证读取、只读限制、损坏后恢复及 Colima 传播延迟 |
 | 16 | 通用 provider MCP 工具 | 将工具发现、执行、状态和审批资源接入生产回合，保留子代理范围限制 | #78、#81 已合入；真实 stdio、工具装配、完整错误文本与取消测试通过；隔离 Codex gpt-6-astra 经生产工具装配完成发现、调用及 transcript 验证 |
 | 17 | 本地桌面连接 | desktop 模式返回当前启动签发的 noVNC URL，exec-only 保持无桌面 | #79 已合入；实际 noVNC 显示、鼠标打开 terminal、键盘写入工作目录文件和重新打开连接通过 |
-| 18 | Computer Task 结果 | 前台 Computer 子任务完成后返回结果与附件；桌面探测失败进入正常审批处理 | #82 处理 CDP 探测退出码 7/28，CI 修正中；合入后继续最终 Computer UI 回合 |
+| 18 | Computer Task 结果 | 前台 Computer 子任务完成后返回结果与附件；桌面探测失败进入正常审批处理 | #82 已合入；安装包实际打开 example.com、读取标题、鼠标与键盘操作及截图交付通过 |
+| 19 | 本地 Auto-review | 当前第三方 provider 完成无工具分类；需要人工确认时显示审批卡；取消后不执行动作 | #83、#88、#94、#96 已合入；安装包中等待及拒绝不写文件，Allow once 执行一次；再次拒绝保持原内容，回合正确说明拒绝结果 |
+| 20 | 图片读取与附件 | 图片严格解码并遵循现有大小限制；历史工具结果继续保留图像；模型需要支持视觉 | #86、#90 已合入；七种图片、大图、损坏文件、SQLite 历史与实际 UI 文件/附件识别通过 |
+| 21 | 草稿恢复 | 已有会话重新加载后保留草稿文字与正确输入区高度 | #87 已合入；实际十二行草稿在刷新、切换会话并返回后保持内容与高度 |
+| 22 | Computer 组合键及统计 | Linux 组合键正确按下并释放；非法输入不产生事件；子任务计数和用量只累计一次 | #89、#91 已合入；Xvfb 事件与 runner 测试通过；实际 UI 回合审计记录 11 次动作、3 张截图 |
+| 23 | 启动模型配置 | 默认使用已验证的 glm-5.3-flash，显式配置继续有效；模型映射变更后容器更新并保留数据 | #92 已合入；真实 Docker 配置变更与重建验证通过 |
+| 24 | Node 26 安装依赖 | 官方 Electron 完整解压，安装结果与官方归档一致 | #93 已合入；真实 ZIP、272 个官方文件校验与 Electron 启动通过 |
+| 25 | 回合交付 | 用户可见消息通过 SendMessage 投递，内部文字不额外发送；取消、审批等待与会话替代不触发补发 | #95 已合入；真实 SQLite/工具回归与纯图片 UI 单次投递通过 |
+| 26 | SDK 取消 | control request 取消后 CLI、连接及等待响应全部释放，错误被处理 | #83、#97 已合入；真实 SDK/CLI 覆盖立即取消与已有请求等待期间取消，零未处理异常 |
 
-`8b4cf52` 已完成完整 package、verify、codesign 核对与安装。主窗口、嵌入桌面和密钥持久化已有本轮实际 UI 证据；最终 Computer 回合与 #82 的 CI 仍按上述事项处理。本次应用、lockfile 与镜像的 deps pin 均为 `6a9093c70512188e963f645ac98c02ef21b4758952d7c5836f4fe4040e71809f`，当前镜像包含 smol-toml。镜像仓库 #6 已合入 `5caa549`；导出保留仓库身份，独立网络 namespace 中的空 Docker 完成固定 digest 导入及 16 层扫描。
+`c386cb7` 完成完整 package、verify、codesign 核对、安装及启动脚本重启。247 项测试中 246 项在 Mac 通过，Linux 专用 XTEST 测试已在同一执行镜像单独通过；Docker 测试显式启用。exec 与 desktop 容器门禁通过。应用与镜像 deps pin 为 `602e93959244647350767f5a56699974b1c1381b11d1fb2d43fdd062b7db3430`。镜像仓库 #6 已合入 `5caa549`；导出保留仓库身份，独立网络 namespace 中的空 Docker 完成固定 digest 导入及 16 层扫描。
 
-`1eaa2ed` 的完整 main 构建、安装、重启、exec/desktop 容器门禁和真实 UI 文件/MCP/Computer 回合已完成，证据见架构文档。OrbStack 没有在本机安装，本轮实际镜像构建使用默认 Colima；其可选来源和构建参数由源码测试验证。
+实际镜像构建与运行使用默认 Colima。OrbStack 未在本机安装，其可选来源与构建参数由源码测试验证。对应工作保持在既定平台范围内。
 
 ## 问题来源与维护范围
 

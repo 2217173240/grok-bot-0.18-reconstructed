@@ -33,12 +33,13 @@ npm run package        # → dist/Grok Bot 0.18 Reconstructed.app
 | 在自己的计算机上运行 agent | 本地管理员模式通过 Docker 容器运行 host、执行 daemon、桌面、浏览器和 agent 回合。任务文件位于绑定的工作目录，设置与会话保存在本地。 | Docker 服务或固定镜像不可用时会明确报错，不做静默替换。 |
 | 选择模型服务 | Settings → Router 提供 Claude Code、Codex、OpenRouter、Command Code，并保留 Cursor 设置。`start-local.sh` 默认使用 Claude Code 与 Anthropic 兼容 API。 | 需要账号的 provider 必须准备各自凭据，并选择该账号支持的模型。 |
 | 连接本地工具与插件 | 容器可执行文件与 shell 工具，并托管 `mcp-servers.json` 里配置的 MCP 服务，包括 stdio 进程与 Streamable HTTP 地址。 | 插件命令在容器内运行，可访问绑定的工作目录；使用前先核对命令。 |
-| 从可读源码构建桌面运行时 | `source/` 包含 Electron 主进程、coordinator、host、执行与协议代码。 | 打包时保留通过哈希校验的 0.18.0 renderer，只加入一处有记录的设置页面改动。 |
+| 本地动作审查 | Auto-review 使用当前第三方 provider 与 host 工具流程，需要人工决定时等待审批卡片。 | 分类错误阻止执行；批准仅适用于已审查的动作。 |
+| 从可读源码构建桌面运行时 | `source/` 包含 Electron 主进程、coordinator、host、执行与协议代码。 | 打包保留通过哈希校验的 0.18.0 renderer，为设置、转录和输入区应用范围明确、记录哈希的补丁。 |
 | 核对构建输入与产物 | bootstrap 校验原始发布构件；原生补丁与 renderer 修改核对预期哈希。 | 生成的 macOS 应用使用独立 bundle 标识与临时签名。 |
 
 ![重建版桌面应用的 Router 设置页面](docs/assets/router-settings.png)
 
-经过验证的本地路线使用第三方模型服务：对话、文件与 MCP 调用无需 Cursor 或 xAI 返回结果。模型服务、任务访问的网站以及用户配置的远程 MCP 服务仍可能需要网络。原版 0.18.0 应用是必需的**构建输入**；你机器上已安装的官方应用保持原状。来源与重建范围详见[来源说明](PROVENANCE.md)。
+经过验证的本地路线使用第三方模型服务：对话、文件、MCP、图片理解与桌面操作无需 Cursor 或 xAI 返回结果。模型服务、任务访问的网站以及用户配置的远程 MCP 服务仍可能需要网络。原版 0.18.0 应用是必需的**构建输入**；你机器上已安装的官方应用保持原状。来源与重建范围详见[来源说明](PROVENANCE.md)。
 
 ## 环境要求
 
@@ -99,10 +100,10 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 
 | 检查项 | 结果 |
 | --- | --- |
-| `main` 与 PR 上的 CI | TypeScript 检查、回归测试、可读前端构建、Git 归档检查；2026-09-24 可靠性更新的 **160 项测试全部通过** |
+| `main` 与 PR 上的 CI | TypeScript 检查、回归测试、可读前端构建、发布输入与秘密扫描；最新证据见 [维护计划](docs/ROADMAP.md) |
 | macOS 包 | 仓库测试、包体校验，以及原生 `arm64` 容器的执行与桌面门禁 |
-| 本地管理员界面（实测） | 真实 GLM 对话、容器文件写入与读取、MCP echo 调用、图片附件分析 |
-| Computer 平面（实测） | `Task` → `computerUse` → `Computer` 鼠标移动，以及 1280×800 PNG 截图 |
+| 本地管理员界面（实测） | 对话、容器文件、MCP echo、图片附件与图片 Read；拒绝审批不执行，单次批准仅执行一次 |
+| Computer 平面（实测） | glm-5.3-flash 打开 example.com、读取标题、移动鼠标、使用键盘并返回截图；审计记录实际动作 |
 | 外发拦截记录 | 已验证路线中，Mac 与容器的拦截记录都没有 Cursor/xAI 外发 |
 | Renderer | 保留通过哈希校验的 0.18.0 renderer，其扩展哈希链由测试覆盖 |
 
