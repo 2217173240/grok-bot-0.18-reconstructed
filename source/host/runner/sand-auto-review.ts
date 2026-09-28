@@ -73,7 +73,7 @@ export function formatSandAutoReviewDeniedReason(classifierReason: string): stri
 }
 
 export function formatSandAutoReviewInterruptedForUpdateReason(classifierReason: string): string {
-  return `A host update interrupted this approval request before the user could answer \u2014 the user did NOT deny it. After you resume, re-run the action; the host will request a fresh approval if review requires it. The pending review reason was: ${classifierReason}`;
+  return `A host update interrupted this approval request before the user could answer. Report the interruption and wait for new user direction before submitting a fresh action. The pending review reason was: ${classifierReason}`;
 }
 
 function sanitize(value: string, fallback: string, length: number): string { const trimmed = value.trim(); return (trimmed.length === 0 ? fallback : trimmed).slice(0, length); }

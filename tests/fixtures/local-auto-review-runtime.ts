@@ -23,3 +23,4 @@ export { createAutoReviewGate } from "../../source/host/runner/auto-review-gate.
 export { SAND_AUTO_REVIEW_MODES_ENFORCE } from "../../source/host/runner/sand-auto-review.js";
 export { createHostComputerToolDependencies } from "../../source/host/runner/host-computer-tool-dependencies.js";
 export { computerUseExecutorResource } from "../../source/packages/agent-exec/computer-use.js";
+export { SAND_SYSTEM_PROMPT_CLOUD_AGENTS_DISABLED } from "../../source/host/runner/system-prompt.js";

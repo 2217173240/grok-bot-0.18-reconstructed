@@ -34,6 +34,13 @@ test("Computer enforce 拒绝 screenshot 后追加需要审核的动作", () => 
   assert.equal(parameters.safeParse({ action: "screenshot", then: [{ action: "wait", durationMs: 0 }] }).success, true);
 });
 
+test("Auto-review 提示说明等待当前卡片以及分类失败后停止", () => {
+  const prompt = runtime.SAND_SYSTEM_PROMPT_CLOUD_AGENTS_DISABLED;
+  assert.match(prompt, /host raises an approval card and waits within that tool call/);
+  assert.match(prompt, /If classification fails.*stop the action and report the error/);
+  assert.doesNotMatch(prompt, /approval-retry|same-tool approval retry|same-command retry|request_smart_mode_approval|requestSmartModeApproval/);
+});
+
 test("Shell BLOCK 首次调用等待人工卡片，批准后才执行真实命令", { timeout: 30_000 }, async () => {
   let completion = '{"decision":"BLOCK","blockReason":"Ask before writing the review file"}';
   const server = createServer(async (request, response) => {

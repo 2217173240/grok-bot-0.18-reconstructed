@@ -577,7 +577,7 @@ export function createShellTool(resourceAccessor: ShellToolResourceAccessor, opt
   const promptVersion = options.promptVersion ?? "dsv3-1205";
   const sandboxEnabled = options.sandboxEnabled ?? false;
   const defaultBlockUntilMs = options.defaultBlockUntilMs ?? (options.agentType === "background" ? BACKGROUND_SHELL_DEFAULT_BLOCK_UNTIL_MS : DEFAULT_TIMEOUT_MS);
-  const smartModeApprovalParametersEnabled = options.agentType !== AgentType.BACKGROUND && options.smartModeClassifierMode === true;
+  const smartModeApprovalParametersEnabled = options.smartModeApprovalProvider === undefined && options.agentType !== AgentType.BACKGROUND && options.smartModeClassifierMode === true;
   const parameters = addSmartModeApprovalParameters(options.parametersSchema ?? getParametersSchemaDsv3(sandboxEnabled, promptVersion, { isReadonly: options.isReadonly, enableBlockUntilMs: options.enableBlockUntilMs, requireBlockUntilMs: options.requireBlockUntilMs, defaultBlockUntilMs }), smartModeApprovalParametersEnabled);
   const executor = resourceAccessor.get(shellStreamExecutorResource);
   const execute = async (ctx: Context, interaction: ShellToolInteractionHandler, rawArgs: Record<string, unknown>, meta: ShellToolExecutionMeta): Promise<ShellResult> => {
