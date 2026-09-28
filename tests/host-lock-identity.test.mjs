@@ -52,7 +52,7 @@ test("真实 Node 入口可接管，wrapper 与 eval 中的 host-main 字样不�
   assert.equal(result.outcome, "took-over");
   await actual.ended;
   assert.equal(actual.proc.signalCode, "SIGTERM");
-  assert.equal(await readFile(lockPath, "utf8"), String(process.pid));
+  assert.equal(JSON.parse(await readFile(lockPath, "utf8")).pid, process.pid);
   result.lock.release();
 });
 
@@ -77,7 +77,7 @@ test("隔离 Docker init 携带 host-main 参数时保留 PID1 并收回旧锁",
     const result = await acquireHostLock({ path: lockPath });
     assert.equal(result.outcome, "reclaimed-foreign");
     process.kill(1, 0);
-    assert.equal(await readFile(result.lock.path, "utf8"), String(process.pid));
+    assert.equal(JSON.parse(await readFile(result.lock.path, "utf8")).pid, process.pid);
     result.lock.release();
     const host = spawn(process.execPath, ["/probe/host-main.cjs"]);
     const exited = once(host, "exit");
