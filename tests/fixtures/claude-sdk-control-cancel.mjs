@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { watch } from "node:fs";
+import { copyFile, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -10,6 +13,21 @@ const directory = process.argv[2];
 if (!directory) throw new Error("An isolated test directory is required");
 const controlDelayMs = Number(process.argv[3] ?? 0);
 assert.ok(Number.isInteger(controlDelayMs) && controlDelayMs >= 0 && controlDelayMs <= 1000);
+const modulePath = path.join(directory, "claude-process-owner.mjs");
+await build({ entryPoints: [path.resolve(import.meta.dirname, "../../source/host/extensions/inference/claude-process-owner.ts")], outfile: modulePath, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
+const { createClaudeProcessOwner, liveClaudeProcessGroup } = await import(pathToFileURL(modulePath).href);
+let snapshotWatcher;
+let snapshotPid;
+let snapshotStarted;
+if (controlDelayMs > 0) {
+  await copyFile(path.join(import.meta.dirname, "claude-cancel-shell-profile.bash"), path.join(directory, ".bash_profile"));
+  snapshotStarted = new Promise((resolve, reject) => {
+    snapshotWatcher = watch(directory, (_event, name) => {
+      if (name !== "snapshot-shell.pid") return;
+      readFile(path.join(directory, name), "utf8").then(value => { snapshotPid = Number(value.trim()); resolve(); }, reject);
+    });
+  });
+}
 const controller = new AbortController();
 let listCalls = 0;
 const startedAt = performance.now();
@@ -25,6 +43,17 @@ let pendingAtCancel;
 let child;
 let childClosed;
 let childUnhandled = false;
+const processes = createClaudeProcessOwner(spawned => {
+  assert.equal(child, undefined);
+  child = spawned;
+  let stderrTail = "";
+  child.stderr.on("data", chunk => {
+    const text = stderrTail + chunk.toString();
+    childUnhandled ||= /UnhandledPromiseRejection|ERR_UNHANDLED_REJECTION|triggerUncaughtException/.test(text);
+    stderrTail = text.slice(-64);
+  });
+  childClosed = new Promise(resolve => child.once("close", (code, exitSignal) => resolve({ code, signal: exitSignal, atMs: performance.now() - startedAt })));
+});
 const endpoint = createServer((request, response) => {
   const record = { method: request.method, path: new URL(request.url, "http://localhost").pathname, model: null, atMs: performance.now() - startedAt, closedAtMs: null };
   requests.push(record);
@@ -60,6 +89,7 @@ const deadline = setTimeout(() => controller.abort(new Error("SDK control cancel
 const mcp = new McpServer({ name: "control-cancel", version: "1" }, { capabilities: { tools: {} } });
 mcp.server.setRequestHandler(ListToolsRequestSchema, async () => {
   listCalls++;
+  await snapshotStarted;
   if (controlDelayMs > 0) await new Promise(resolve => setTimeout(resolve, controlDelayMs));
   canceledAtMs ??= performance.now() - startedAt;
   pendingAtCancel ??= activeResponses.size;
@@ -77,20 +107,12 @@ try {
     model: "claude-sonnet-4-5-20250929",
     persistSession: false,
     abortController: controller,
-    spawnClaudeCodeProcess: ({ command, args, cwd, env, signal }) => {
-      assert.equal(child, undefined);
-      child = spawn(command, args, { cwd, env, signal, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-      let stderrTail = "";
-      child.stderr.on("data", chunk => {
-        const text = stderrTail + chunk.toString();
-        childUnhandled ||= /UnhandledPromiseRejection|ERR_UNHANDLED_REJECTION|triggerUncaughtException/.test(text);
-        stderrTail = text.slice(-64);
-      });
-      childClosed = new Promise(resolve => child.once("close", (code, exitSignal) => resolve({ code, signal: exitSignal, atMs: performance.now() - startedAt })));
-      return child;
-    },
+    spawnClaudeCodeProcess: processes.spawn,
     env: {
       ...process.env,
+      HOME: directory,
+      CLAUDE_CODE_SHELL: "/bin/bash",
+      CLAUDE_SHELL_TEST_DIR: directory,
       CLAUDE_CONFIG_DIR: path.join(directory, "claude-config"),
       ANTHROPIC_API_KEY: "local-protocol-test",
       ANTHROPIC_AUTH_TOKEN: "local-protocol-test",
@@ -104,6 +126,9 @@ try {
   assert.equal(controller.signal.reason?.message, "Cancel while replying to SDK control request");
   assert.ok(child?.pid > 0);
   const exit = await childClosed;
+  await processes.close();
+  assert.deepEqual(await liveClaudeProcessGroup(child.pid), []);
+  if (controlDelayMs > 0) assert.ok(snapshotPid > 0);
   assert.ok(exit.code !== null || exit.signal !== null);
   assert.ok(exit.atMs >= canceledAtMs);
   await Promise.all(socketClosures);
@@ -112,12 +137,17 @@ try {
   assert.equal(activeResponses.size, 0);
   assert.deepEqual(unhandled, []);
   assert.equal(childUnhandled, false);
-  process.stdout.write(JSON.stringify({ canceled: true, listCalls, controlDelayMs, requests, canceledAtMs, pendingAtCancel, child: { pid: child.pid, ...exit }, openSockets: sockets.size, activeResponses: activeResponses.size, unhandled, childUnhandled }) + "\n");
+  process.stdout.write(JSON.stringify({ canceled: true, listCalls, controlDelayMs, requests, canceledAtMs, pendingAtCancel, child: { pid: child.pid, ...exit }, snapshotPid, liveProcessGroupEmpty: true, openSockets: sockets.size, activeResponses: activeResponses.size, unhandled, childUnhandled }) + "\n");
 } finally {
   clearTimeout(deadline);
   controller.abort();
-  await mcp.close();
-  endpoint.closeAllConnections();
-  await new Promise(resolve => endpoint.close(resolve));
-  process.off("unhandledRejection", onUnhandled);
+  try {
+    await processes.close();
+  } finally {
+    snapshotWatcher?.close();
+    await mcp.close();
+    endpoint.closeAllConnections();
+    await new Promise(resolve => endpoint.close(resolve));
+    process.off("unhandledRejection", onUnhandled);
+  }
 }

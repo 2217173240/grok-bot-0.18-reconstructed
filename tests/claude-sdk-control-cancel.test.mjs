@@ -23,6 +23,8 @@ for (const controlDelayMs of [0, 300]) test(`真实 Claude SDK 在 control reque
     assert.equal(report.activeResponses, 0);
     assert.deepEqual(report.unhandled, []);
     assert.equal(report.childUnhandled, false);
+    assert.equal(report.liveProcessGroupEmpty, true);
+    if (controlDelayMs > 0) assert.ok(report.snapshotPid > 0);
     for (const request of report.requests) {
       assert.ok(request.atMs <= request.closedAtMs);
     }
