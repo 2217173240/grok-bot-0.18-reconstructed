@@ -27,6 +27,7 @@ import {
 import { ExecStreamElement } from "../packages/proto/generated/agent/v1/exec_service_pb.js";
 import { BoxMcpHost } from "./mcp-host.js";
 import { isPdfBinary } from "../packages/agent/tools/core/read/pdf-utils.js";
+import { detectImageMimeType } from "../packages/agent/tools/core/read/image-utils.js";
 import {
   BackgroundShellSpawnError,
   BackgroundShellSpawnResult,
@@ -285,7 +286,7 @@ class BoxExecRuntime {
         return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: `Unsupported encoding hint: ${args.encodingHint}` }) } });
       }
       const data = await readFile(canonical);
-      if (isPdfBinary(data, args.path)) {
+      if (isPdfBinary(data, args.path) || detectImageMimeType(data, args.path) !== undefined) {
         return new ReadResult({ result: { case: "success", value: new ReadSuccess({
           path: args.path,
           output: { case: "data", value: data },
