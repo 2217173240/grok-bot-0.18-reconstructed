@@ -21,6 +21,7 @@ import { SandSettingsStore } from "../../../shared/node/settings/sand-settings-s
 import { getBoxSecretsStorePath } from "../secrets/secrets-service.js";
 import { streamCodexDirectResponses, type CodexDirectTool } from "./codex-direct-responses.js";
 import { createHostToolsMcpBridge, type HostToolExecution, type HostToolDefinition } from "./host-tools-mcp-bridge.js";
+import { createClaudeProcessOwner } from "./claude-process-owner.js";
 import type { LabelMessage, PromptExecutor } from "./sand-labeling.js";
 
 type Loose = Record<string, any>;
@@ -554,6 +555,10 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
     const pendingTools = new Map<string, string>();
     const recordedMessages: Array<{ role: string; content: Loose[] }> = [];
     const abortController = new AbortController();
+    const processes = createClaudeProcessOwner(child => {
+      child.stderr?.resume();
+      appendLocalIntercept({ kind: "provider-process", provider: "claude-code", phase: "started", invocationId, pid: child.pid });
+    });
     const abort = () => abortController.abort(options?.signal?.reason);
     if (options?.signal?.aborted === true) abort();
     else options?.signal?.addEventListener("abort", abort, { once: true });
@@ -602,6 +607,7 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
         includePartialMessages: true,
         persistSession: false,
         abortController,
+        spawnClaudeCodeProcess: processes.spawn,
         env: claudeChildEnv(),
         ...(selectedModel == null || selectedModel.length === 0 ? {} : { model: selectedModel }),
       } })) {
@@ -644,12 +650,17 @@ function claudeExecutor(messages: readonly ProviderMessage[], invocationId: stri
       throw error;
     } finally {
       abortController.abort();
-      for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
-        settled.reject(new Error("Claude stream closed before completing its result."));
-        settled.promise.catch(() => undefined);
+      try {
+        await processes.close();
+        appendLocalIntercept({ kind: "provider-process", provider: "claude-code", phase: "closed", invocationId, processIds: processes.processIds });
+      } finally {
+        for (const settled of [usage, extendedUsage, metadata, resultResponse]) {
+          settled.reject(new Error("Claude stream closed before completing its result."));
+          settled.promise.catch(() => undefined);
+        }
+        await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
+        options?.signal?.removeEventListener("abort", abort);
       }
-      await hostBridge?.close().catch((error: unknown) => appendLocalIntercept({ kind: "tool-use", provider: "claude-code", phase: "host-bridge-close-failed", error: error instanceof Error ? error.message : String(error) }));
-      options?.signal?.removeEventListener("abort", abort);
     }
   })();
   return { fullStream, response: resultResponse.promise, usage: usage.promise, extendedUsage: extendedUsage.promise, providerMetadata: metadata.promise, invocationId: Promise.resolve(invocationId) };
