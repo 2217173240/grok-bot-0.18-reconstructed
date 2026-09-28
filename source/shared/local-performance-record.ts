@@ -6,7 +6,7 @@ const timing = z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const count = timing.int();
 
 export const localPerformanceRecordSchema = z.object({
-  phase: z.enum(["provider", "queue", "dispatch", "ttft", "approval", "tool", "tool-bridge", "delivery", "turn"]),
+  phase: z.enum(["provider", "queue", "dispatch", "ttft", "classifier", "approval", "tool", "tool-bridge", "delivery", "turn"]),
   provider: z.enum(["claude-code", "codex", "openrouter", "command-code"]).optional(),
   mode: z.enum(["text-only", "hosted", "unhosted"]).optional(),
   outcome: z.enum(["success", "failed", "cancelled", "observed", "pending", "approved", "denied", "expired", "dismissed"]),

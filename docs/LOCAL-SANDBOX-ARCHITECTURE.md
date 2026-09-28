@@ -102,7 +102,7 @@ node scripts/summarize-local-performance.mjs <local-intercept.jsonl>
 
 汇总按阶段、provider、执行模式和结果分组，显示样本数量及 nearest-rank P50/P95。缺失字段保持未知，数值零保持零。Claude 的输入总数包含普通输入、缓存读取和缓存创建；OpenAI 兼容及 Codex 的输入数已经包含缓存读取。只有分母与对应缓存字段都存在时才计算比例。不同阶段可能互相包含，不能将所有耗时直接相加：`tool-bridge` 包含 bridge 与权限等待，`tool` 对应 host 执行；provider 总时间包含输出和清理，`firstOutputMs` 与 `firstTextMs` 分别表示首次有效输出和首次非空文字。
 
-排队、dispatch、TTFT、审批和首次可见回复复用现有事件的耗时；没有有效耗时的事件不写入。`delivery` 表示消息接受到首次可见回复，`turn` 使用本地单调时钟记录整个回合。审批按 pending、approved、denied、expired、dismissed 分组，等待中的快照与已结束等待分别汇总。
+排队、dispatch、TTFT、审批和首次可见回复复用现有事件的耗时；没有有效耗时的事件不写入。`delivery` 表示消息接受到首次可见回复，`turn` 使用本地单调时钟记录整个回合。`classifier` 单独记录上下文准备和自动分类总耗时，合法 ALLOW 与 BLOCK 都是分类成功；`approval` 记录人工等待，按 pending、approved、denied、expired、dismissed 分组。等待中的快照与已结束等待分别汇总。
 
 host 工具的完成事件记为 `observed`；现有工具状态明确报告失败时记为 `failed`。完成事件本身不保证所有工具都成功，bridge 的结果与工具输出分别提供对应证据。
 
