@@ -52,9 +52,13 @@ function attachmentLabel(kind: string, count: number): string {
 
 function previewAttachment(entry: Extract<RendererAgentLastEntry, { kind: "attachment" }>): string {
   const count = Math.max(1, Math.floor(entry.count));
-  const kinds = Object.entries(entry.kinds)
-    .filter(([, value]) => value > 0)
-    .map(([kind, value]) => ({ kind: attachmentLabels[kind] == null ? "file" : kind, count: value }));
+  const counts = new Map<string, number>();
+  for (const entryKind of entry.kinds) {
+    if (entryKind.count <= 0) continue;
+    const kind = attachmentLabels[entryKind.kind] == null ? "file" : entryKind.kind;
+    counts.set(kind, (counts.get(kind) ?? 0) + entryKind.count);
+  }
+  const kinds = [...counts].map(([kind, count]) => ({ kind, count }));
   if (kinds.length === 0) return `Sent ${attachmentLabel("file", count)}`;
   if (kinds.length === 1) return `Sent ${attachmentLabel(kinds[0].kind, count)}`;
   return `Sent ${attachmentLabel("file", count)} · ${kinds.map(({ kind, count: kindCount }) => attachmentLabel(kind, kindCount)).join(", ")}`;
