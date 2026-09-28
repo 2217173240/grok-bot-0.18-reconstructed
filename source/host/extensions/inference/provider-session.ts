@@ -101,17 +101,40 @@ function imageUrl(part: ProviderImage): string {
   return `data:${part.mimeType};base64,${base64}`;
 }
 
+function claudeImageBlock(image: ProviderImage): Loose {
+  const url = imageUrl(image);
+  const match = /^data:(image\/[^;,]+);base64,(.*)$/is.exec(url);
+  return { type: "image", source: match == null ? { type: "url", url } : { type: "base64", media_type: match[1], data: match[2] } };
+}
+
+function toolResultContent(part: Loose): readonly Loose[] {
+  return Array.isArray(part.experimental_content) ? part.experimental_content : Array.isArray(part.result) ? part.result : [];
+}
+
 export function claudePrompt(messages: readonly ProviderMessage[], extraGuidance?: string): string | AsyncIterable<SDKUserMessage> {
-  if (!messages.some(message => Array.isArray(message.content) && message.content.some((part: Loose) => part?.type === "image"))) return providerPrompt(messages, extraGuidance);
+  if (!messages.some(message => Array.isArray(message.content) && message.content.some((part: Loose) => part?.type === "image" || part?.type === "tool-result" && toolResultContent(part).some(block => block.type === "image")))) return providerPrompt(messages, extraGuidance);
   const blocks: Loose[] = [{ type: "text", text: `${GROK_ROUTER_SYSTEM_PROMPT}${extraGuidance == null || extraGuidance.length === 0 ? "" : `\n\n${extraGuidance}`}\n\nContinue this Grok Bot conversation.\n\n` }];
   for (const message of messages) {
     blocks.push({ type: "text", text: `${message.role.toUpperCase()}: ` });
     if (typeof message.content === "string") blocks.push({ type: "text", text: message.content });
     else for (const part of message.content) {
       if ((part as Loose)?.type === "image") {
-        const url = imageUrl(providerImage(part));
-        const match = /^data:(image\/[^;,]+);base64,(.*)$/is.exec(url);
-        blocks.push({ type: "image", source: match == null ? { type: "url", url } : { type: "base64", media_type: match[1], data: match[2] } });
+        blocks.push(claudeImageBlock(providerImage(part)));
+      } else if ((part as Loose)?.type === "tool-result" && toolResultContent(part as Loose).some(block => block.type === "image")) {
+        const result = part as Loose;
+        blocks.push({ type: "text", text: JSON.stringify({ type: result.type, toolCallId: result.toolCallId, toolName: result.toolName, isError: result.isError }) });
+        for (const block of toolResultContent(result)) {
+          if (block.type === "image") {
+            const source = block.source;
+            if (source?.type === "base64" && typeof source.data === "string" && typeof source.media_type === "string") {
+              blocks.push(claudeImageBlock(providerImage({ type: "image", image: source.data, mimeType: source.media_type })));
+            } else if (source?.type === "url" && typeof source.url === "string") {
+              blocks.push(claudeImageBlock(providerImage({ type: "image", image: new URL(source.url) })));
+            } else {
+              blocks.push(claudeImageBlock(providerImage({ type: "image", image: block.data, mimeType: block.mimeType })));
+            }
+          } else blocks.push(block.type === "text" ? { type: "text", text: block.text } : { type: "text", text: JSON.stringify(block) });
+        }
       } else if ((part as Loose)?.type === "text") blocks.push({ type: "text", text: (part as Loose).text });
       else blocks.push({ type: "text", text: JSON.stringify(part) });
     }
