@@ -12,11 +12,20 @@ import { DOMParser } from "@xmldom/xmldom";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPath = "dist/renderer/index.html";
 const bareHtml = '<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><div id="root"><h1>Grok Bot renderer isolation control</h1><p>Product main and preload remain active.</p><button type="button">Local control</button></div></body></html>\n';
+const variants = ["bare", "no-styles", "bare-zoom", "bare-titlebar"];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
-function rendererVariant(original, variant) {
-  assert(["bare", "no-styles"].includes(variant), "Expected renderer variant bare or no-styles");
+export function rendererVariant(original, variant) {
+  assert(variants.includes(variant), `Expected renderer variant ${variants.join(" or ")}`);
   if (variant === "bare") return { bytes: Buffer.from(bareHtml), removedStylesheets: 0 };
+  if (variant === "bare-zoom" || variant === "bare-titlebar") {
+    const body = '<div id="root"><h1>Grok Bot renderer isolation control</h1><p>Product main and preload remain active.</p><button type="button">Local control</button></div>';
+    const call = variant === "bare-zoom"
+      ? 'const zoom=window.desktop.getZoomFactor();if(typeof zoom!=="number"||!Number.isFinite(zoom))throw new Error("Zoom factor must be a finite number");'
+      : 'await window.desktop.windowControls.setTitleBarOverlayTone(false);';
+    const script = `void(async()=>{try{console.info("renderer-isolation:${variant}:before");${call}console.info("renderer-isolation:${variant}:after");document.body.insertAdjacentHTML("beforeend",${JSON.stringify(body)});}catch(error){console.error("renderer-isolation:${variant}:failed");throw error;}})();`;
+    return { bytes: Buffer.from(`<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><script>${script}</script></body></html>\n`), removedStylesheets: 0 };
+  }
   const html = original.toString("utf8");
   assert(original.equals(Buffer.from(html)), "Renderer HTML must be UTF-8");
   const document = new DOMParser({ normalizeLineEndings: value => value, onError: (level, message) => { throw new Error(`Renderer HTML ${level}: ${message}`); } }).parseFromString(html, "text/html");
@@ -133,7 +142,7 @@ async function refreshCopiedExecutableIntegrity(cloneExe, originalArchive, clone
 export async function main(args = process.argv.slice(2)) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("Renderer isolation requires Windows x64");
   const { values } = parseArgs({ args, options: { "app-path": { type: "string" }, variant: { type: "string", default: "bare" } } });
-  assert(values["app-path"] && ["bare", "no-styles"].includes(values.variant), "Usage: node scripts/windows-renderer-isolation.mjs --app-path <Grok Bot.exe> [--variant bare|no-styles]");
+  assert(values["app-path"] && variants.includes(values.variant), `Usage: node scripts/windows-renderer-isolation.mjs --app-path <Grok Bot.exe> [--variant ${variants.join("|")}]`);
   const variant = values.variant;
   const originalExe = path.resolve(values["app-path"]);
   const originalArchive = path.join(path.dirname(originalExe), "resources/app.asar");

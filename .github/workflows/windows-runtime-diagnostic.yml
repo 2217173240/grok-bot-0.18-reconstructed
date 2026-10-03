@@ -53,13 +53,15 @@ jobs:
       - name: Check the fixed product build
         id: product
         continue-on-error: true
-        run: node --input-type=module -e 'import { main } from "./scripts/windows-package-smoke.mjs"; await main(["--app-path", "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"], { diagnoseRenderer:true });'
-      - name: Isolate the product renderer
+        run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+      - name: Check real renderer zoom access
         if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
-        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
-      - name: Isolate renderer styling
+        continue-on-error: true
+        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant bare-zoom
+      - name: Check real titlebar update
         if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
-        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant no-styles
+        continue-on-error: true
+        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant bare-titlebar
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
