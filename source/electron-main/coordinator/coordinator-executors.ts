@@ -428,7 +428,7 @@ export function createCoordinatorControlExecutors(
     && (expected.startEpochMs === undefined || expected.startEpochMs === identity.startEpochMs)
     && (expected.command === undefined || expected.command === identity.command)
     && (expected.discoveryStartedAt === undefined || localExecDiscoveryTimeMatchesProcess(expected.discoveryStartedAt, identity.startEpochMs, Date.now()));
-  const readOwnedIdentity = (expected: ExpectedLocalExecProcessIdentity): LocalExecProcessIdentity | null => {
+  const readOwnedIdentity = async (expected: ExpectedLocalExecProcessIdentity): Promise<LocalExecProcessIdentity | null> => {
     const registered = ownedDaemonIdentities.get(expected.pid);
     if (registered != null && !expectedMatches(expected, registered)) return null;
     if (registered == null) {
@@ -436,14 +436,17 @@ export function createCoordinatorControlExecutors(
       try { canonicalEntryRealpath = (native.resolveLocalExecDaemonEntryRealpath ?? resolveLocalExecDaemonEntryRealpath)(); }
       catch { return null; }
       if (expected.entryRealpath !== canonicalEntryRealpath) return null;
-      const observed = native.readProcessIdentity(expected.pid);
+      const observed = await native.readProcessIdentity(expected.pid);
       if (observed == null || !commandCarriesLocalExecGeneration(observed.command, canonicalEntryRealpath, expected.generationToken)) return null;
       const adopted: LocalExecProcessIdentity = { ...observed, entryRealpath: canonicalEntryRealpath, generationToken: expected.generationToken };
       if (!expectedMatches(expected, adopted)) return null;
+      const concurrent = ownedDaemonIdentities.get(expected.pid);
+      if (concurrent != null) return expectedMatches(expected, concurrent) && sameLocalExecProcessIdentity(concurrent, adopted) ? concurrent : null;
       ownedDaemonIdentities.set(adopted.pid, adopted);
       return adopted;
     }
-    const observed = native.readProcessIdentity(expected.pid);
+    const observed = await native.readProcessIdentity(expected.pid);
+    if (ownedDaemonIdentities.get(expected.pid) !== registered) return null;
     if (observed == null || observed.startEpochMs !== registered.startEpochMs || observed.command !== registered.command) return null;
     if (!commandCarriesLocalExecGeneration(observed.command, registered.entryRealpath, registered.generationToken)) return null;
     return registered;
@@ -487,9 +490,14 @@ export function createCoordinatorControlExecutors(
       const { child, entryRealpath, generationToken } = spawned;
       if (child.pid === undefined) throw new Error("local-exec daemon spawn returned no pid");
       try {
-        for (let attempt = 0; attempt < 40; attempt += 1) {
-          const observed = native.readProcessIdentity(child.pid);
-          if (observed != null && commandCarriesLocalExecGeneration(observed.command, entryRealpath, generationToken)) {
+        const signal = AbortSignal.timeout(15_000);
+        for (;;) {
+          signal.throwIfAborted();
+          if (child.exitCode !== null || child.signalCode !== null) throw new Error(`local-exec daemon ${child.pid} exited before its identity was verified`);
+          const observed = await native.readProcessIdentity(child.pid, undefined, { signal });
+          if (child.exitCode !== null || child.signalCode !== null) throw new Error(`local-exec daemon ${child.pid} exited during identity verification`);
+          if (observed != null) {
+            if (!commandCarriesLocalExecGeneration(observed.command, entryRealpath, generationToken)) throw new Error(`local-exec daemon ${child.pid} does not carry the expected entry and generation`);
             const identity: LocalExecProcessIdentity = { ...observed, entryRealpath, generationToken };
             ownedDaemonIdentities.set(identity.pid, identity);
             const exit = new Promise<{ readonly identity: typeof identity; readonly exitCode: number | null; readonly signal: NodeJS.Signals | null }>((resolve) => {
@@ -501,21 +509,24 @@ export function createCoordinatorControlExecutors(
           }
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
-        throw new Error(`local-exec daemon ${child.pid} did not expose a verifiable process identity`);
       } catch (error) {
-        await stopUnidentifiedSpawn(child);
-        const discovery = await (dependencies.readLocalExecDaemonDiscovery ?? (() => readLocalExecDaemonDiscovery(getLocalExecDaemonDiscoveryPath())))();
-        if (discovery != null
-          && discovery.pid === child.pid
-          && discovery.entryRealpath === entryRealpath
-          && discovery.generationToken === generationToken) {
-          await (dependencies.clearLocalExecDaemonDiscoveryIfMatches ?? ((expected) => clearLocalExecDaemonDiscoveryIfMatches(expected, getLocalExecDaemonDiscoveryPath())))(discovery);
-        }
+        const failures: unknown[] = [error];
+        try { await stopUnidentifiedSpawn(child); } catch (cleanupError) { failures.push(cleanupError); }
+        try {
+          const discovery = await (dependencies.readLocalExecDaemonDiscovery ?? (() => readLocalExecDaemonDiscovery(getLocalExecDaemonDiscoveryPath())))();
+          if (discovery != null
+            && discovery.pid === child.pid
+            && discovery.entryRealpath === entryRealpath
+            && discovery.generationToken === generationToken) {
+            await (dependencies.clearLocalExecDaemonDiscoveryIfMatches ?? ((expected) => clearLocalExecDaemonDiscoveryIfMatches(expected, getLocalExecDaemonDiscoveryPath())))(discovery);
+          }
+        } catch (cleanupError) { failures.push(cleanupError); }
+        if (failures.length > 1) throw new AggregateError(failures, "local-exec identity verification and cleanup failed");
         throw error;
       }
     },
     async terminateProcess({ identity }: { readonly identity: LocalExecProcessIdentity }) {
-      const observed = readOwnedIdentity(identity);
+      const observed = await readOwnedIdentity(identity);
       if (observed == null || !sameLocalExecProcessIdentity(observed, identity)) return { terminated: false };
       await native.terminateProcess(identity.pid, { expectedIdentity: observed });
       return { terminated: true };

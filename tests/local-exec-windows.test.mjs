@@ -14,12 +14,13 @@ await build({ entryPoints: [path.join(root, "source/electron-main/local-exec/loc
 const native = await import(pathToFileURL(outfile).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
-test("Windows CIM 身份读取使用数值时间戳并保留完整命令", () => {
+test("Windows CIM 身份读取使用数值时间戳并保留完整命令", async () => {
   const identity = { pid: 42, startEpochMs: 1780000000123, command: '"C:\\Program Files\\node.exe" "C:\\测试 folder\\main.cjs" --sand-local-exec-generation=uuid' };
   assert.deepEqual(native.parseWindowsProcessIdentity(42, JSON.stringify(identity)), identity);
-  for (const output of ["", "null", "{}", '{"startEpochMs":"/Date(1780000000123)/","command":"node"}', '{"startEpochMs":1,"command":""}']) assert.equal(native.parseWindowsProcessIdentity(42, output), null);
-  assert.equal(native.parseWindowsProcessIdentity(-1, JSON.stringify(identity)), null);
-  assert.throws(() => native.terminateWindowsProcessTree({ ...identity, pid: process.pid }), /Invalid local-exec/);
+  assert.equal(native.parseWindowsProcessIdentity(42, "null"), null);
+  for (const output of ["", "{}", '{"startEpochMs":"/Date(1780000000123)/","command":"node"}', '{"startEpochMs":1,"command":""}']) assert.throws(() => native.parseWindowsProcessIdentity(42, output));
+  assert.throws(() => native.parseWindowsProcessIdentity(-1, JSON.stringify(identity)), /Invalid local-exec process ID/);
+  await assert.rejects(native.terminateWindowsProcessTree({ ...identity, pid: process.pid }), /Invalid local-exec/);
 });
 
 test("generation 核验接受完整引用参数并拒绝前后缀", () => {
@@ -54,18 +55,63 @@ test("真实 detached 进程保留当前用户路径与 generation 环境", { ti
   assert.equal(details.pid, spawned.child.pid);
   assert.equal(details.generation, spawned.generationToken);
   assert.equal(details.args[1], spawned.entryRealpath);
-  const identity = native.readProcessIdentity(details.pid);
+  const identity = await native.readProcessIdentity(details.pid);
   assert(identity);
   assert(native.commandCarriesLocalExecGeneration(identity.command, spawned.entryRealpath, spawned.generationToken), JSON.stringify({ identity, entry: spawned.entryRealpath }));
   assert(identity.startEpochMs <= Date.now());
   assert(native.isProcessAlive(details.childPid));
+  assert.equal(await native.readProcessCommand(details.pid), identity.command);
+  assert.equal(await native.isLocalExecDaemonProcess(details.pid, spawned.entryRealpath, spawned.generationToken), true);
+});
+
+test("真实身份查询只合并进行中的读取，进程退出后没有旧缓存", { timeout: 60000 }, async t => {
+  const { details } = await startProcess(t);
+  const first = native.readProcessIdentity(details.pid);
+  assert.equal(native.readProcessIdentity(details.pid), first);
+  assert.equal((await first).pid, details.pid);
+  const fresh = native.readProcessIdentity(details.pid);
+  assert.notEqual(fresh, first);
+  const identity = await fresh;
+  await native.terminateProcess(details.pid, { expectedIdentity: identity });
+  assert.equal(await native.readProcessIdentity(details.pid), null);
+  assert.equal(await native.readProcessCommand(details.pid), null);
+});
+
+test("身份查询保留无效输入与取消错误", async () => {
+  await assert.rejects(native.readProcessIdentity(0), /Invalid local-exec process ID/);
+  await assert.rejects(native.readProcessIdentity(process.pid, process.platform, { signal: AbortSignal.abort() }), error => error.name === "AbortError");
+});
+
+test("Windows 真实 PowerShell 身份查询期间事件循环继续运行", { skip: process.platform !== "win32", timeout: 30000 }, async t => {
+  const { details } = await startProcess(t);
+  let beats = 0;
+  const heartbeat = setInterval(() => { beats++; }, 1);
+  try {
+    const identity = await native.readProcessIdentity(details.pid, "win32");
+    assert.equal(identity.pid, details.pid);
+    assert(beats > 0, "PowerShell 身份查询阻塞了事件循环");
+  } finally { clearInterval(heartbeat); }
+});
+
+test("Windows 真实查询可取消且不会取消并发无信号读取", { skip: process.platform !== "win32", timeout: 30000 }, async t => {
+  const { details } = await startProcess(t);
+  const controller = new AbortController();
+  const cancellable = native.readProcessIdentity(details.pid, "win32", { signal: controller.signal });
+  const shared = native.readProcessIdentity(details.pid, "win32");
+  assert.notEqual(cancellable, shared);
+  const rejected = assert.rejects(cancellable, error => error.name === "AbortError");
+  const cancellation = setTimeout(() => controller.abort(), 0);
+  try {
+    await rejected;
+    assert.equal((await shared).pid, details.pid);
+  } finally { clearTimeout(cancellation); }
 });
 
 test("Windows 创建时间和 generation 拒绝不匹配身份，已核验父子进程共同终止", { skip: process.platform !== "win32", timeout: 60000 }, async t => {
   const { spawned, details, subdirectory } = await startProcess(t);
-  const identity = native.readProcessIdentity(details.pid);
+  const identity = await native.readProcessIdentity(details.pid);
   assert(identity);
-  assert.throws(() => native.terminateWindowsProcessTree({ ...identity, startEpochMs: identity.startEpochMs - 1 }));
+  await assert.rejects(native.terminateWindowsProcessTree({ ...identity, startEpochMs: identity.startEpochMs - 1 }));
   assert(native.isProcessAlive(details.pid));
   assert(native.isProcessAlive(details.childPid));
   const discovery = path.join(subdirectory, "discovery.json");
