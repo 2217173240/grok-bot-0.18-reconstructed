@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      windows_package_run_id:
+        description: Optional fixed Windows package run to diagnose without rebuilding
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -20,6 +25,7 @@ env:
 
 jobs:
   check:
+    if: inputs.windows_package_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -58,3 +64,11 @@ jobs:
         run: npm run frontend:build
       - name: Verify a fresh clean-history export is lossless
         run: npm run publication:check
+  windows-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_package_run_id != ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-runtime-diagnostic.yml
+    with:
+      build_run_id: ${{ inputs.windows_package_run_id }}

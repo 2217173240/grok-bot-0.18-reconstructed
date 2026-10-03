@@ -1,7 +1,7 @@
 name: Windows runtime diagnostic
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       build_run_id:
         description: Run ID containing the Windows portable package to test
@@ -37,6 +37,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Build run ID must be numeric' }
           gh run view $env:BUILD_RUN_ID --json headSha,url
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gh run download $env:BUILD_RUN_ID --name windows-portable-package --dir .cache/diagnostic-package
@@ -50,12 +51,18 @@ jobs:
         continue-on-error: true
         run: node scripts/electron-ipc-repro.mjs
       - name: Check the fixed product build
+        id: product
+        continue-on-error: true
         run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+      - name: Isolate the product renderer
+        if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
+        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: windows-runtime-evidence
           path: |
+            .cache/windows-renderer-isolation-*/isolation-report.json
             .cache/electron-ipc-repro-*/report.json
             .cache/electron-ipc-repro-*/*.log
             .cache/electron-ipc-repro-*/cdp-events.json
@@ -72,3 +79,6 @@ jobs:
       - name: Report control-program failure
         if: always() && steps.electron-control.outcome == 'failure'
         run: throw 'The Electron control program failed; see windows-runtime-evidence.'
+      - name: Report product failure
+        if: always() && steps.product.outcome == 'failure'
+        run: throw 'The fixed product build failed; isolation results do not replace its acceptance check.'

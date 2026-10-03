@@ -2,9 +2,9 @@
 
 评审日期：2026-10-03。代码基线：`ff8d986`。用户在各自 Mac 安装同一版本、配置自己的第三方账号，应用在该机器的 Docker sandbox 内执行并保存结果；需要人工判断的动作仍由本机用户批准。
 
-目标是普通项目的独立安装体验：新机器无需开发者的用户名、目录、缓存、凭据或旧容器。当前已验证范围为 macOS Apple Silicon；Intel Mac 尚未建立对应应用构件、基础镜像和实际验收。本次更新是部署分析与改进顺序，未实现新的安装器，也没有启动应用或虚拟机。
+目标是普通项目的独立安装体验：新机器无需开发者的用户名、目录、缓存、凭据或旧容器。当前已验证范围为 macOS Apple Silicon；Intel Mac 尚未建立对应应用构件、基础镜像和实际验收。本页记录部署评审与已落地的共用启动配置；现有 Mac 安装、虚拟机和数据保留，未新增安装器。
 
-Windows 已由用户确认为正式交付目标，实施状态与真实机器验收边界见 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。本页继续描述 Mac 独立部署的评审基线。
+Windows 已由用户确认为正式交付目标，实施状态与真实机器验收边界见 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。该实现同时完成 Mac 的 `GROKBOT_APP_PATH` 路径配置、App/build stamp 统一定位、共享 provider 校验与 Docker context 传递；本页其余事项继续作为独立 Mac 部署的评审依据。
 
 ## 推荐部署方式
 
