@@ -38,8 +38,8 @@ export function commandCarriesLocalExecGeneration(
 ): boolean {
   return entryRealpath.length > 0
     && generationToken.length > 0
-    && containsExactArgument(command, entryRealpath)
-    && containsExactArgument(command, `${LOCAL_EXEC_GENERATION_TOKEN_ARG}${generationToken}`);
+    && (containsExactArgument(command, entryRealpath) || containsExactArgument(command, `"${entryRealpath}"`))
+    && (containsExactArgument(command, `${LOCAL_EXEC_GENERATION_TOKEN_ARG}${generationToken}`) || containsExactArgument(command, `"${LOCAL_EXEC_GENERATION_TOKEN_ARG}${generationToken}"`));
 }
 
 export function sameLocalExecProcessIdentity(

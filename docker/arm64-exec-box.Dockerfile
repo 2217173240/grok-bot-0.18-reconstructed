@@ -1,9 +1,5 @@
-# arm64-native exec lab: the Archive desktop/toolchain image as the base, plus
-# this repo's runtime dependencies installed for linux/arm64 so the staged
-# v2 host and the reconstructed box-exec-daemon run natively (no QEMU).
-#
-# Build:  see docker/build-arm64-box.sh
-# Run:    see docker/run-arm64-box.sh (bind-mounts the v3 staged runtime)
+# 复用基础镜像的桌面与开发工具，按目标 Linux 架构安装 Node 和运行依赖。
+# 构建入口：node docker/build-box.mjs --platform linux/arm64|linux/amd64。
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
@@ -13,16 +9,18 @@ ARG BASE_IMAGE
 ARG BASE_IMAGE_REF=${BASE_IMAGE}
 LABEL org.opencontainers.image.base.name="${BASE_IMAGE_REF}"
 
-# The host bundle requires the node:sqlite builtin (Node >= 22.5); the base
-# image's apt Node is 20. Install the official arm64 binary over it, pinned
-# and checksummed like the base image's bun/uv layers (release assets can be
-# replaced upstream; TLS alone does not make a build reproducible).
+# host 使用 node:sqlite；两个平台安装同版本官方 Node，并核对官方 SHA-256。
 ARG NODE_VERSION=v22.23.2
-ARG NODE_SHA256=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8
+ARG TARGETARCH
 USER root
 RUN set -eux; \
+    case "$TARGETARCH" in \
+      arm64) NODE_ARCH=arm64; NODE_SHA256=fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8 ;; \
+      amd64) NODE_ARCH=x64; NODE_SHA256=d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307 ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
     mkdir -p /home/box/.cache/grok-build; \
-    curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-arm64.tar.xz" -o /home/box/.cache/grok-build/node.tar.xz; \
+    curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /home/box/.cache/grok-build/node.tar.xz; \
     echo "${NODE_SHA256}  /home/box/.cache/grok-build/node.tar.xz" | sha256sum -c -; \
     tar -xJf /home/box/.cache/grok-build/node.tar.xz -C /usr/local --strip-components=1; \
     rm -f /home/box/.cache/grok-build/node.tar.xz; \
@@ -30,11 +28,8 @@ RUN set -eux; \
     node --version; node -e "require('node:sqlite'); console.log('node:sqlite available')"
 USER box
 
-# Runtime externals for host-main.cjs / box-exec-daemon/main.cjs. npm ci with
-# the repo lockfile resolves linux/arm64 prebuilds where they exist and
-# compiles the rest (tree-sitter family) with the image's gcc. The postinstall
-# patch script ships along — it sha-pins third-party fixes (including the
-# tree-sitter binding.gyp tweak the native build needs).
+# npm ci 按目标架构安装 lockfile 中的依赖，使用镜像中的 gcc 编译原生扩展。
+# postinstall 脚本校验并应用 tree-sitter 等第三方修正。
 COPY --chown=box:box package.json package-lock.json /home/box/.cache/grok-build/runtime-deps/
 COPY --chown=box:box scripts/apply-third-party-patches.mjs /home/box/.cache/grok-build/runtime-deps/scripts/
 RUN cd /home/box/.cache/grok-build/runtime-deps && TMPDIR=/home/box/.cache/grok-build npm ci --omit=dev --silent \

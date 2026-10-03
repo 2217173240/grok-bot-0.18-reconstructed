@@ -49,7 +49,7 @@ function snapshotDiff(before, after) {
 async function archiveFileEntries(archivePath) {
   const entries = new Map();
   for (const raw of listPackage(archivePath)) {
-    const relative = raw.replace(/^\//, "");
+    const relative = raw.replace(/^[/\\]+/, "").split("\\").join("/");
     try {
       const entry = statFile(archivePath, relative);
       if (typeof entry.size === "number") entries.set(relative, entry);

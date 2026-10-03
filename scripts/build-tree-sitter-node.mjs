@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import { repoRoot } from "./lib/config.mjs";
 
@@ -12,14 +13,12 @@ function nodeRuntimeCacheRoot() {
 }
 
 function runNodeGyp(target) {
-  const command = process.platform === "win32"
-    ? path.join(repoRoot, "node_modules", ".bin", "node-gyp.cmd")
-    : path.join(repoRoot, "node_modules", ".bin", "node-gyp");
+  const entry = path.join(repoRoot, "node_modules", "node-gyp", "bin", "node-gyp.js");
   const environment = { ...process.env };
   for (const key of ["npm_config_runtime", "npm_config_target", "npm_config_disturl", "npm_config_nodedir"]) delete environment[key];
   environment.npm_config_build_from_source = "true";
   return new Promise((resolve, reject) => {
-    const child = spawn(command, ["rebuild", "--directory", target, "--release"], {
+    const child = spawn(process.execPath, [entry, "rebuild", "--directory", target, "--release"], {
       cwd: repoRoot,
       env: environment,
       stdio: ["ignore", "inherit", "inherit"],
@@ -79,6 +78,6 @@ export async function stageNodeTreeSitterRuntime(outputRoot) {
   return destination;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   console.log(JSON.stringify({ node: process.version, modules: process.versions.modules, output: await ensureNodeTreeSitterRuntime() }, null, 2));
 }

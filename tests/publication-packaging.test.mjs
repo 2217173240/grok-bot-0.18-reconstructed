@@ -41,7 +41,7 @@ test("default packaging uses the checksum-pinned original renderer and verifies 
   assert.match(verifier, /await verifyChecksumPinnedRendererPackage\(/);
   assert.match(verifier, /await verifyReconstructedMacPackage\(/);
   assert.match(verifier, /experimental source-only renderer/);
-  const rendererVerifier = await readFile(path.join(repoRoot, "scripts", "lib", "macos-package-verification.mjs"), "utf8");
+  const rendererVerifier = await readFile(path.join(repoRoot, "scripts", "lib", "renderer-package-verification.mjs"), "utf8");
   assert.match(rendererVerifier, /const expected = chunks\.get\(relative\)\?\.patched \?\? expectedFiles\.get\(relative\)/);
   assert.match(rendererVerifier, /\["registry", "panel", "entry-text-extractor"\]/);
   assert.match(rendererVerifier, /chunks\.size < 2 \|\| chunks\.size > 3/);
@@ -90,7 +90,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(localDocker, /public\.ecr\.aws\/k0i0n2g5\/cursorenvironments\/universal:sand-box-latest/);
   assert.match(localDocker, /"127\.0\.0\.1:1340:1340"/);
   assert.match(localDocker, /SAND_BOX_AUTO_UPDATE=0/);
-  assert.match(localDocker, /dst=\/home\/box\/sand-host,readonly/);
+  assert.match(localDocker, /dockerBindMount\(options\.hostMainPath, "\/home\/box\/sand-host", true\)/);
   // The staged host tree carries its runtime siblings (agent-isolation and
   // extension workers) — an in-box turn died on a missing worker when the
   // mount was the single entry file.
@@ -201,7 +201,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(localDocker, /ensureLocalAdminHost\(/);
   assert.match(localDocker, /resolveLocalAdminBox/);
   assert.match(localDocker, /if \(!dockerAvailable\) throw new Error\("Docker sandbox is unavailable/);
-  assert.match(localDocker, /refusing to silently fall back to the emulated official image/);
+  assert.match(localDocker, /if \(!present.ok\) throw new Error\(`The local computer image/);
   assert.match(localDocker, /SELF_BUILT_EXEC_BOX_IMAGE/);
   // The default-path fallback (self-built image missing, no explicit pin) is
   // annotated, never silent: the choice maps to an intercept record and the
@@ -233,9 +233,9 @@ test("Router settings use the trusted backend and display recorded inference usa
   // refused with the rebuild action and must never reach the QEMU fallback.
   assert.match(localDocker, /SELF_BUILT_DEPS_PIN_LABEL = "com\.grok-bot\.local-vm\.deps-pin"/);
   assert.match(localDocker, /stale-image-refused/);
-  assert.match(localDocker, /refusing to run outdated dependencies or to silently fall back/);
+  assert.match(localDocker, /throw new Error\(`The self-built computer image is stale/);
   assert.match(await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8"), /depsPin/);
-  assert.match(await readFile(path.join(repoRoot, "docker", "build-arm64-box.sh"), "utf8"), /com\.grok-bot\.local-vm\.deps-pin=/);
+  assert.match(await readFile(path.join(repoRoot, "docker", "build-box.mjs"), "utf8"), /com\.grok-bot\.local-vm\.deps-pin=/);
   assert.match(gates, /G0 image deps pin/);
   // Desktop opt-in (B1): box-init-exec topology, mode label, opt-in env.
   assert.match(localDocker, /SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP"/);

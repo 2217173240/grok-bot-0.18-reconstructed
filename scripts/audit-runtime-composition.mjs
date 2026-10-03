@@ -9,6 +9,7 @@ import { extractFile, listPackage } from "@electron/asar";
 import { build as esbuild } from "esbuild";
 
 import { runtimeComposition } from "./lib/clean-build.mjs";
+import { upstreamPlatform } from "./lib/upstream-platforms.mjs";
 import { repoRoot, sourceAppDir } from "./lib/config.mjs";
 import { requiredElectronMainProductionBindings } from "./electron-main-production-activation.mjs";
 import { assembleHostProductionBindingManifest } from "./host-production-activation.mjs";
@@ -735,9 +736,11 @@ async function checksumPinnedRendererVerdict(outputRoot, requireOutputs, declara
     if (requireOutputs) throw new Error("Checksum-pinned renderer provenance is missing", { cause: error });
     blockers.push("missing-renderer-artifact-provenance");
   }
-  const expectedRoot = "src/app/dist/renderer";
+  const artifact = upstreamPlatform(declaration.upstreamPlatform ?? "darwin-arm64");
+  const expectedRoot = artifact.rendererRoot;
   if (provenance != null) {
     if (provenance.mode !== declaration.mode) blockers.push("renderer-artifact-provenance-mode-drift");
+    if (provenance.upstreamAppAsarSha256 !== artifact.asarSha256) blockers.push("renderer-artifact-source-identity-drift");
     if (provenance.artifactRoot !== expectedRoot || declaration.artifactRoot !== expectedRoot) blockers.push("renderer-artifact-root-drift");
     const artifactRoot = path.join(repoRoot, expectedRoot);
     const files = [];

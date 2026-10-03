@@ -18,13 +18,13 @@ set -euo pipefail
 # variable for its own child processes, so clear it for everything it starts.
 unset ELECTRON_RUN_AS_NODE
 
-BIN="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot"
-APP_BUNDLE="${BIN%/Contents/MacOS/Grok Bot}"
+APP_BUNDLE="${GROKBOT_APP_PATH:-/Applications/Grok Bot 0.18 Reconstructed.app}"
+BIN="$APP_BUNDLE/Contents/MacOS/Grok Bot"
+STAMP="$APP_BUNDLE/Contents/Resources/build-stamp.json"
 BUNDLE_ID="com.anysphere.sand.reconstructed"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_ROOT="${GROKBOT_DATA_ROOT:-$HOME/.grokbot-local}"
 PROFILE="$DATA_ROOT/profile"
-TOKEN_FILE="$DATA_ROOT/anthropic-token"
 APP_LOG="$DATA_ROOT/app.log"
 PID_FILE="$DATA_ROOT/app.pid"
 GATEWAY_HEALTH_URL="http://127.0.0.1:1340/health"
@@ -69,28 +69,41 @@ health_ok() {
 seed_settings() {
   local settings="$DATA_ROOT/settings.json"
   if [ -f "$settings" ]; then
+    node "$REPO/scripts/lib/local-launch-config.mjs" settings "$DATA_ROOT" >/dev/null
     say "settings: kept existing $settings"
     return
   fi
-  python3 - "$settings" <<'PY'
-import json, sys
-settings = {
-    "version": 1, "mcpBoxServers": [], "autoUpdateWhenIdleOptIn": False,
-    "egressTunnelEnabled": False, "webauthnProxyEnabled": True,
-    "mcpCustomInstructions": {}, "mcpCustomInstructionsByServerId": {},
-    "mcpDisabledToolsByServerId": {}, "conciergeConsent": "unset",
-    "settingsMigrations": ["downgrade-persisted-max-fast"],
-    "hasSeenOnboarding": True,
-    "inferenceProvider": "claude-code", "boxRuntime": "local-docker",
-}
-open(sys.argv[1], "w").write(json.dumps(settings, indent=2) + "\n")
-PY
+  local temporary status=0
+  temporary="$(umask 077; mktemp "$DATA_ROOT/.launch-settings.XXXXXX")"
+  node "$REPO/scripts/lib/local-launch-config.mjs" settings "$DATA_ROOT" >"$temporary" || status=$?
+  if [ "$status" -ne 0 ]; then rm -f "$temporary"; return "$status"; fi
+  mv -n "$temporary" "$settings"
+  rm -f "$temporary"
   say "settings: seeded $settings (claude-code + local box)"
+}
+
+load_launch_environment() {
+  mkdir -p "$DATA_ROOT"
+  local temporary key value status=0
+  temporary="$(umask 077; mktemp "$DATA_ROOT/.launch-env.XXXXXX")"
+  node "$REPO/scripts/lib/local-launch-config.mjs" env0 "$DATA_ROOT" >"$temporary" || status=$?
+  if [ "$status" -ne 0 ]; then rm -f "$temporary"; return "$status"; fi
+  LAUNCH_ENV_ARGS=()
+  while IFS= read -r -d '' key; do
+    if ! IFS= read -r -d '' value; then rm -f "$temporary"; die "incomplete launch environment"; fi
+    export "$key=$value"
+    LAUNCH_ENV_ARGS+=(--env "$key=$value")
+  done <"$temporary"
+  rm -f "$temporary"
+  DATA_ROOT="$SAND_DATA_ROOT"
+  PROFILE="$SAND_USER_DATA_DIR"
+  APP_LOG="$DATA_ROOT/app.log"
+  PID_FILE="$DATA_ROOT/app.pid"
 }
 
 do_start() {
   [ -x "$BIN" ] || die "app binary not found: $BIN (run scripts/package-macos.mjs first)"
-  [ -r "$TOKEN_FILE" ] || die "missing $TOKEN_FILE (echo <token> > $TOKEN_FILE; chmod 600)"
+  load_launch_environment
 
   if [ "$(app_pid)" ]; then
     local existing_pid
@@ -131,14 +144,6 @@ do_start() {
     fi
   fi
 
-  # One-time migration from the /tmp smoke root.
-  if [ ! -d "$DATA_ROOT" ] || [ -z "$(ls -A "$DATA_ROOT" 2>/dev/null)" ]; then
-    if [ -d /tmp/grok-bot-local ] && [ -f /tmp/grok-bot-local/settings.json ]; then
-      mkdir -p "$DATA_ROOT"
-      cp -R /tmp/grok-bot-local/. "$DATA_ROOT/" 2>/dev/null || true
-      say "migrated smoke state from /tmp/grok-bot-local"
-    fi
-  fi
   mkdir -p "$DATA_ROOT" "$PROFILE"
   seed_settings
 
@@ -150,33 +155,11 @@ do_start() {
 
   : > "$APP_LOG"
 
-  export SAND_LOCAL_ADMIN=1
-  export SAND_DISABLE_SENTRY=1
-  export SAND_DISABLE_TELEMETRY=1
-  export SAND_CLAUDE_MODEL="${SAND_CLAUDE_MODEL:-glm-5.3-flash}"
-  export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-https://open.bigmodel.cn/api/anthropic}"
-  # The real token stays in the 0600 file; the provider layer injects it into
-  # the CLI child only. This marker just satisfies the logged-in check.
-  export ANTHROPIC_API_KEY='local-file'
-  export ANTHROPIC_DEFAULT_FABLE_MODEL="${ANTHROPIC_DEFAULT_FABLE_MODEL:-$SAND_CLAUDE_MODEL}"
-  export ANTHROPIC_DEFAULT_FABLE_MODEL_NAME="${ANTHROPIC_DEFAULT_FABLE_MODEL_NAME:-$ANTHROPIC_DEFAULT_FABLE_MODEL}"
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-$SAND_CLAUDE_MODEL}"
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME="${ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME:-$ANTHROPIC_DEFAULT_HAIKU_MODEL}"
-  export ANTHROPIC_DEFAULT_OPUS_MODEL="${ANTHROPIC_DEFAULT_OPUS_MODEL:-$SAND_CLAUDE_MODEL}"
-  export ANTHROPIC_DEFAULT_OPUS_MODEL_NAME="${ANTHROPIC_DEFAULT_OPUS_MODEL_NAME:-$ANTHROPIC_DEFAULT_OPUS_MODEL}"
-  export ANTHROPIC_DEFAULT_SONNET_MODEL="${ANTHROPIC_DEFAULT_SONNET_MODEL:-$SAND_CLAUDE_MODEL}"
-  export ANTHROPIC_DEFAULT_SONNET_MODEL_NAME="${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME:-$ANTHROPIC_DEFAULT_SONNET_MODEL}"
-  export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-$SAND_CLAUDE_MODEL}"
-  export CLAUDE_CODE_SUBAGENT_MODEL="${CLAUDE_CODE_SUBAGENT_MODEL:-$SAND_CLAUDE_MODEL}"
-  export ENABLE_TOOL_SEARCH='true'
-  export DISABLE_AUTOUPDATER=1
   # Stale package guard: the app bundle carries a build stamp; warn loudly when
   # it does not match this repository's HEAD (a silently failed rebuild shipped
   # as a stale dist exactly once — never again).
-  STAMP="$BIN/../Resources/build-stamp.json"  # resolved against MacOS dir
-  STAMP="/Applications/Grok Bot 0.18 Reconstructed.app/Contents/Resources/build-stamp.json"
   if [ -f "$STAMP" ]; then
-    STAMPED_REV=$(python3 -c "import json; print(json.load(open('$STAMP'))['sourceRevision'])" 2>/dev/null)
+    STAMPED_REV=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$STAMP")
     HEAD_REV=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
     if [ "$STAMPED_REV" != "$HEAD_REV" ]; then
       say "WARNING: installed app was built from ${STAMPED_REV:0:7} but the repo is at ${HEAD_REV:0:7} — repackage and re-copy before trusting runtime behavior"
@@ -185,56 +168,32 @@ do_start() {
     say "WARNING: installed app has no build stamp (pre-stamp package); freshness cannot be verified"
   fi
 
-  export SAND_DATA_ROOT="$DATA_ROOT"
-  export SAND_USER_DATA_DIR="$PROFILE"
   # 本地管理员模式只在容器执行。
   if [ "${GROKBOT_BOX:-docker}" = "docker" ]; then
     resolve_docker_host || die "no Docker socket found ($(docker_unreachable_hint))"
-    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via $DOCKER_HOST ($(docker_unreachable_hint))"
-    export SAND_LOCAL_ADMIN_BOX=docker
+    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via ${DOCKER_CONTEXT:-${DOCKER_HOST:-default}} ($(docker_unreachable_hint))"
     echo docker > "$DATA_ROOT/box-mode"
     say "computer: Docker VM"
   else
     die "unsupported GROKBOT_BOX: $GROKBOT_BOX (expected docker)"
   fi
   if [ -n "${GROKBOT_IMAGE:-}" ]; then
-    export SAND_LOCAL_ADMIN_IMAGE="$GROKBOT_IMAGE"
     say "image: $GROKBOT_IMAGE (pinned)"
   fi
   # Agent turns execute in the container host.
-  export SAND_LOCAL_ADMIN_TURN=host
   say "turns: in-box execution plane"
   # The desktop plane is the default computer (complete bot; both gate
   # profiles green). GROKBOT_DESKTOP=0 opts back to the headless exec plane.
   if [ "${GROKBOT_DESKTOP:-}" = "0" ]; then
-    export SAND_LOCAL_ADMIN_DESKTOP=0
     say "desktop: off (headless exec plane, GROKBOT_DESKTOP=0)"
   else
-    export SAND_LOCAL_ADMIN_DESKTOP=1
     say "desktop: on (default; GROKBOT_DESKTOP=0 for headless exec)"
   fi
 
   # Launch Services 在脚本退出后继续管理进程；显式传入全部非敏感运行参数。
-  local launch_keys=(
-    SAND_LOCAL_ADMIN SAND_LOCAL_ADMIN_EMAIL SAND_DISABLE_SENTRY SAND_DISABLE_TELEMETRY
-    SAND_CLAUDE_MODEL SAND_DATA_ROOT SAND_USER_DATA_DIR SAND_LOCAL_ADMIN_BOX
-    SAND_LOCAL_ADMIN_IMAGE SAND_LOCAL_ADMIN_TURN SAND_LOCAL_ADMIN_DESKTOP
-    SAND_AGENT_WORKSPACE SAND_WORKSPACE_ROOT SAND_COMMANDCODE_MODEL
-    SAND_CODEX_MODEL SAND_CODEX_REASONING_EFFORT SAND_OPENROUTER_MODEL
-    SAND_AWAITING_HUMAN_TIMEOUT_MS
-    SAND_DISABLE_UPDATES ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_MODEL
-    ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
-    ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME
-    ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL_NAME
-    ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL_NAME
-    CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_PATH CODEX_HOME CODEX_PATH
-    ENABLE_TOOL_SEARCH DISABLE_AUTOUPDATER DOCKER_HOST PATH
-  )
+  load_launch_environment
   local launch_args=(-n -a "$APP_BUNDLE" --stdout "$APP_LOG" --stderr "$APP_LOG")
-  local key
-  for key in "${launch_keys[@]}"; do
-    if [ "${!key+x}" = x ]; then launch_args+=(--env "$key=${!key}"); fi
-  done
+  launch_args+=("${LAUNCH_ENV_ARGS[@]}")
   open "${launch_args[@]}" --args "--user-data-dir=$PROFILE"
   local pid=""
   local launch_waited=0
@@ -403,7 +362,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
 case "${1:-start}" in
   start)   validate_turn_mode; do_start ;;
   stop)    do_stop ;;
-  restart) validate_turn_mode; do_stop; do_start ;;
+  restart) validate_turn_mode; load_launch_environment; do_stop; do_start ;;
   status)  do_status ;;
   logs)    do_logs ;;
   *)       die "usage: $0 [start|stop|status|restart|logs]" ;;

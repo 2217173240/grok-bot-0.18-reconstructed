@@ -389,7 +389,7 @@ export function resolveElectronMainBindingManifestPath({ argv = process.argv, en
   return environmentPath.length > 0 ? environmentPath : null;
 }
 
-export async function buildProductionElectronMainIfSupplied({ outputRoot, manifestPath = resolveElectronMainBindingManifestPath(), reconstructedPackage = false, sourceOnly = false } = {}) {
+export async function buildProductionElectronMainIfSupplied({ outputRoot, manifestPath = resolveElectronMainBindingManifestPath(), reconstructedPackage = false, sourceOnly = false, localPackageBootstrap = false } = {}) {
   const assembled = await assembleElectronMainProductionBindingManifest(manifestPath, { sourceOnly });
   if (assembled.unboundBindings.length > 0) return {
     status: "incomplete-evidence-derived-manifest",
@@ -405,10 +405,25 @@ export async function buildProductionElectronMainIfSupplied({ outputRoot, manife
   const validated = assembled;
   const outfile = path.join(outputRoot, "dist/electron-main/main.cjs");
   await mkdir(path.dirname(outfile), { recursive: true });
+  const localBootstrapPath = "dist/local-package-bootstrap.cjs";
+  if (localPackageBootstrap) {
+    await esbuild({
+      entryPoints: [path.join(repoRoot, "scripts/lib/local-package-bootstrap.mjs")],
+      outfile: path.join(outputRoot, localBootstrapPath), bundle: true, platform: "node", format: "cjs", target: electronMainNodeTarget,
+      define: { "import.meta.url": "__localLaunchModuleUrl" },
+      banner: { js: 'const __localLaunchModuleUrl = require("node:url").pathToFileURL(__filename).href;' },
+      logLevel: "silent",
+    });
+  }
+  const localBootstrapBanner = localPackageBootstrap ? [
+    'try { require("../local-package-bootstrap.cjs").initializeLocalPackage(); }',
+    'catch (error) { require("electron").dialog.showErrorBox("Grok Bot local setup", error.message); process.exit(1); }',
+    "",
+  ].join("\n") : "";
   const declaredExternal = [...new Set(validated.bindings.filter(binding => binding.classification !== "generated-source").map(binding => binding.resolvedModule))];
   const result = await esbuild({
     absWorkingDir: repoRoot,
-    banner: { js: `const __import_meta_url = require("node:url").pathToFileURL(__filename).href;\n// Deterministic clean-source production Electron main; bindings ${validated.manifestSha256}` },
+    banner: { js: `${localBootstrapBanner}const __import_meta_url = require("node:url").pathToFileURL(__filename).href;\n// Deterministic clean-source production Electron main; bindings ${validated.manifestSha256}` },
     bundle: true,
     define: { "import.meta.url": "__import_meta_url" },
     external: ["electron", "undici", "ws", ...declaredExternal],
@@ -434,6 +449,7 @@ export async function buildProductionElectronMainIfSupplied({ outputRoot, manife
   const unexpectedExternal = externalImports.filter(specifier => !allowedPackages.has(specifier));
   if (unexpectedExternal.length > 0) throw new Error(`Clean production Electron main has undeclared external imports: ${unexpectedExternal.join(", ")}`);
   const runtimePackages = await materializeElectronMainRuntimePackages(outputRoot);
+  if (localPackageBootstrap) runtimePackages.files.push(localBootstrapPath);
   if (!externalImports.includes("undici")) throw new Error("Clean production Electron main did not retain the real undici package edge.");
   const outputBytes = await readFile(outfile);
   const forbiddenOutput = outputBytes.toString("utf8").match(/(?:src\/app\/|recovered\/source-capsules\/|dist\/electron-main\/main\.cjs)/g) ?? [];

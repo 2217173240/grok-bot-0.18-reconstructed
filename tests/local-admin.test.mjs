@@ -664,8 +664,8 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     // No Mac-side directory, no plan — for either image: silently falling
     // back to a named volume would reinstate the dual track the contract
     // exists to remove.
-    assert.throws(() => loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64" }), /requires a Mac-side workspace directory/);
-    assert.throws(() => loaded.module.localDockerRunPlan(base), /requires a Mac-side workspace directory/);
+    assert.throws(() => loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64" }), /requires a host workspace directory/);
+    assert.throws(() => loaded.module.localDockerRunPlan(base), /requires a host workspace directory/);
   } finally {
     await loaded.dispose();
   }
@@ -673,7 +673,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
 
 test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
   const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
-  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/base-image.json"]);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package.json", "package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/base-image.json"]);
   const contents = ["alpha", "beta", "gamma"];
   assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
   // Concatenation order is part of the pin: reordering inputs must change it,

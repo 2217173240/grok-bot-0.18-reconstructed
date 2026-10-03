@@ -33,7 +33,8 @@ export function electronNodeGypArguments(packageName, cacheRoot = path.join(repo
 }
 
 export async function buildElectronTreeSitterRuntime({ runCommand = run } = {}) {
-  if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Electron native build requires macOS arm64");
+  const supportedHost = (process.platform === "darwin" && process.arch === "arm64") || (process.platform === "win32" && process.arch === "x64");
+  if (!supportedHost) throw new Error("Electron native build requires macOS arm64 or Windows x64");
   const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
   const lock = JSON.parse(await readFile(path.join(repoRoot, "package-lock.json"), "utf8"));
   if (packageJson.devDependencies?.electron !== electronVersion || packageJson.devDependencies?.["node-addon-api"] !== "8.5.0" || packageJson.overrides?.["node-addon-api"] !== "8.5.0") {

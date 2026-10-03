@@ -22,6 +22,7 @@ grokbot_colima_profile() {
 
 # 找到可用的 Docker socket 后导出 DOCKER_HOST；找不到返回 1。
 resolve_docker_host() {
+  [ -n "${DOCKER_CONTEXT:-}" ] && return 0
   [ -n "${DOCKER_HOST:-}" ] && return 0
   local candidate entry system_socket="${1:-/var/run/docker.sock}"
   for candidate in \

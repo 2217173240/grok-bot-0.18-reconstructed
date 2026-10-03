@@ -517,7 +517,7 @@ export function createCoordinatorControlExecutors(
     async terminateProcess({ identity }: { readonly identity: LocalExecProcessIdentity }) {
       const observed = readOwnedIdentity(identity);
       if (observed == null || !sameLocalExecProcessIdentity(observed, identity)) return { terminated: false };
-      await native.terminateProcess(identity.pid);
+      await native.terminateProcess(identity.pid, { expectedIdentity: observed });
       return { terminated: true };
     },
     isProcessAlive: ({ pid }: { readonly pid: number }) => native.isProcessAlive(pid),
