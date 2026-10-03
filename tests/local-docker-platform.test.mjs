@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 
@@ -8,8 +9,8 @@ const root = path.resolve(import.meta.dirname, "..");
 await mkdir(path.join(root, ".cache"), { recursive: true });
 const directory = await mkdtemp(path.join(root, ".cache/docker-platform-"));
 await build({ entryPoints: [path.join(root, "source/electron-main/box/local-docker-host-connector.ts"), path.join(root, "source/shared/node/local-docker-platform.ts")], outdir: directory, outbase: path.join(root, "source"), outExtension: { ".js": ".mjs" }, bundle: true, platform: "node", format: "esm", packages: "external", logLevel: "silent" });
-const { localDockerPlatform, dockerBindMount } = await import(path.join(directory, "shared/node/local-docker-platform.mjs"));
-const { dockerSpawnEnv, resolveDockerHost, decideDockerImage, localDockerRunPlan } = await import(path.join(directory, "electron-main/box/local-docker-host-connector.mjs"));
+const { localDockerPlatform, dockerBindMount } = await import(pathToFileURL(path.join(directory, "shared/node/local-docker-platform.mjs")).href);
+const { dockerSpawnEnv, resolveDockerHost, decideDockerImage, localDockerRunPlan } = await import(pathToFileURL(path.join(directory, "electron-main/box/local-docker-host-connector.mjs")).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
 test("Windows x64 和 Mac arm64 使用独立 Linux 镜像与数据卷", () => {

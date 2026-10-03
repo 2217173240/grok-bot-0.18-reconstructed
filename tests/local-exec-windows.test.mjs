@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { build } from "esbuild";
@@ -10,7 +11,7 @@ await mkdir(path.join(root, ".cache"), { recursive: true });
 const directory = await mkdtemp(path.join(root, ".cache/local-exec-windows-"));
 const outfile = path.join(directory, "native.mjs");
 await build({ entryPoints: [path.join(root, "source/electron-main/local-exec/local-exec-native.ts")], outfile, bundle: true, platform: "node", format: "esm", packages: "external", logLevel: "silent" });
-const native = await import(outfile);
+const native = await import(pathToFileURL(outfile).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
 test("Windows CIM 身份读取使用数值时间戳并保留完整命令", () => {
