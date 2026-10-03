@@ -8,14 +8,15 @@ import { parseArgs } from "node:util";
 import { createPackageFromStreams, extractAll, extractFile, getRawHeader, statFile } from "@electron/asar";
 import { NtExecutable, NtExecutableResource } from "resedit";
 import { DOMParser } from "@xmldom/xmldom";
+import { build } from "esbuild";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPath = "dist/renderer/index.html";
 const bareHtml = '<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><div id="root"><h1>Grok Bot renderer isolation control</h1><p>Product main and preload remain active.</p><button type="button">Local control</button></div></body></html>\n';
-const variants = ["bare", "no-styles", "bare-zoom", "bare-titlebar"];
+const variants = ["bare", "no-styles", "bare-zoom", "bare-titlebar", "bare-coordinator", "bare-coordinator-request"];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
-export function rendererVariant(original, variant) {
+export async function rendererVariant(original, variant) {
   assert(variants.includes(variant), `Expected renderer variant ${variants.join(" or ")}`);
   if (variant === "bare") return { bytes: Buffer.from(bareHtml), removedStylesheets: 0 };
   if (variant === "bare-zoom" || variant === "bare-titlebar") {
@@ -24,6 +25,59 @@ export function rendererVariant(original, variant) {
       ? 'const zoom=window.desktop.getZoomFactor();if(typeof zoom!=="number"||!Number.isFinite(zoom))throw new Error("Zoom factor must be a finite number");'
       : 'await window.desktop.windowControls.setTitleBarOverlayTone(false);';
     const script = `void(async()=>{try{console.info("renderer-isolation:${variant}:before");${call}console.info("renderer-isolation:${variant}:after");document.body.insertAdjacentHTML("beforeend",${JSON.stringify(body)});}catch(error){console.error("renderer-isolation:${variant}:failed");throw error;}})();`;
+    return { bytes: Buffer.from(`<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><script>${script}</script></body></html>\n`), removedStylesheets: 0 };
+  }
+  if (variant === "bare-coordinator" || variant === "bare-coordinator-request") {
+    const body = '<div id="root"><h1>Grok Bot renderer isolation control</h1><p>Product main and preload remain active.</p><button type="button">Local control</button></div>';
+    const compiled = await build({
+      stdin: {
+        resolveDir: repoRoot, loader: "js", sourcefile: "renderer-isolation-coordinator.js",
+        contents: `
+import { createRawPortCoordinatorSession } from "./frontend/src/recovered/runtime/coordinator-source.ts";
+import { SourceFailure } from "./frontend/src/recovered/runtime/source-boundary.ts";
+let active;
+let claim;
+window.addEventListener("pagehide", () => { try { active?.dispose(); } finally { claim?.release(); } }, { once: true });
+void (async () => {
+  try {
+    console.info("renderer-isolation:${variant}:before");
+    const session = await new Promise((resolve, reject) => {
+      claim = window.coordinatorPort.claim({ onPort(port) {
+        if (active) { port.close(); console.error("renderer-isolation:${variant}:duplicate-port"); throw new Error("Coordinator port was delivered twice"); }
+        try {
+          const adopted = createRawPortCoordinatorSession({ post: frame => port.postMessage(frame), close: () => port.close() });
+          active = adopted;
+          port.addEventListener("message", event => adopted.handleMessage(event.data));
+          port.addEventListener("close", () => adopted.handlePortClosed());
+          port.start();
+          console.info("renderer-isolation:${variant}:port-adopted");
+          resolve(adopted);
+        } catch (error) { reject(error); }
+      } });
+      if (!claim) throw new Error("Coordinator port claim was unavailable");
+      claim.request();
+    });
+    await session.ready;
+    console.info("renderer-isolation:${variant}:ready");
+    ${variant === "bare-coordinator-request" ? `
+    console.info("renderer-isolation:${variant}:request-before");
+    try {
+      const result = await session.source.listAgents();
+      if (!Array.isArray(result)) throw new Error("listAgents response was not an array");
+      console.info("renderer-isolation:${variant}:array-response");
+    } catch (error) {
+      if (!(error instanceof SourceFailure) || error.failure.code !== "source/transport-failure") throw error;
+      console.info("renderer-isolation:${variant}:transport-failure-response");
+    }` : ""}
+    console.info("renderer-isolation:${variant}:after");
+    document.body.insertAdjacentHTML("beforeend", ${JSON.stringify(body)});
+  } catch (error) { console.error("renderer-isolation:${variant}:failed"); throw error; }
+})();`,
+      },
+      bundle: true, platform: "browser", format: "iife", target: "chrome148", write: false, legalComments: "none", logLevel: "silent",
+    });
+    const script = compiled.outputFiles[0].text;
+    assert(!script.toLowerCase().includes("</script"), "Coordinator bundle contains an HTML script terminator");
     return { bytes: Buffer.from(`<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><script>${script}</script></body></html>\n`), removedStylesheets: 0 };
   }
   const html = original.toString("utf8");
@@ -71,7 +125,7 @@ export async function repackRendererArchive({ originalArchive, outputArchive, ex
   assert.notEqual(path.resolve(originalArchive), path.resolve(outputArchive));
   const entries = archiveEntries(getRawHeader(originalArchive).header);
   assert(entries.some(entry => entry.type === "file" && entry.path === rendererPath), "Renderer index is absent from product ASAR");
-  const renderer = rendererVariant(extractFile(originalArchive, path.normalize(rendererPath)), variant);
+  const renderer = await rendererVariant(extractFile(originalArchive, path.normalize(rendererPath)), variant);
   extractAll(originalArchive, extractRoot);
   await writeFile(path.join(extractRoot, rendererPath), renderer.bytes);
   const streams = [];
