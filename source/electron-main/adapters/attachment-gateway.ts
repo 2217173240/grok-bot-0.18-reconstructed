@@ -40,7 +40,7 @@ const REQUIRED_FUNCTIONS = [
   "getFilePreviewKind", "byteLimitForName", "getStagingDir",
   "isWithinStagingDir", "resolveSuggestedDownloadName",
   "resolveDefaultDownloadPath", "showSaveDialog", "createHiddenWindow",
-  "showErrorMessage", "getUserDataDir",
+  "showErrorMessage", "getUserDataDir", "getDownloadsDir",
 ] as const;
 
 function validateAttachmentDeps(deps: AttachmentEdgeDeps): AttachmentEdgeDeps {
@@ -52,7 +52,6 @@ function validateAttachmentDeps(deps: AttachmentEdgeDeps): AttachmentEdgeDeps {
   requireObject(deps.nativeImage, "attachmentGateway.nativeImage");
   requireFunction(deps.nativeImage.createFromDataURL, "attachmentGateway.nativeImage.createFromDataURL");
   for (const method of REQUIRED_FUNCTIONS) requireFunction(deps[method], `attachmentGateway.${method}`);
-  if (typeof deps.downloadsDir !== "string" || deps.downloadsDir.length === 0) throw new TypeError("Missing Electron production adapter port: attachmentGateway.downloadsDir.");
   if (!Number.isSafeInteger(deps.previewByteCap) || deps.previewByteCap <= 0) throw new TypeError("Invalid Electron production adapter port: attachmentGateway.previewByteCap.");
   return deps;
 }
@@ -114,7 +113,7 @@ export function createProductionAttachmentGatewayBinding(
         ),
         nativeImage: electron.nativeImage,
         getUserDataDir: () => electron.app.getPath("userData"),
-        downloadsDir: electron.app.getPath("downloads"),
+        getDownloadsDir: () => electron.app.getPath("downloads"),
         previewKindNeedsBytes: (kind) => previewKindNeedsBytes(kind as FilePreviewKind),
         getFilePreviewKind,
         previewByteCap: ATTACHMENT_PREVIEW_BYTE_CAP,

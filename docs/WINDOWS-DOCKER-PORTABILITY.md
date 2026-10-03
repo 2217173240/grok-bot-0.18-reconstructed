@@ -34,9 +34,9 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 1. 架构与输入盘点 | 明确桌面/容器边界，核对现有 Windows 分支及原版构件身份 | 已完成源码评审；Windows 原版 EXE 的固定 SHA 已在镜像仓库 manifest 登记 |
 | 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 代码已实现，34 项本机规则/文件检查及源码类型检查通过；Windows Docker 实机部分尚未验证 |
 | 3. 共用启动配置 | 两种入口共用环境/provider 校验；Windows 幂等启动和所属进程关闭 | Mac 与 PowerShell 已接入共享配置；Windows CI 的真实进程树关闭、创建时间核验和 SQLite 启动互斥已通过 |
-| 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7 已合入；run 37133856976 的 151 项门禁与 17 层扫描通过。固定 digest `e53fd2e73fa9257c6c197df32ef793f145545a063682c722cf7cb7e8ef53ade5` 已登记；Release 下载与薄层 CI 正在接入 |
-| 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | 已实现 Windows x64 unsigned portable 构建；固定 EXE、完整原版文件清单及 131 个 renderer 文件/补丁链通过真实提取与 ASAR 检查。Windows native 编译及包运行验证进行中 |
-| 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | Windows runner 已通过源码类型检查和平台/进程测试；完整打包、真实 Electron 和 Linux host/daemon smoke 已接入，等待最终成功结果 |
+| 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
+| 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
+| 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | 类型检查、平台/进程测试与包构建通过，Windows 窗口初始化问题正在定位。Linux run 37135941532、37136300267、37136939507 已通过固定下载/导入、执行镜像构建、桌面门禁、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
 | 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 用户已明确：暂无 Windows 机器，本轮保留实机验收待办 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 开发中随进度更新；未验证构件不标为正式可用发行版 |
 
