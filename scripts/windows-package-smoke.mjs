@@ -157,9 +157,20 @@ export async function main(args = process.argv.slice(2)) {
     assert(renderer?.ready === "complete" && renderer.roots > 0 && renderer.textLength > 20 && renderer.controls > 0 && renderer.preload, `Renderer did not mount: ${JSON.stringify(renderer)}`);
     assert.equal(renderer.platform, "win32");
     console.log("Checking packaged preload window-state IPC");
-    const ipc = await cdp.send("Runtime.evaluate", { expression: "window.desktop.getWindowState()", awaitPromise: true, returnByValue: true });
-    assert.equal(ipc.exceptionDetails, undefined, JSON.stringify(ipc.exceptionDetails));
-    assert(ipc.result?.value && typeof ipc.result.value === "object", "Preload window-state IPC did not return an object");
+    const dispatched = await cdp.send("Runtime.evaluate", { expression: `window.__packageSmokeIpc={status:'pending'}; window.desktop.getWindowState().then(value=>{window.__packageSmokeIpc={status:'resolved',value}},error=>{window.__packageSmokeIpc={status:'rejected',error:String(error)}}); 'dispatched'`, returnByValue: true });
+    assert.equal(dispatched.exceptionDetails, undefined, JSON.stringify(dispatched.exceptionDetails));
+    let ipc;
+    const ipcDeadline = Date.now() + 15000;
+    while (Date.now() < ipcDeadline) {
+      const response = await cdp.send("Runtime.evaluate", { expression: "window.__packageSmokeIpc", returnByValue: true });
+      ipc = response.result?.value;
+      if (ipc?.status !== "pending") break;
+      await delay(100);
+    }
+    await writeFile(path.join(root, "ipc-state.json"), JSON.stringify(ipc ?? null, null, 2));
+    assert.equal(ipc?.status, "resolved", `Preload window-state IPC did not resolve: ${JSON.stringify(ipc)}`);
+    assert.equal(typeof ipc.value?.isFullscreen, "boolean");
+    assert.equal(typeof ipc.value?.isMaximized, "boolean");
     await delay(1000);
     const failures = cdp.events.filter(event => event.method === "Runtime.exceptionThrown" || (event.method === "Network.loadingFailed" && !event.params.canceled && ["Script", "Document", "Stylesheet"].includes(event.params.type)) || (event.method === "Network.responseReceived" && ["Script", "Document", "Stylesheet"].includes(event.params.type) && event.params.response.status >= 400));
     assert.deepEqual(failures, [], "Renderer reported script or resource failures");

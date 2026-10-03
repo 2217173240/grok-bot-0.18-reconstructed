@@ -51,7 +51,14 @@ jobs:
           name: windows-build-evidence
           path: |
             .cache/windows-package-smoke-*/*.log
-            .cache/windows-package-smoke-*/*.json
+            .cache/windows-package-smoke-*/report.json
+            .cache/windows-package-smoke-*/native.json
+            .cache/windows-package-smoke-*/renderer-state.json
+            .cache/windows-package-smoke-*/ipc-state.json
+            .cache/windows-package-smoke-*/main-state.json
+            .cache/windows-package-smoke-*/main-events.json
+            .cache/windows-package-smoke-*/cdp-events.json
+            .cache/windows-package-smoke-*/targets.json
           include-hidden-files: true
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
