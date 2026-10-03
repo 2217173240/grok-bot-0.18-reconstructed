@@ -71,7 +71,7 @@ export async function launchOwned(executable, args, env, logPath) {
   if (state && !sameProcess(state, current)) throw new Error("Packaged Electron process identity is invalid");
   let closing;
   return {
-    child, completion,
+    child, completion, session,
     output: () => Buffer.concat(chunks).toString("utf8"),
     assertRunning() { if (exit) throw new Error(`Packaged Electron exited: ${JSON.stringify(exit)}`); },
     close() {
@@ -196,11 +196,18 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
     if (process.env.GITHUB_ACTIONS === "true") {
       try {
         const state = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(repoRoot, "scripts/fixtures/capture-windows-desktop.ps1")], {
-          env: { ...process.env, GROKBOT_CAPTURE_PATH: path.join(root, "desktop.png"), GROKBOT_CAPTURE_PID: String(app.child.pid) },
-          windowsHide: true, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"],
+          env: { ...process.env, GROKBOT_CAPTURE_PATH: path.join(root, "desktop.png"), GROKBOT_CAPTURE_PID: String(app.child.pid), GROKBOT_CAPTURE_SESSION: app.session },
+          windowsHide: true, encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"],
         });
         await writeFile(path.join(root, "desktop-window.json"), state);
-      } catch (failure) { diagnosticErrors.push(failure.message); console.error("CI desktop capture failed:", failure); }
+      } catch (failure) {
+        diagnosticErrors.push(failure.message);
+        console.error("CI desktop capture failed:", failure);
+        if (typeof failure.stdout === "string" && failure.stdout.trim()) {
+          try { await writeFile(path.join(root, "desktop-window.json"), failure.stdout); }
+          catch (writeError) { diagnosticErrors.push(writeError.message); console.error("Capture report write failed:", writeError); }
+        }
+      }
     }
     if (diagnoseRenderer && cdp) {
       try { await cdp.send("Debugger.pause"); await delay(500); }
