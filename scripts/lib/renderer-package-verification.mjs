@@ -30,10 +30,10 @@ export async function verifyChecksumPinnedRendererPackage({
 } = {}) {
   if ([archivePath, sourceRendererRoot].some(value => typeof value !== "string" || !value)) throw new TypeError("Explicit archivePath and sourceRendererRoot paths are required");
   const upstream = upstreamPlatform(platform);
-  const buildManifest = JSON.parse(extractFile(archivePath, buildManifestPath).toString("utf8"));
+  const buildManifest = JSON.parse(extractFile(archivePath, path.normalize(buildManifestPath)).toString("utf8"));
   const renderer = buildManifest.runtimeComposition?.find(runtime => runtime.runtime === "renderer");
   if (renderer?.mode !== "checksum-pinned-artifact-runtime" || renderer.provenance !== provenancePath) throw new Error(`Fidelity renderer has an invalid runtime classification: ${renderer?.mode}`);
-  const provenanceBytes = extractFile(archivePath, provenancePath);
+  const provenanceBytes = extractFile(archivePath, path.normalize(provenancePath));
   const provenance = JSON.parse(provenanceBytes.toString("utf8"));
   if (provenance.mode !== renderer.mode || provenance.hashAlgorithm !== "sha256" || !Array.isArray(provenance.files)) throw new Error("Fidelity renderer provenance contract is invalid");
   if (provenance.upstreamAppAsarSha256 !== upstream.asarSha256) throw new Error(`Fidelity renderer provenance is not bound to the canonical shipped ${platform} ASAR`);
@@ -54,18 +54,18 @@ export async function verifyChecksumPinnedRendererPackage({
       const relative = raw.replace(/^[/\\]+/, "").split("\\").join("/");
       const archiveRendererRoot = "dist/renderer";
       if (!relative.startsWith(`${archiveRendererRoot}/`)) continue;
-      try { if (typeof statFile(officialArchivePath, relative).size === "number") officialFiles.push(relative.slice(`${archiveRendererRoot}/`.length)); } catch {}
+      try { if (typeof statFile(officialArchivePath, path.normalize(relative)).size === "number") officialFiles.push(relative.slice(`${archiveRendererRoot}/`.length)); } catch {}
     }
     officialFiles.sort();
     if (JSON.stringify(officialFiles) !== JSON.stringify([...expectedFiles.keys()])) throw new Error(`Renderer provenance inventory differs from the canonical shipped ${platform} ASAR`);
     for (const [relative, expected] of expectedFiles) {
-      const official = extractFile(officialArchivePath, `dist/renderer/${relative}`);
+      const official = extractFile(officialArchivePath, path.join("dist/renderer", relative));
       if (official.byteLength !== expected.bytes || sha256(official) !== expected.sha256) throw new Error(`Renderer provenance differs from canonical shipped ${platform} ASAR at ${relative}`);
     }
   }
   let extension = null;
   try {
-    const bytes = extractFile(archivePath, rendererExtensionPath); const parsed = JSON.parse(bytes.toString("utf8"));
+    const bytes = extractFile(archivePath, path.normalize(rendererExtensionPath)); const parsed = JSON.parse(bytes.toString("utf8"));
     if (parsed?.schemaVersion !== 1 || parsed?.mode !== "original-renderer-settings-extension" || !Array.isArray(parsed.chunks)) throw new Error("Renderer extension provenance contract is invalid");
     const chunks = new Map(); const roles = [];
     for (const row of parsed.chunks) {
@@ -81,9 +81,9 @@ export async function verifyChecksumPinnedRendererPackage({
   const packagedFiles = [];
   for (const raw of listPackage(archivePath)) {
     const relative = raw.replace(/^[/\\]+/, "").split("\\").join("/"); if (!relative.startsWith("dist/renderer/")) continue;
-    try { if (typeof statFile(archivePath, relative).size === "number") packagedFiles.push(relative.slice("dist/renderer/".length)); } catch {}
+    try { if (typeof statFile(archivePath, path.normalize(relative)).size === "number") packagedFiles.push(relative.slice("dist/renderer/".length)); } catch {}
   }
   packagedFiles.sort(); if (JSON.stringify(packagedFiles) !== JSON.stringify([...expectedFiles.keys()])) throw new Error("Packaged renderer file inventory differs from the exact shipped renderer");
-  for (const [relative, expected] of expectedFiles) { const packaged = extractFile(archivePath, `dist/renderer/${relative}`); const wanted = extension?.chunks.get(relative)?.patched ?? expected; if (packaged.byteLength !== wanted.bytes || sha256(packaged) !== wanted.sha256) throw new Error(`Packaged renderer drift at ${relative}`); }
+  for (const [relative, expected] of expectedFiles) { const packaged = extractFile(archivePath, path.join("dist/renderer", relative)); const wanted = extension?.chunks.get(relative)?.patched ?? expected; if (packaged.byteLength !== wanted.bytes || sha256(packaged) !== wanted.sha256) throw new Error(`Packaged renderer drift at ${relative}`); }
   return { mode: renderer.mode, platform, provenancePath, provenanceSha256: sha256(provenanceBytes), fileCount: expectedFiles.size, inventorySha256: provenance.inventorySha256, upstreamAppAsarSha256: provenance.upstreamAppAsarSha256, ...(extension == null ? {} : { extension: { path: rendererExtensionPath, sha256: sha256(extension.bytes), chunks: extension.parsed.chunks } }) };
 }

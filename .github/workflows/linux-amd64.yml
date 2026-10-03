@@ -1,0 +1,65 @@
+name: Linux amd64 runtime
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-amd64-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+      TMPDIR: ${{ github.workspace }}/.cache/ci-tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          lfs: false
+      - name: Prepare repository-local scratch
+        run: mkdir -p "$TMPDIR"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: 2217173240/grok-bot-box-image
+          ref: 685fc40126c85679ad5284748ce329cca84846d3
+          path: .cache/box-image
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4
+        with:
+          daemon-config: |
+            { "features": { "containerd-snapshotter": true } }
+      - name: Import the pinned release into an empty Docker store
+        run: |
+          test -z "$(docker image ls --all --quiet)"
+          node .cache/box-image/scripts/fetch-artifact.mjs base-amd64 --load
+      - name: Install source dependencies and build the matching execution image
+        run: |
+          npm ci --no-audit --no-fund
+          node docker/build-box.mjs --platform linux/amd64
+      - name: Exercise native desktop tools
+        run: python3 .cache/box-image/tests/test-native-image.py grok-bot-exec-box:amd64 linux/amd64
+      - name: Exercise production host, daemon, files and data preservation
+        run: node scripts/linux-package-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: linux-runtime-evidence
+          path: |
+            .cache/linux-package-smoke-*/*.log
+            .cache/linux-package-smoke-*/report.json
+          include-hidden-files: true
+          retention-days: 7

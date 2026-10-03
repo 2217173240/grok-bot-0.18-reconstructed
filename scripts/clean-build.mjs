@@ -36,6 +36,7 @@ import {
   electronMainBindingProvenancePath,
 } from "./electron-main-production-activation.mjs";
 import { applyOriginalRendererRouterPatch } from "./lib/router-renderer-patch.mjs";
+import { upstreamPlatform } from "./lib/upstream-platforms.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const defaultElectronMainBindingManifestPath = path.join(repoRoot, "manifests/reconstruction/electron-main-production-bindings-manifest.json");
@@ -141,7 +142,7 @@ async function attachCompositionAudit(clean) {
       "scripts/electron-main-production-activation.mjs",
       "package.json",
       "package-lock.json",
-      "src/app/package.json",
+      path.relative(repoRoot, path.join(upstreamPlatform(composition.find(runtime => runtime.runtime === "renderer")?.upstreamPlatform ?? "darwin-arm64").sourceRoot, "package.json")).split(path.sep).join("/"),
       ...(clean.hostActivation.clean ? [clean.hostActivation.provenance.manifestPath] : []),
       ...(clean.electronMainActivation.clean ? [clean.electronMainActivation.provenance.manifestPath] : []),
     ])],

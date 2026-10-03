@@ -51,7 +51,7 @@ async function archiveFileEntries(archivePath) {
   for (const raw of listPackage(archivePath)) {
     const relative = raw.replace(/^[/\\]+/, "").split("\\").join("/");
     try {
-      const entry = statFile(archivePath, relative);
+      const entry = statFile(archivePath, path.normalize(relative));
       if (typeof entry.size === "number") entries.set(relative, entry);
     } catch {
       // listPackage includes directories; statFile is the file boundary.
@@ -84,7 +84,7 @@ export async function verifyStagedPackageIntegrity({ stageRoot, archivePath, unp
     }
   }
   for (const relative of archive.keys()) if (!before.has(relative)) differences.push({ relative, kind: "stale-archive-entry", actual: archive.get(relative) });
-  if (differences.length > 0) throw new Error(`Staged package changed or ASAR drifted after snapshot: ${JSON.stringify(differences)}`);
+  if (differences.length > 0) throw new Error(`Staged package changed or ASAR drifted after snapshot (${differences.length} differences): ${JSON.stringify(differences.slice(0, 10))}`);
   return { fileCount: before.size, archiveFileCount: archive.size };
 }
 
