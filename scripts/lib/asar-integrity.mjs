@@ -27,7 +27,7 @@ function isUnpackedRuntimeFile(relative) {
   return unpackedPrefixes.some(prefix => relative.startsWith(prefix));
 }
 
-async function snapshotFiles(root) {
+export async function snapshotFiles(root) {
   const files = await walkFiles(root);
   return new Map(await Promise.all(files.map(async relative => {
     const target = path.join(root, relative);
