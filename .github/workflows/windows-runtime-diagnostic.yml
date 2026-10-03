@@ -86,7 +86,6 @@ jobs:
         with:
           name: windows-runtime-evidence
           path: |
-            .cache/windows-renderer-isolation-*/isolation-report.json
             .cache/electron-ipc-repro-*/report.json
             .cache/electron-ipc-repro-*/*.log
             .cache/electron-ipc-repro-*/cdp-events.json
@@ -96,8 +95,6 @@ jobs:
             .cache/windows-package-smoke-*/desktop.png
             .cache/windows-package-smoke-*/desktop-window.json
             .cache/windows-package-smoke-*/native-*.txt
-            .cache/windows-package-smoke-*/renderer.cpuprofile
-            .cache/windows-package-smoke-*/activation-probe.json
             .cache/windows-package-smoke-*/native.json
             .cache/windows-package-smoke-*/renderer-state.json
             .cache/windows-package-smoke-*/ipc-state.json
@@ -110,4 +107,4 @@ jobs:
         run: throw 'The Electron control program failed; see windows-runtime-evidence.'
       - name: Report product failure
         if: always() && steps.product.outcome == 'failure'
-        run: throw 'The fixed product build failed; isolation results do not replace its acceptance check.'
+        run: throw 'The fixed product build failed; see windows-runtime-evidence.'

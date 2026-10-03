@@ -90,7 +90,7 @@ export async function launchOwned(executable, args, env, logPath) {
   };
 }
 
-export async function main(args = process.argv.slice(2), { diagnoseRenderer = false } = {}) {
+export async function main(args = process.argv.slice(2)) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("Windows package smoke requires Windows x64");
   if (args.length !== 2 || args[0] !== "--app-path") throw new Error("Usage: node scripts/windows-package-smoke.mjs --app-path <Grok Bot.exe>");
   const executable = path.resolve(args[1]);
@@ -123,8 +123,6 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
   let cdp;
   let observedTargets = [];
   let renderer;
-  let profile;
-  let activationProbe;
   const diagnosticErrors = [];
   const errors = [];
   try {
@@ -144,11 +142,6 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
     assert(target, "Packaged renderer CDP target did not appear");
     cdp = connectCdp(target.webSocketDebuggerUrl);
     await cdp.ready;
-    if (diagnoseRenderer) {
-      await cdp.send("Debugger.enable");
-      await cdp.send("Profiler.enable");
-      await cdp.send("Profiler.start");
-    }
     await cdp.send("Runtime.enable");
     await cdp.send("Network.enable");
     await cdp.send("Page.enable");
@@ -209,29 +202,12 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
         }
       }
     }
-    if (diagnoseRenderer && cdp) {
-      try { await cdp.send("Debugger.pause"); await delay(500); }
-      catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer pause failed:", failure); }
-      try {
-        await cdp.send("Debugger.setSkipAllPauses", { skip: true });
-        await cdp.send("Page.bringToFront");
-        const state = await cdp.send("Runtime.evaluate", { expression: "({visibility:document.visibilityState,focused:document.hasFocus(),text:document.body.textContent.trim().slice(0,600)})", returnByValue: true });
-        const ipc = await cdp.send("Runtime.evaluate", { expression: "window.desktop.getWindowState()", awaitPromise: true, returnByValue: true });
-        activationProbe = { state, ipc };
-      } catch (failure) { activationProbe = { error: failure.message }; console.error("Renderer activation probe failed:", failure); }
-    }
   } finally {
-    if (diagnoseRenderer && cdp) {
-      try { profile = (await cdp.send("Profiler.stop")).profile; }
-      catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer profile failed:", failure); }
-    }
     cdp?.close();
     try { await app.close(); } catch (error) { errors.push(error); }
     try {
       await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
       await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp?.events ?? [], null, 2));
-      if (profile) await writeFile(path.join(root, "renderer.cpuprofile"), JSON.stringify(profile));
-      if (activationProbe) await writeFile(path.join(root, "activation-probe.json"), JSON.stringify(activationProbe, null, 2));
       await writeFile(path.join(root, "lifecycle.json"), JSON.stringify({ success: errors.length === 0, diagnosticErrors, errors: errors.map(error => ({ message: error.message, stack: error.stack })) }, null, 2));
     } catch (error) { errors.push(error); }
   }
