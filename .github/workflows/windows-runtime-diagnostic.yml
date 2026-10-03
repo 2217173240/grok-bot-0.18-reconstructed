@@ -73,6 +73,7 @@ jobs:
             .cache/windows-package-smoke-*/report.json
             .cache/windows-package-smoke-*/lifecycle.json
             .cache/windows-package-smoke-*/renderer.cpuprofile
+            .cache/windows-package-smoke-*/activation-probe.json
             .cache/windows-package-smoke-*/native.json
             .cache/windows-package-smoke-*/renderer-state.json
             .cache/windows-package-smoke-*/ipc-state.json

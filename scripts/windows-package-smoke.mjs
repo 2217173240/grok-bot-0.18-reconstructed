@@ -124,6 +124,7 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
   let observedTargets = [];
   let renderer;
   let profile;
+  let activationProbe;
   const diagnosticErrors = [];
   const errors = [];
   try {
@@ -161,7 +162,7 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
     console.log("Checking packaged renderer DOM and preload");
     while (Date.now() < rendererDeadline) {
       app.assertRunning();
-      const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.textContent.trim().length ?? 0, text:document.body?.textContent.trim().slice(0,2000), controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
+      const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, visibility:document.visibilityState, focused:document.hasFocus(), roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.textContent.trim().length ?? 0, text:document.body?.textContent.trim().slice(0,2000), controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
       renderer = value.result?.value;
       await writeFile(path.join(root, "renderer-state.json"), JSON.stringify(renderer ?? null, null, 2));
       if (renderer?.ready === "complete" && renderer.roots > 0 && renderer.textLength > 20 && renderer.controls > 0 && renderer.preload) break;
@@ -195,6 +196,13 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
     if (diagnoseRenderer && cdp) {
       try { await cdp.send("Debugger.pause"); await delay(500); }
       catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer pause failed:", failure); }
+      try {
+        await cdp.send("Debugger.setSkipAllPauses", { skip: true });
+        await cdp.send("Page.bringToFront");
+        const state = await cdp.send("Runtime.evaluate", { expression: "({visibility:document.visibilityState,focused:document.hasFocus(),text:document.body.textContent.trim().slice(0,600)})", returnByValue: true });
+        const ipc = await cdp.send("Runtime.evaluate", { expression: "window.desktop.getWindowState()", awaitPromise: true, returnByValue: true });
+        activationProbe = { state, ipc };
+      } catch (failure) { activationProbe = { error: failure.message }; console.error("Renderer activation probe failed:", failure); }
     }
   } finally {
     if (diagnoseRenderer && cdp) {
@@ -207,6 +215,7 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
       await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
       await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp?.events ?? [], null, 2));
       if (profile) await writeFile(path.join(root, "renderer.cpuprofile"), JSON.stringify(profile));
+      if (activationProbe) await writeFile(path.join(root, "activation-probe.json"), JSON.stringify(activationProbe, null, 2));
       await writeFile(path.join(root, "lifecycle.json"), JSON.stringify({ success: errors.length === 0, diagnosticErrors, errors: errors.map(error => ({ message: error.message, stack: error.stack })) }, null, 2));
     } catch (error) { errors.push(error); }
   }
