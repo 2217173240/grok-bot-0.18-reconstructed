@@ -42,7 +42,7 @@
     "electron": "42.1.0",
     "esbuild": "0.28.2",
     "node-addon-api": "8.5.0",
-    "node-gyp": "12.1.0",
+    "node-gyp": "13.0.2",
     "node-gyp-build": "4.8.4",
     "resedit": "2.0.3",
     "sirv": "3.0.2",

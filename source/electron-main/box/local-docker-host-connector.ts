@@ -721,8 +721,9 @@ function localClaudeMountArguments(wanted: boolean): string[] {
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
   const token = await readOrCreateToken(settingsPath);
-  const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
+  const daemon = await runDocker(["info", "--format", "{{.OSType}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
   if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
+  if (daemon.output !== "linux") throw new Error("Local Docker execution requires Linux containers. Select Docker Desktop's Linux containers engine.");
   const expectedDepsPin = await readExpectedDepsPin();
   const imageChoice = await resolveDockerImageForComputer(process.env, expectedDepsPin);
   // Stale is not missing: a present image whose dependency pin disagrees with
