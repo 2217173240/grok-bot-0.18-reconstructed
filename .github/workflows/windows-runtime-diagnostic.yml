@@ -57,6 +57,9 @@ jobs:
       - name: Isolate the product renderer
         if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
         run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+      - name: Isolate renderer styling
+        if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
+        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant no-styles
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

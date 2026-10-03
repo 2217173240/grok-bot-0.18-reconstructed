@@ -4,13 +4,40 @@ import { createReadStream } from "node:fs";
 import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { createPackageFromStreams, extractAll, extractFile, getRawHeader, statFile } from "@electron/asar";
 import { NtExecutable, NtExecutableResource } from "resedit";
+import { DOMParser } from "@xmldom/xmldom";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rendererPath = "dist/renderer/index.html";
 const bareHtml = '<!doctype html><html><head><meta charset="UTF-8"><title>Grok Bot renderer isolation</title></head><body><div id="root"><h1>Grok Bot renderer isolation control</h1><p>Product main and preload remain active.</p><button type="button">Local control</button></div></body></html>\n';
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+
+function rendererVariant(original, variant) {
+  assert(["bare", "no-styles"].includes(variant), "Expected renderer variant bare or no-styles");
+  if (variant === "bare") return { bytes: Buffer.from(bareHtml), removedStylesheets: 0 };
+  const html = original.toString("utf8");
+  assert(original.equals(Buffer.from(html)), "Renderer HTML must be UTF-8");
+  const document = new DOMParser({ normalizeLineEndings: value => value, onError: (level, message) => { throw new Error(`Renderer HTML ${level}: ${message}`); } }).parseFromString(html, "text/html");
+  const lineStarts = [0, ...Array.from(html.matchAll(/\r\n?|\n/g), match => match.index + match[0].length)];
+  const offset = node => {
+    assert(node && Number.isInteger(node.lineNumber) && Number.isInteger(node.columnNumber), "Stylesheet source location is unavailable");
+    return lineStarts[node.lineNumber - 1] + node.columnNumber - 1;
+  };
+  const ranges = Array.from(document.getElementsByTagName("link"))
+    .filter(node => (node.getAttribute("rel") ?? "").toLowerCase().split(/\s+/).includes("stylesheet"))
+    .map(node => {
+      const start = offset(node), end = offset(node.nextSibling);
+      assert(end > start && html.slice(start, end).endsWith(">"), "Stylesheet source range does not end at its tag boundary");
+      return { start, end };
+    });
+  assert(ranges.length > 0, "Renderer HTML contains no stylesheet links");
+  let modified = html;
+  // 使用解析器给出的源位置删除标签，其余 HTML 字节保持原样。
+  for (const { start, end } of ranges.sort((left, right) => right.start - left.start)) modified = modified.slice(0, start) + modified.slice(end);
+  return { bytes: Buffer.from(modified), removedStylesheets: ranges.length };
+}
 
 function archiveEntries(header, prefix = "") {
   const entries = [];
@@ -28,15 +55,16 @@ function archiveEntries(header, prefix = "") {
   return entries;
 }
 
-export async function repackRendererArchive({ originalArchive, outputArchive, extractRoot }) {
+export async function repackRendererArchive({ originalArchive, outputArchive, extractRoot, variant = "bare" }) {
   originalArchive = path.resolve(originalArchive);
   outputArchive = path.resolve(outputArchive);
   extractRoot = path.resolve(extractRoot);
   assert.notEqual(path.resolve(originalArchive), path.resolve(outputArchive));
   const entries = archiveEntries(getRawHeader(originalArchive).header);
   assert(entries.some(entry => entry.type === "file" && entry.path === rendererPath), "Renderer index is absent from product ASAR");
+  const renderer = rendererVariant(extractFile(originalArchive, path.normalize(rendererPath)), variant);
   extractAll(originalArchive, extractRoot);
-  await writeFile(path.join(extractRoot, rendererPath), bareHtml);
+  await writeFile(path.join(extractRoot, rendererPath), renderer.bytes);
   const streams = [];
   for (const entry of entries) {
     if (entry.type === "directory") {
@@ -58,7 +86,7 @@ export async function repackRendererArchive({ originalArchive, outputArchive, ex
   let verifiedUnpackedFiles = 0;
   for (const entry of entries) {
     if (entry.type !== "file") continue;
-    const expected = entry.path === rendererPath ? Buffer.from(bareHtml) : extractFile(originalArchive, path.normalize(entry.path));
+    const expected = entry.path === rendererPath ? renderer.bytes : extractFile(originalArchive, path.normalize(entry.path));
     const actual = extractFile(outputArchive, path.normalize(entry.path));
     assert.equal(actual.length, expected.length, `ASAR byte length changed: ${entry.path}`);
     assert.equal(sha256(actual), sha256(expected), `ASAR file content changed: ${entry.path}`);
@@ -71,7 +99,7 @@ export async function repackRendererArchive({ originalArchive, outputArchive, ex
     }
     verifiedFiles++;
   }
-  return { modifiedArchiveFiles: [rendererPath], verifiedFiles, verifiedUnpackedFiles, originalAsarSha256: sha256(await readFile(originalArchive)), isolatedAsarSha256: sha256(await readFile(outputArchive)) };
+  return { variant, removedStylesheets: renderer.removedStylesheets, modifiedArchiveFiles: [rendererPath], verifiedFiles, verifiedUnpackedFiles, originalAsarSha256: sha256(await readFile(originalArchive)), isolatedAsarSha256: sha256(await readFile(outputArchive)) };
 }
 
 async function refreshCopiedExecutableIntegrity(cloneExe, originalArchive, cloneArchive) {
@@ -104,8 +132,10 @@ async function refreshCopiedExecutableIntegrity(cloneExe, originalArchive, clone
 
 export async function main(args = process.argv.slice(2)) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("Renderer isolation requires Windows x64");
-  if (args.length !== 2 || args[0] !== "--app-path") throw new Error("Usage: node scripts/windows-renderer-isolation.mjs --app-path <Grok Bot.exe>");
-  const originalExe = path.resolve(args[1]);
+  const { values } = parseArgs({ args, options: { "app-path": { type: "string" }, variant: { type: "string", default: "bare" } } });
+  assert(values["app-path"] && ["bare", "no-styles"].includes(values.variant), "Usage: node scripts/windows-renderer-isolation.mjs --app-path <Grok Bot.exe> [--variant bare|no-styles]");
+  const variant = values.variant;
+  const originalExe = path.resolve(values["app-path"]);
   const originalArchive = path.join(path.dirname(originalExe), "resources/app.asar");
   assert((await lstat(originalExe)).isFile());
   assert((await lstat(originalArchive)).isFile());
@@ -115,12 +145,13 @@ export async function main(args = process.argv.slice(2)) {
   const root = await mkdtemp(path.join(repoRoot, ".cache/windows-renderer-isolation-"));
   const cloneRoot = path.join(root, "product");
   const outputArchive = path.join(root, "repacked/app.asar");
-  const report = { originalExe, originalExeSha256: originalExeHash, originalAsarSha256: originalArchiveHash, success: false };
+  const report = { variant, originalExe, originalExeSha256: originalExeHash, originalAsarSha256: originalArchiveHash, success: false };
   const errors = [];
   console.log(`Renderer isolation artifacts: ${root}`);
   try {
     await cp(path.dirname(originalExe), cloneRoot, { recursive: true, dereference: false, preserveTimestamps: true });
-    report.archiveVerification = await repackRendererArchive({ originalArchive, outputArchive, extractRoot: path.join(root, "extracted") });
+    report.archiveVerification = await repackRendererArchive({ originalArchive, outputArchive, extractRoot: path.join(root, "extracted"), variant });
+    report.removedStylesheets = report.archiveVerification.removedStylesheets;
     const cloneArchive = path.join(cloneRoot, "resources/app.asar");
     await copyFile(outputArchive, cloneArchive);
     if (report.archiveVerification.verifiedUnpackedFiles > 0) await cp(`${outputArchive}.unpacked`, `${cloneArchive}.unpacked`, { recursive: true, dereference: false, preserveTimestamps: true });

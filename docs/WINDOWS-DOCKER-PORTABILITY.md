@@ -80,7 +80,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 1. **原生依赖与构件组成。** Mac 的 `.node`、Mach-O 与 `.app` 无法在 Windows 加载。核对 Electron ABI、tree-sitter、原生辅助程序及资源路径；只有平台实际加载成功才能证明完整。
 2. **Docker endpoint。** 当前 Unix socket 搜索需要 Windows 分支；尊重 Docker context/DOCKER_HOST 的明确选择，确认 daemon 为 Linux、镜像为 amd64，保持容器所有权检查。
-3. **路径和权限。** 正确处理 drive letter、反斜杠、空格、中文和 mount 字段转义。Mac Keychain 密文不能作为跨设备凭据配置；Windows 使用本机安全存储，运行密钥不进入构建层。
+3. **路径和权限。** 正确处理 drive letter、反斜杠、空格、中文和 mount 字段转义。Mac Keychain 密文不跨设备复制；每台机器重新配置自己的凭据。本地 admin 的推理 token 使用数据目录中的受限权限文件，运行密钥不进入构建层。
 4. **生命周期。** Windows 宿主关闭不能直接假设 POSIX 进程组语义。仅终止身份匹配的本项目进程；停止容器不删除数据，不全局关闭其他项目的 WSL 或 Docker。
 5. **首次运行。** Docker/WSL 未安装、未启动、模式错误、端口占用、路径权限不足、凭据缺失要给出具体错误；失败不改走宿主执行或官方远端。
 6. **平台专用能力。** 1Password launcher、passkey 与其他原生辅助能力逐项核对；例如现有 `onepassword-cli-runtime.ts` 明确限制 macOS。不可把核心容器回合通过扩大成全部平台专用功能对等。
