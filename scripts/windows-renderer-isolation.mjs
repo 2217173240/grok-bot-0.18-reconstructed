@@ -58,11 +58,11 @@ export async function repackRendererArchive({ originalArchive, outputArchive, ex
   let verifiedUnpackedFiles = 0;
   for (const entry of entries) {
     if (entry.type !== "file") continue;
-    const expected = entry.path === rendererPath ? Buffer.from(bareHtml) : extractFile(originalArchive, entry.path);
-    const actual = extractFile(outputArchive, entry.path);
+    const expected = entry.path === rendererPath ? Buffer.from(bareHtml) : extractFile(originalArchive, path.normalize(entry.path));
+    const actual = extractFile(outputArchive, path.normalize(entry.path));
     assert.equal(actual.length, expected.length, `ASAR byte length changed: ${entry.path}`);
     assert.equal(sha256(actual), sha256(expected), `ASAR file content changed: ${entry.path}`);
-    const metadata = statFile(outputArchive, entry.path, false);
+    const metadata = statFile(outputArchive, path.normalize(entry.path), false);
     assert.equal(metadata.integrity.hash, sha256(expected), `ASAR integrity hash mismatch: ${entry.path}`);
     if (entry.unpacked) {
       const unpacked = await readFile(path.join(`${outputArchive}.unpacked`, entry.path));
@@ -126,7 +126,7 @@ export async function main(args = process.argv.slice(2)) {
     if (report.archiveVerification.verifiedUnpackedFiles > 0) await cp(`${outputArchive}.unpacked`, `${cloneArchive}.unpacked`, { recursive: true, dereference: false, preserveTimestamps: true });
     assert.equal(sha256(await readFile(cloneArchive)), report.archiveVerification.isolatedAsarSha256);
     for (const entry of archiveEntries(getRawHeader(cloneArchive).header)) {
-      if (entry.type === "file" && entry.unpacked) assert.equal(sha256(extractFile(cloneArchive, entry.path)), statFile(cloneArchive, entry.path, false).integrity.hash, `Copied unpacked file changed: ${entry.path}`);
+      if (entry.type === "file" && entry.unpacked) assert.equal(sha256(extractFile(cloneArchive, path.normalize(entry.path))), statFile(cloneArchive, path.normalize(entry.path), false).integrity.hash, `Copied unpacked file changed: ${entry.path}`);
     }
     const cloneExe = path.join(cloneRoot, path.basename(originalExe));
     report.executableMetadata = await refreshCopiedExecutableIntegrity(cloneExe, originalArchive, cloneArchive);
@@ -144,7 +144,7 @@ export async function main(args = process.argv.slice(2)) {
     let originalUnpackedFilesVerified = 0;
     for (const entry of archiveEntries(getRawHeader(originalArchive).header)) {
       if (entry.type !== "file" || !entry.unpacked) continue;
-      assert.equal(sha256(extractFile(originalArchive, entry.path)), statFile(originalArchive, entry.path, false).integrity.hash, `Original unpacked file changed: ${entry.path}`);
+      assert.equal(sha256(extractFile(originalArchive, path.normalize(entry.path))), statFile(originalArchive, path.normalize(entry.path), false).integrity.hash, `Original unpacked file changed: ${entry.path}`);
       originalUnpackedFilesVerified++;
     }
     report.originalUnpackedFilesVerified = originalUnpackedFilesVerified;
