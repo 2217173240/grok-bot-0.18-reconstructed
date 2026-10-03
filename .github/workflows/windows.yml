@@ -1,0 +1,79 @@
+name: Windows portable package
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+      TEMP: ${{ github.workspace }}\.cache\ci-tmp
+      TMP: ${{ github.workspace }}\.cache\ci-tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          lfs: false
+      - name: Prepare repository-local scratch
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check source and native Windows lifecycle
+        run: |
+          npm run source:typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test tests/local-docker-platform.test.mjs tests/local-exec-windows.test.mjs tests/windows-launcher.test.mjs tests/base-image-pin.test.mjs
+      - name: Build the Windows portable package
+        run: npm run package:windows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-portable-package
+          path: dist/*.zip
+          retention-days: 7
+      - name: Check the Electron control program
+        id: electron-control
+        continue-on-error: true
+        run: node scripts/electron-ipc-repro.mjs
+      - name: Exercise packaged Electron and native dependencies
+        run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-build-evidence
+          path: |
+            .cache/electron-ipc-repro-*/report.json
+            .cache/electron-ipc-repro-*/*.log
+            .cache/electron-ipc-repro-*/cdp-events.json
+            .cache/windows-package-smoke-*/*.log
+            .cache/windows-package-smoke-*/report.json
+            .cache/windows-package-smoke-*/lifecycle.json
+            .cache/windows-package-smoke-*/desktop.png
+            .cache/windows-package-smoke-*/desktop-window.json
+            .cache/windows-package-smoke-*/native.json
+            .cache/windows-package-smoke-*/renderer-state.json
+            .cache/windows-package-smoke-*/ipc-state.json
+            .cache/windows-package-smoke-*/cdp-events.json
+            .cache/windows-package-smoke-*/targets.json
+          include-hidden-files: true
+          retention-days: 7
+      - name: Report control-program failure
+        if: always() && steps.electron-control.outcome == 'failure'
+        run: throw 'The Electron control program failed; see windows-build-evidence.'

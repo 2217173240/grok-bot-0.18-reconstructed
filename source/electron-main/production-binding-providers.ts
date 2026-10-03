@@ -134,7 +134,7 @@ export interface ElectronStartupProviderPorts {
   readonly cwd?: string;
   readonly homeDir?: string;
   readonly readDiscovery?: () => Promise<{ readonly pid: number; readonly entryRealpath?: string; readonly generationToken?: string; readonly inflightCount?: number } | null>;
-  readonly isDaemonProcess?: (pid: number, discovery: { readonly entryRealpath?: string; readonly generationToken?: string }) => boolean;
+  readonly isDaemonProcess?: (pid: number, discovery: { readonly entryRealpath?: string; readonly generationToken?: string }) => Promise<boolean>;
   readonly terminate?: (pid: number) => Promise<void>;
   readonly isProcessAlive?: (pid: number) => boolean;
   readonly scheduleStuck?: (listener: () => void) => void;

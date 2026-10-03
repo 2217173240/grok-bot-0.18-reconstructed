@@ -136,14 +136,15 @@ export async function buildAsar({
   stageRoot = stagedAppDir,
   archivePath = builtAsar,
   unpackedRoot = builtAsarUnpacked,
+  runtimeReference,
 } = {}) {
-  const runtimeApp = await resolveRuntimeApp();
-  const resources = path.join(runtimeApp, "Contents", "Resources");
+  const runtimeApp = runtimeReference?.root ?? await resolveRuntimeApp();
+  const resources = runtimeReference?.resources ?? path.join(runtimeApp, "Contents", "Resources");
   const runtimeUnpacked = path.join(resources, "app.asar.unpacked", "dist");
 
   await rm(buildRoot, { recursive: true, force: true });
   await mkdir(buildRoot, { recursive: true });
-  await cp(sourceAppDir, stageRoot, { recursive: true, dereference: false, preserveTimestamps: true });
+  await cp(runtimeReference?.sourceRoot ?? sourceAppDir, stageRoot, { recursive: true, dereference: false, preserveTimestamps: true });
 
   if (process.env.GROK_BOT_BUILD_DEV_APP === "1") {
     const stagedPackagePath = path.join(stageRoot, "package.json");
@@ -164,7 +165,9 @@ export async function buildAsar({
   const mainBundle = path.join(stageRoot, "dist", "electron-main", "main.cjs");
   let mainSource = await readFile(mainBundle, "utf8");
   const dev = process.env.GROK_BOT_BUILD_DEV_APP === "1";
-  mainSource = prepareReconstructedElectronMainArtifactFallback(mainSource, { dev });
+  mainSource = runtimeReference?.platform === "win32-x64"
+    ? applyReconstructedUpdaterGuard(mainSource)
+    : prepareReconstructedElectronMainArtifactFallback(mainSource, { dev });
   if (dev) console.log("Enabled reconstructed development seams (DevTools + control server).");
   await writeFile(mainBundle, mainSource);
 

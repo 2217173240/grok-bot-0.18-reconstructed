@@ -9,6 +9,7 @@
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap-runtime.mjs",
+    "bootstrap:windows": "node scripts/bootstrap-windows.mjs",
     "build": "node scripts/build.mjs",
     "check": "npm run typecheck && npm run source:typecheck && npm test",
     "frontend:build": "vite build --config frontend/vite.config.ts",
@@ -16,6 +17,7 @@
     "native:patch": "node scripts/apply-third-party-patches.mjs",
     "native:build:electron": "node scripts/build-tree-sitter-electron.mjs",
     "package": "npm run check && node scripts/package-macos.mjs",
+    "package:windows": "node scripts/package-windows.mjs",
     "package:diagnostic": "npm run check && node scripts/package-fidelity-diagnostic.mjs",
     "publication:check": "node scripts/verify-publication-tree.mjs",
     "postinstall": "node scripts/apply-third-party-patches.mjs",
@@ -26,7 +28,10 @@
     "verify": "node scripts/verify.mjs"
   },
   "devDependencies": {
+    "7zip-bin": "5.2.0",
     "@electron/asar": "4.2.1",
+    "@electron/get": "5.1.0",
+    "@electron/packager": "20.3.0",
     "@types/js-yaml": "3.12.10",
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
@@ -37,8 +42,9 @@
     "electron": "42.1.0",
     "esbuild": "0.28.2",
     "node-addon-api": "8.5.0",
-    "node-gyp": "12.1.0",
+    "node-gyp": "13.0.2",
     "node-gyp-build": "4.8.4",
+    "resedit": "2.0.3",
     "sirv": "3.0.2",
     "typescript": "7.0.2",
     "vite": "8.2.1"

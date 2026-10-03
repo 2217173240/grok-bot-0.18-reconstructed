@@ -1,0 +1,110 @@
+name: Windows runtime diagnostic
+
+on:
+  workflow_call:
+    inputs:
+      build_run_id:
+        description: Run ID containing the Windows portable package to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diagnose:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+      TEMP: ${{ github.workspace }}\.cache\ci-tmp
+      TMP: ${{ github.workspace }}\.cache\ci-tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          lfs: false
+      - name: Prepare repository-local scratch
+        run: New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Download fixed build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: |
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Build run ID must be numeric' }
+          gh run view $env:BUILD_RUN_ID --json headSha,url
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh run download $env:BUILD_RUN_ID --name windows-portable-package --dir .cache/diagnostic-package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $package = @(Get-ChildItem .cache/diagnostic-package/*.zip)
+          if ($package.Count -ne 1) { throw 'Expected exactly one portable package' }
+          Get-FileHash $package[0].FullName -Algorithm SHA256
+          Expand-Archive $package[0].FullName -DestinationPath dist
+      - name: Check the Electron control program
+        id: electron-control
+        continue-on-error: true
+        run: node scripts/electron-ipc-repro.mjs
+      - name: Check the fixed product build
+        id: product
+        continue-on-error: true
+        run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+      - name: Read native thread snapshots
+        if: steps.product.outcome == 'failure'
+        run: |
+          $dumps = @(Get-ChildItem .cache/windows-package-smoke-*/native-*.dmp)
+          if ($dumps.Count -eq 0) { throw 'No owned-process native snapshots were captured' }
+          $cdb = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Debuggers\x64\cdb.exe'
+          if (-not (Test-Path $cdb)) {
+            $installer = Join-Path $env:TEMP 'winsdksetup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/?linkid=2243390' -OutFile $installer
+            if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9cf3dcc26704b5d17e2e92b79fa058bf982e9568ff12d7e841dc53a38aa0b69f') { throw 'Windows SDK installer checksum mismatch' }
+            $signature = Get-AuthenticodeSignature $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') { throw 'Windows SDK installer signature is invalid' }
+            $installation = Start-Process $installer -ArgumentList '/features','OptionId.WindowsDesktopDebuggers','/quiet','/norestart' -Wait -PassThru
+            if ($installation.ExitCode -notin @(0,3010)) { throw "Debugger installation failed: $($installation.ExitCode)" }
+          }
+          if (-not (Test-Path $cdb)) { throw 'Microsoft CDB was not installed' }
+          & $cdb -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cache = Join-Path $env:TEMP 'symbols'
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          $symbols = "srv*$cache*https://msdl.microsoft.com/download/symbols;srv*$cache*https://symbols.electronjs.org"
+          foreach ($dump in $dumps) {
+            $trace = [IO.Path]::ChangeExtension($dump.FullName, '.txt')
+            & $cdb -z $dump.FullName -y $symbols -c '.reload; ~* kb 40; !runaway 7; q' *> $trace
+            if ($LASTEXITCODE -ne 0) { throw "CDB failed for $($dump.Name): $LASTEXITCODE" }
+            Write-Output "Native thread stack: $trace"
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-runtime-evidence
+          path: |
+            .cache/electron-ipc-repro-*/report.json
+            .cache/electron-ipc-repro-*/*.log
+            .cache/electron-ipc-repro-*/cdp-events.json
+            .cache/windows-package-smoke-*/*.log
+            .cache/windows-package-smoke-*/report.json
+            .cache/windows-package-smoke-*/lifecycle.json
+            .cache/windows-package-smoke-*/desktop.png
+            .cache/windows-package-smoke-*/desktop-window.json
+            .cache/windows-package-smoke-*/native-*.txt
+            .cache/windows-package-smoke-*/native.json
+            .cache/windows-package-smoke-*/renderer-state.json
+            .cache/windows-package-smoke-*/ipc-state.json
+            .cache/windows-package-smoke-*/cdp-events.json
+            .cache/windows-package-smoke-*/targets.json
+          include-hidden-files: true
+          retention-days: 7
+      - name: Report control-program failure
+        if: always() && steps.electron-control.outcome == 'failure'
+        run: throw 'The Electron control program failed; see windows-runtime-evidence.'
+      - name: Report product failure
+        if: always() && steps.product.outcome == 'failure'
+        run: throw 'The fixed product build failed; see windows-runtime-evidence.'

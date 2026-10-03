@@ -1,6 +1,17 @@
 {
-  "reference": "grok-box-base@sha256:54142f153e92ac86b02ad70aa992bbd01e272490882d7f600655a569c0ecf2f8",
-  "platform": "linux/arm64",
-  "sourceRepository": "https://github.com/2217173240/grok-bot-box-image",
-  "sourceRevision": "d12224a5d3acb92983d0e993b6e0128176f7e28a"
+  "schemaVersion": 2,
+  "platforms": {
+    "linux/amd64": {
+      "reference": "grok-box-base@sha256:e53fd2e73fa9257c6c197df32ef793f145545a063682c722cf7cb7e8ef53ade5",
+      "platform": "linux/amd64",
+      "sourceRepository": "https://github.com/2217173240/grok-bot-box-image",
+      "sourceRevision": "d7e8cc180bf430bc647f36302ef09cd808b6796d"
+    },
+    "linux/arm64": {
+      "reference": "grok-box-base@sha256:54142f153e92ac86b02ad70aa992bbd01e272490882d7f600655a569c0ecf2f8",
+      "platform": "linux/arm64",
+      "sourceRepository": "https://github.com/2217173240/grok-bot-box-image",
+      "sourceRevision": "d12224a5d3acb92983d0e993b6e0128176f7e28a"
+    }
+  }
 }

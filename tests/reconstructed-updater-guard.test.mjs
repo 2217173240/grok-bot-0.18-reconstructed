@@ -27,5 +27,5 @@ test("reconstructed fallback and clean packaging share one idempotent service gu
   assert.ok(prepareReconstructedElectronMainArtifactFallback(fallbackFixture).startsWith(reconstructedUpdaterGuard));
 
   const cleanBuildSource = await readFile(path.join(root, "scripts", "clean-build.mjs"), "utf8");
-  assert.match(cleanBuildSource, /fidelityRuntimeComposition, \{ reconstructedPackage: true \}/);
+  assert.match(cleanBuildSource, /base.buildManifest.runtimeComposition, \{ reconstructedPackage: true, localPackageBootstrap:/);
 });

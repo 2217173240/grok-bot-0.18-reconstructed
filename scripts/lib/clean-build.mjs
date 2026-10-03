@@ -18,7 +18,7 @@ import {
   stagedAppDir,
 } from "./config.mjs";
 import { packStagedAppWithIntegrity, verifyStagedPackageIntegrity } from "./asar-integrity.mjs";
-import { officialMacReleaseAsarHash } from "./macos-shell-invariant.mjs";
+import { upstreamPlatform } from "./upstream-platforms.mjs";
 import { stageNodeTreeSitterRuntime } from "../build-tree-sitter-node.mjs";
 import { run } from "./process.mjs";
 import { electronShell } from "./source-only-package.mjs";
@@ -85,6 +85,16 @@ export const fidelityRuntimeComposition = Object.freeze(runtimeComposition.map(r
     reason: "The exact shipped 0.18 Mac renderer bundle is preserved byte-for-byte and accepted only against its complete embedded SHA-256 inventory.",
   }) : runtime
 )));
+
+export function fidelityCompositionForPlatform(platform = "darwin-arm64") {
+  const artifact = upstreamPlatform(platform);
+  if (platform === "darwin-arm64") return fidelityRuntimeComposition;
+  return fidelityRuntimeComposition.map(runtime => runtime.runtime === "renderer"
+    ? { ...runtime, artifactRoot: artifact.rendererRoot, upstreamPlatform: platform, reason: "Checksum-pinned upstream Windows renderer with a complete file inventory and verified narrow patches." }
+    : runtime.runtime === "electron-shell"
+      ? { ...runtime, path: "Grok Bot.exe", reason: "Official Electron 42.1.0 Windows x64 shell packaged with independent product metadata." }
+      : runtime);
+}
 
 // A source-only build records these two entrypoints as blocked until their
 // production bindings are available from source. The recovered library bundles
@@ -194,7 +204,8 @@ export async function stageSourceOnlyElectronTreeSitterRuntime(outputRoot) {
 }
 
 export async function createRendererArtifactProvenance({
-  artifactRoot = path.join(repoRoot, "src", "app", "dist", "renderer"),
+  platform = "darwin-arm64",
+  artifactRoot = path.join(repoRoot, upstreamPlatform(platform).rendererRoot),
 } = {}) {
   const relativeRoot = path.relative(repoRoot, artifactRoot).split(path.sep).join("/");
   if (relativeRoot.startsWith("../") || path.isAbsolute(relativeRoot)) {
@@ -212,7 +223,7 @@ export async function createRendererArtifactProvenance({
   return {
     schemaVersion: 1,
     upstreamVersion: "0.18.0",
-    upstreamAppAsarSha256: officialMacReleaseAsarHash,
+    upstreamAppAsarSha256: upstreamPlatform(platform).asarSha256,
     mode: "checksum-pinned-artifact-runtime",
     artifactRoot: relativeRoot,
     hashAlgorithm: "sha256",
@@ -228,7 +239,7 @@ export function packagedArtifactFallbacks(composition = runtimeComposition) {
     .map(({ sourceBundle }) => sourceBundle);
 }
 
-async function buildRuntimeDistribution({ outputRoot, composition, rendererMode, sourceOnly = false }) {
+async function buildRuntimeDistribution({ outputRoot, composition, rendererMode, sourceOnly = false, artifactPlatform = "darwin-arm64" }) {
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
   for (const [entry, output] of sourceLibraries) await bundleSource(entry, path.join(outputRoot, output));
@@ -258,7 +269,7 @@ async function buildRuntimeDistribution({ outputRoot, composition, rendererMode,
   if (rendererMode === "clean-source") {
     renderer = await buildProductionRenderer({ outputRoot });
   } else if (rendererMode === "checksum-pinned-artifact-runtime") {
-    renderer = await createRendererArtifactProvenance();
+    renderer = await createRendererArtifactProvenance({ platform: artifactPlatform });
     const provenancePath = path.join(outputRoot, rendererArtifactProvenance);
     await mkdir(path.dirname(provenancePath), { recursive: true });
     await writeFile(provenancePath, `${JSON.stringify(renderer, null, 2)}\n`);
@@ -281,7 +292,7 @@ async function buildRuntimeDistribution({ outputRoot, composition, rendererMode,
         "frontend/manifests/renderer-runtime-assets.json",
         "frontend/manifests/ui-evidence-anchors.json",
         "manifests/reconstruction/renderer-closure.json",
-      ] : ["src/app/dist/renderer"]),
+      ] : [upstreamPlatform(artifactPlatform).rendererRoot]),
     ],
     runtimeComposition: composition,
     outputs,
@@ -322,8 +333,8 @@ export async function buildSourceOnlyDistribution({ outputRoot = path.join(build
   return { ...base, buildManifest, electronMainActivation: electronMain, hostActivation: host };
 }
 
-export async function buildFidelityDistribution({ outputRoot = fidelityCleanBuildDir } = {}) {
-  return buildRuntimeDistribution({ outputRoot, composition: fidelityRuntimeComposition, rendererMode: "checksum-pinned-artifact-runtime" });
+export async function buildFidelityDistribution({ outputRoot = fidelityCleanBuildDir, artifactPlatform = "darwin-arm64" } = {}) {
+  return buildRuntimeDistribution({ outputRoot, composition: fidelityCompositionForPlatform(artifactPlatform), rendererMode: "checksum-pinned-artifact-runtime", artifactPlatform });
 }
 
 export async function overlayCleanDistribution(outputRoot, { stageRoot = stagedAppDir, composition = runtimeComposition } = {}) {

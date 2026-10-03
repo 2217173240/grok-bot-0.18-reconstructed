@@ -16,11 +16,21 @@ test("基础镜像身份变更使依赖 pin 变化，可变标签被拒绝", asy
     const original = await readBaseImage(directory);
     const pin = await readDepsPin(directory);
     const filename = path.join(directory, "docker/base-image.json");
-    await writeFile(filename, JSON.stringify({ ...original, reference: `grok-box-base@sha256:${"a".repeat(64)}` }));
+    const manifest = JSON.parse(await readFile(filename, "utf8"));
+    await writeFile(filename, JSON.stringify(manifest));
+    assert.equal(await readDepsPin(directory), pin);
+    const save = async (entry) => writeFile(filename, JSON.stringify({ ...manifest, platforms: { ...manifest.platforms, "linux/arm64": entry } }));
+    const withoutAmd64 = { ...manifest.platforms };
+    delete withoutAmd64["linux/amd64"];
+    await writeFile(filename, JSON.stringify({ ...manifest, platforms: withoutAmd64 }));
+    assert.equal(await readDepsPin(directory), pin);
+    await assert.rejects(readBaseImage(directory, "linux/amd64"), /No verified base image/);
+    await assert.rejects(readBaseImage(directory, "windows/amd64"), /Unsupported image platform/);
+    await save({ ...original, reference: `grok-box-base@sha256:${"a".repeat(64)}` });
     assert.notEqual(await readDepsPin(directory), pin);
-    await writeFile(filename, JSON.stringify({ ...original, reference: "grok-box-base:arm64" }));
+    await save({ ...original, reference: "grok-box-base:arm64" });
     await assert.rejects(readDepsPin(directory), /sha256 digest/);
-    await writeFile(filename, JSON.stringify({ ...original, sourceRevision: "main" }));
+    await save({ ...original, sourceRevision: "main" });
     await assert.rejects(readBaseImage(directory), /full source revision/);
     assert.match(await readFile(path.join(root, "docker/arm64-exec-box.Dockerfile"), "utf8"), /FROM \$\{BASE_IMAGE\}/);
   } finally { await rm(directory, { recursive: true, force: true }); }

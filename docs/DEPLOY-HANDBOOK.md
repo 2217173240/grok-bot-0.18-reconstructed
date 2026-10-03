@@ -2,6 +2,10 @@
 
 本手册描述当前 `main` 的部署路径：macOS Apple Silicon、Docker 计算机、local-admin、已配置的第三方推理 provider，以及固定的原版 renderer 构建输入。实际验收范围与版本记录见 [ROADMAP.md](ROADMAP.md)。
 
+不同 Mac 各自部署时，使用各自的运行环境、数据根和凭据。当前可移植性缺口、分发方式与新机器验收顺序见 [多台 Mac 独立部署评审](MAC-PORTABILITY-REVIEW.md)。
+
+Windows x64 的构建、启动与实机验收状态见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md#windows-独立部署)。
+
 ## 运行条件
 
 - macOS Apple Silicon（arm64）。
@@ -77,7 +81,7 @@ ditto "dist/Grok Bot 0.18 Reconstructed.app" "/Applications/Grok Bot 0.18 Recons
 
 默认模型为 `glm-5.3-flash`，兼容地址为 `https://open.bigmodel.cn/api/anthropic`。显式设置 `SAND_CLAUDE_MODEL`、`ANTHROPIC_BASE_URL` 或各 `ANTHROPIC_DEFAULT_*_MODEL` 可以覆盖默认值；模型映射变化后容器重新建立，继续使用原数据卷。
 
-脚本默认使用 `/Applications/Grok Bot 0.18 Reconstructed.app`，健康地址为 `http://127.0.0.1:1340/health`，就绪等待默认 45 秒。可使用 `GROKBOT_READY_TIMEOUT_S` 调整等待时间，使用 `GROKBOT_IMAGE` 指定已经校验的执行镜像标签。启动时若发现非本应用或健康 Docker computer 占用 1340 端口会终止启动。
+脚本默认使用 `/Applications/Grok Bot 0.18 Reconstructed.app`，可通过 `GROKBOT_APP_PATH` 指定其他 App 路径；应用与 build stamp 从同一路径解析。健康地址为 `http://127.0.0.1:1340/health`，就绪等待默认 45 秒。可使用 `GROKBOT_READY_TIMEOUT_S` 调整等待时间，使用 `GROKBOT_IMAGE` 指定已经校验的执行镜像标签。启动时若发现非本应用或健康 Docker computer 占用 1340 端口会终止启动。
 
 `status` 可能显示 handover URL。该 URL 含访问 token，分享日志、截图或诊断文本前必须隐藏整行。
 

@@ -36,6 +36,7 @@ import {
   electronMainBindingProvenancePath,
 } from "./electron-main-production-activation.mjs";
 import { applyOriginalRendererRouterPatch } from "./lib/router-renderer-patch.mjs";
+import { upstreamPlatform } from "./lib/upstream-platforms.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 export const defaultElectronMainBindingManifestPath = path.join(repoRoot, "manifests/reconstruction/electron-main-production-bindings-manifest.json");
@@ -72,10 +73,10 @@ async function outputRecord(outputRoot, relative) {
   return { path: relative, bytes: (await stat(target)).size, sha256: sha256(await readFile(target)) };
 }
 
-async function prepareProductionActivations(clean, hostBindingManifest, electronMainBindingManifest, composition = runtimeComposition, { reconstructedPackage = false } = {}) {
+async function prepareProductionActivations(clean, hostBindingManifest, electronMainBindingManifest, composition = runtimeComposition, { reconstructedPackage = false, localPackageBootstrap = false, sourceOnly = false } = {}) {
   const [hostActivation, electronMainActivation] = await Promise.all([
-    buildProductionHostIfSupplied({ outputRoot: clean.outputRoot, manifestPath: hostBindingManifest }),
-    buildProductionElectronMainIfSupplied({ outputRoot: clean.outputRoot, manifestPath: electronMainBindingManifest, reconstructedPackage }),
+    buildProductionHostIfSupplied({ outputRoot: clean.outputRoot, manifestPath: hostBindingManifest, sourceOnly }),
+    buildProductionElectronMainIfSupplied({ outputRoot: clean.outputRoot, manifestPath: electronMainBindingManifest, reconstructedPackage, localPackageBootstrap, sourceOnly }),
   ]);
   const activatedComposition = compositionWithProductionActivations(hostActivation, electronMainActivation, composition);
   const excludedFallbacks = new Set(fallbackSourcesReplacedByActivations(hostActivation, electronMainActivation));
@@ -141,7 +142,7 @@ async function attachCompositionAudit(clean) {
       "scripts/electron-main-production-activation.mjs",
       "package.json",
       "package-lock.json",
-      "src/app/package.json",
+      path.relative(repoRoot, path.join(upstreamPlatform(composition.find(runtime => runtime.runtime === "renderer")?.upstreamPlatform ?? "darwin-arm64").sourceRoot, "package.json")).split(path.sep).join("/"),
       ...(clean.hostActivation.clean ? [clean.hostActivation.provenance.manifestPath] : []),
       ...(clean.electronMainActivation.clean ? [clean.electronMainActivation.provenance.manifestPath] : []),
     ])],
@@ -258,6 +259,7 @@ export async function buildFidelityReconstructedAsar({
   archivePath = fidelityBuiltAsar,
   unpackedRoot = fidelityBuiltAsarUnpacked,
   cleanOutputRoot = fidelityCleanBuildDir,
+  runtimeReference,
 } = {}) {
   const fallback = await buildAsar({
     pack: false,
@@ -265,9 +267,11 @@ export async function buildFidelityReconstructedAsar({
     stageRoot,
     archivePath,
     unpackedRoot,
+    runtimeReference,
   });
-  const base = await buildBaseFidelityDistribution({ outputRoot: cleanOutputRoot });
-  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, fidelityRuntimeComposition, { reconstructedPackage: true });
+  const base = await buildBaseFidelityDistribution({ outputRoot: cleanOutputRoot, artifactPlatform: runtimeReference?.platform ?? "darwin-arm64" });
+  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, base.buildManifest.runtimeComposition, { reconstructedPackage: true, localPackageBootstrap: runtimeReference?.platform === "win32-x64", sourceOnly: runtimeReference?.platform === "win32-x64" });
+  if (!prepared.hostActivation.clean || !prepared.electronMainActivation.clean) throw new Error("Packaged runtimes require clean host and Electron main activation");
   const clean = await attachCompositionAudit(prepared);
   await overlayCleanDistribution(clean.outputRoot, { stageRoot, composition: clean.buildManifest.runtimeComposition });
   await applyOriginalRendererRouterPatch({ stageRoot });

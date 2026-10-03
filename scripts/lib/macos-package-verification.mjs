@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { extractFile, listPackage, statFile } from "@electron/asar";
+import { extractFile, listPackage } from "@electron/asar";
 
 import {
   expectedSignatureExcludedMachOHash,
@@ -10,6 +10,7 @@ import {
   officialMacReleaseAsarHash,
   officialMacReleaseShellHash,
 } from "./macos-shell-invariant.mjs";
+import { verifyChecksumPinnedRendererPackage as verifyRendererPackage } from "./renderer-package-verification.mjs";
 
 // Electron and daemon-native payloads are separate runtime domains. Both are
 // unpacked from the ASAR and must remain byte-identical to their staged trees;
@@ -20,146 +21,11 @@ const CSNAPS_RELATIVE = "dist/host/extensions/codebase-telemetry/csnaps";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
-export async function verifyChecksumPinnedRendererPackage({
-  archivePath,
-  sourceRendererRoot,
-  officialArchivePath,
-  provenancePath = "dist/renderer-artifact-provenance.json",
-  buildManifestPath = "dist/reconstruction-build.json",
-  rendererExtensionPath = "dist/renderer-router-extension.json",
-} = {}) {
-  if ([archivePath, sourceRendererRoot].some(value => typeof value !== "string" || value.length === 0)) {
-    throw new TypeError("Explicit archivePath and sourceRendererRoot paths are required");
-  }
-  const buildManifest = JSON.parse(extractFile(archivePath, buildManifestPath).toString("utf8"));
-  const renderer = buildManifest.runtimeComposition?.find(runtime => runtime.runtime === "renderer");
-  if (renderer?.mode !== "checksum-pinned-artifact-runtime" || renderer.provenance !== provenancePath) {
-    throw new Error(`Fidelity renderer has an invalid runtime classification: ${renderer?.mode}`);
-  }
-  const provenanceBytes = extractFile(archivePath, provenancePath);
-  const provenance = JSON.parse(provenanceBytes.toString("utf8"));
-  if (provenance.mode !== renderer.mode || provenance.hashAlgorithm !== "sha256" || !Array.isArray(provenance.files)) {
-    throw new Error("Fidelity renderer provenance contract is invalid");
-  }
-  if (provenance.upstreamAppAsarSha256 !== officialMacReleaseAsarHash) {
-    throw new Error("Fidelity renderer provenance is not bound to the canonical shipped 0.18 Mac ASAR");
-  }
-  const expectedFiles = new Map();
-  for (const record of provenance.files) {
-    assertSafeRelative(record.path);
-    if (expectedFiles.has(record.path) || typeof record.bytes !== "number" || !/^[0-9a-f]{64}$/.test(record.sha256)) {
-      throw new Error(`Invalid renderer provenance entry: ${JSON.stringify(record)}`);
-    }
-    const source = await readFile(path.join(sourceRendererRoot, record.path));
-    const sourceRecord = { path: record.path, bytes: source.byteLength, sha256: sha256(source) };
-    if (sourceRecord.bytes !== record.bytes || sourceRecord.sha256 !== record.sha256) {
-      throw new Error(`Shipped renderer source drift at ${record.path}`);
-    }
-    expectedFiles.set(record.path, record);
-  }
-  const sourceFiles = await walkFiles(sourceRendererRoot);
-  if (JSON.stringify(sourceFiles) !== JSON.stringify([...expectedFiles.keys()])) {
-    throw new Error("Shipped renderer source inventory differs from embedded provenance");
-  }
-  if (provenance.fileCount !== expectedFiles.size || provenance.inventorySha256 !== sha256(JSON.stringify([...expectedFiles.values()]))) {
-    throw new Error("Fidelity renderer aggregate inventory hash is invalid");
-  }
-  if (officialArchivePath != null) {
-    if (sha256(await readFile(officialArchivePath)) !== officialMacReleaseAsarHash) {
-      throw new Error("Renderer verification received a non-canonical official Mac ASAR");
-    }
-    const officialFiles = [];
-    for (const raw of listPackage(officialArchivePath)) {
-      const relative = raw.replace(/^\/+/, "");
-      if (!relative.startsWith("dist/renderer/")) continue;
-      try {
-        const entry = statFile(officialArchivePath, relative);
-        if (typeof entry.size === "number") officialFiles.push(relative.slice("dist/renderer/".length));
-      } catch {
-        // Directory entries are intentionally excluded from the byte inventory.
-      }
-    }
-    officialFiles.sort();
-    if (JSON.stringify(officialFiles) !== JSON.stringify([...expectedFiles.keys()])) {
-      throw new Error("Renderer provenance inventory differs from the canonical shipped 0.18 Mac ASAR");
-    }
-    for (const [relative, expected] of expectedFiles) {
-      const official = extractFile(officialArchivePath, `dist/renderer/${relative}`);
-      if (official.byteLength !== expected.bytes || sha256(official) !== expected.sha256) {
-        throw new Error(`Renderer provenance differs from the canonical shipped Mac ASAR at ${relative}`);
-      }
-    }
-  }
-  let rendererExtension = null;
-  try {
-    const bytes = extractFile(archivePath, rendererExtensionPath);
-    const parsed = JSON.parse(bytes.toString("utf8"));
-    if (parsed?.schemaVersion !== 1 || parsed?.mode !== "original-renderer-settings-extension" || !Array.isArray(parsed.chunks)) {
-      throw new Error("Renderer extension provenance contract is invalid");
-    }
-    const allowedKeys = ["schemaVersion", "mode", "chunks", "features", "transformations"];
-    if (Object.keys(parsed).sort().join("\0") !== allowedKeys.sort().join("\0")) throw new Error("Renderer extension provenance has unknown fields");
-    const chunks = new Map();
-    const roles = [];
-    for (const row of parsed.chunks) {
-      const relative = typeof row?.path === "string" && row.path.startsWith("dist/renderer/") ? row.path.slice("dist/renderer/".length) : null;
-      if (relative == null || !expectedFiles.has(relative) || !["registry", "panel", "entry-text-extractor"].includes(row.role)
-        || !Number.isInteger(row.original?.bytes) || !/^[0-9a-f]{64}$/.test(row.original?.sha256)
-        || !Number.isInteger(row.patched?.bytes) || !/^[0-9a-f]{64}$/.test(row.patched?.sha256)) {
-        throw new Error("Renderer extension chunk provenance is invalid");
-      }
-      const expected = chunks.get(relative)?.patched ?? expectedFiles.get(relative);
-      if (row.original.bytes !== expected.bytes || row.original.sha256 !== expected.sha256) throw new Error(`Renderer extension source identity drift at ${relative}`);
-      chunks.set(relative, row);
-      roles.push(row.role);
-    }
-    if (JSON.stringify(roles) !== JSON.stringify(["registry", "panel", "entry-text-extractor"])
-      || chunks.size < 2 || chunks.size > 3
-      || parsed.chunks[1].path === parsed.chunks[0].path) {
-      throw new Error("Renderer extension chunk sequence is invalid");
-    }
-    rendererExtension = { bytes, parsed, chunks };
-  } catch (error) {
-    if (!(error instanceof Error) || !/not found in archive|Cannot find/.test(error.message)) throw error;
-  }
-  const packagedFiles = [];
-  for (const raw of listPackage(archivePath)) {
-    const relative = raw.replace(/^\/+/, "");
-    if (!relative.startsWith("dist/renderer/")) continue;
-    try {
-      const entry = statFile(archivePath, relative);
-      if (typeof entry.size === "number") packagedFiles.push(relative.slice("dist/renderer/".length));
-    } catch {
-      // Directory entries are intentionally excluded from the byte inventory.
-    }
-  }
-  packagedFiles.sort();
-  if (JSON.stringify(packagedFiles) !== JSON.stringify([...expectedFiles.keys()])) {
-    throw new Error("Packaged renderer file inventory differs from the exact shipped renderer");
-  }
-  for (const [relative, expected] of expectedFiles) {
-    const packaged = extractFile(archivePath, `dist/renderer/${relative}`);
-    const extension = rendererExtension?.chunks.get(relative);
-    const wanted = extension?.patched ?? expected;
-    if (packaged.byteLength !== wanted.bytes || sha256(packaged) !== wanted.sha256) {
-      throw new Error(`Packaged renderer drift at ${relative}`);
-    }
-  }
-  return {
-    mode: renderer.mode,
-    provenancePath,
-    provenanceSha256: sha256(provenanceBytes),
-    fileCount: expectedFiles.size,
-    inventorySha256: provenance.inventorySha256,
-    upstreamAppAsarSha256: provenance.upstreamAppAsarSha256,
-    ...(rendererExtension == null ? {} : {
-      extension: {
-        path: rendererExtensionPath,
-        sha256: sha256(rendererExtension.bytes),
-        chunks: rendererExtension.parsed.chunks,
-      },
-    }),
-  };
+
+// Compatibility export for existing macOS callers; the implementation lives in
+// the platform-aware verifier so Windows and macOS share one inventory/hash chain.
+export async function verifyChecksumPinnedRendererPackage(options = {}) {
+  return verifyRendererPackage(options);
 }
 
 export function verifyFidelityActivationPayloads({ archivePath } = {}) {
