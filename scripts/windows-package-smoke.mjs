@@ -105,18 +105,28 @@ export async function main(args = process.argv.slice(2)) {
   } finally { await native.close(); }
   const nativeEvidence = JSON.parse(await readFile(nativeReport, "utf8"));
 
-  const app = await launchOwned(executable, ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
+  const app = await launchOwned(executable, ["--inspect=0", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
   let cdp;
+  let mainCdp;
+  let observedTargets = [];
   let renderer;
   try {
     const deadline = Date.now() + 90000;
     let target;
     while (Date.now() < deadline && !target) {
       app.assertRunning();
+      const mainEndpoint = /Debugger listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
+      if (mainEndpoint && !mainCdp) {
+        mainCdp = connectCdp(mainEndpoint);
+        await mainCdp.ready;
+        await mainCdp.send("Runtime.enable");
+        await mainCdp.send("Debugger.enable");
+      }
       const endpoint = /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
       if (endpoint) {
         const base = `http://${new URL(endpoint).host}`;
         const targets = await (await fetch(`${base}/json/list`, { signal: AbortSignal.timeout(5000) })).json();
+        observedTargets = targets;
         target = targets.find(item => item.type === "page" && /app\.asar\/dist\/renderer\/index\.html/.test(item.url));
       }
       if (!target) await delay(200);
@@ -154,8 +164,25 @@ export async function main(args = process.argv.slice(2)) {
     await writeFile(path.join(root, "report.json"), JSON.stringify({ executable, native: nativeEvidence, renderer, preloadIpc: true, modelRequests: "not submitted", dockerExecution: "not exercised" }, null, 2));
     console.log(JSON.stringify({ native: nativeEvidence, renderer, preloadIpc: true, artifacts: root }));
   } finally {
-    if (cdp) { await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2)); cdp.close(); }
-    await app.close();
+    try {
+    await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
+    if (mainCdp) {
+      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
+      await writeFile(path.join(root, "main-state.json"), JSON.stringify(state, null, 2));
+      if (!renderer) {
+        await mainCdp.send("Debugger.pause");
+        await delay(200);
+        await mainCdp.send("Debugger.resume");
+      }
+      await writeFile(path.join(root, "main-events.json"), JSON.stringify(mainCdp.events, null, 2));
+      mainCdp.close();
+    }
+    if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+    } finally {
+      mainCdp?.close();
+      cdp?.close();
+      await app.close();
+    }
   }
 }
 
