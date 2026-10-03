@@ -52,12 +52,12 @@ function connectCdp(url) {
 
 function smokeEnvironment(root) {
   const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(SystemRoot|SystemDrive|ComSpec|windir|PATH|PATHEXT|TEMP|TMP|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
-  return launchEnvironment(root, { ...base, HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"), APPDATA: path.join(root, "appdata"), LOCALAPPDATA: path.join(root, "localappdata"), DOCKER_HOST: `npipe:////./pipe/grokbot-package-smoke-${randomUUID()}` });
+  return launchEnvironment(root, { ...base, ELECTRON_ENABLE_LOGGING: "1", HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"), APPDATA: path.join(root, "appdata"), LOCALAPPDATA: path.join(root, "localappdata"), DOCKER_HOST: `npipe:////./pipe/grokbot-package-smoke-${randomUUID()}` });
 }
 
 async function launchOwned(executable, args, env, logPath) {
   const session = randomUUID();
-  const child = spawn(executable, [...args, `--grokbot-local-session=${session}`], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(executable, [...args, `--grokbot-local-session=${session}`], { env, windowsHide: env.ELECTRON_RUN_AS_NODE === "1", stdio: ["ignore", "pipe", "pipe"] });
   const chunks = [];
   child.stdout.on("data", chunk => chunks.push(chunk));
   child.stderr.on("data", chunk => chunks.push(chunk));
@@ -148,7 +148,7 @@ export async function main(args = process.argv.slice(2)) {
     console.log("Checking packaged renderer DOM and preload");
     while (Date.now() < rendererDeadline) {
       app.assertRunning();
-      const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.innerText.trim().length ?? 0, controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
+      const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.textContent.trim().length ?? 0, text:document.body?.textContent.trim().slice(0,2000), controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
       renderer = value.result?.value;
       await writeFile(path.join(root, "renderer-state.json"), JSON.stringify(renderer ?? null, null, 2));
       if (renderer?.ready === "complete" && renderer.roots > 0 && renderer.textLength > 20 && renderer.controls > 0 && renderer.preload) break;
@@ -168,9 +168,10 @@ export async function main(args = process.argv.slice(2)) {
   } finally {
     try {
     await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
+    if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
     if (mainCdp) {
       await writeFile(path.join(root, "main-events.json"), JSON.stringify(mainCdp.events, null, 2));
-      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), ipc:electron.ipcMain.eventNames().filter(x=>typeof x==='string').map(channel=>({channel,count:electron.ipcMain.listenerCount(channel)})), metrics:electron.app.getAppMetrics(), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible(),loading:w.webContents.isLoading(),processId:w.webContents.getOSProcessId()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
+      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), ipc:electron.ipcMain.eventNames().filter(x=>typeof x==='string').map(channel=>({channel,count:electron.ipcMain.listenerCount(channel)})), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible(),loading:w.webContents.isLoading(),processId:w.webContents.getOSProcessId()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
       await writeFile(path.join(root, "main-state.json"), JSON.stringify(state, null, 2));
       mainCdp.close();
     }
