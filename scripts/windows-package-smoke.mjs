@@ -17,7 +17,7 @@ async function withTimeout(operation, milliseconds, message) {
   finally { clearTimeout(timer); }
 }
 
-function connectCdp(url) {
+export function connectCdp(url) {
   const socket = new WebSocket(url, { handshakeTimeout: 10000 });
   let nextId = 0;
   const pending = new Map();
@@ -50,12 +50,12 @@ function connectCdp(url) {
   };
 }
 
-function smokeEnvironment(root) {
+export function smokeEnvironment(root) {
   const base = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(SystemRoot|SystemDrive|ComSpec|windir|PATH|PATHEXT|TEMP|TMP|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
   return launchEnvironment(root, { ...base, ELECTRON_ENABLE_LOGGING: "1", HOME: path.join(root, "home"), USERPROFILE: path.join(root, "home"), APPDATA: path.join(root, "appdata"), LOCALAPPDATA: path.join(root, "localappdata"), DOCKER_HOST: `npipe:////./pipe/grokbot-package-smoke-${randomUUID()}` });
 }
 
-async function launchOwned(executable, args, env, logPath) {
+export async function launchOwned(executable, args, env, logPath) {
   const session = randomUUID();
   const child = spawn(executable, [...args, `--grokbot-local-session=${session}`], { env, windowsHide: env.ELECTRON_RUN_AS_NODE === "1", stdio: ["ignore", "pipe", "pipe"] });
   const chunks = [];
@@ -69,16 +69,23 @@ async function launchOwned(executable, args, env, logPath) {
   const current = inspectProcess(child.pid);
   const state = current == null ? null : { version: 1, ...current, session };
   if (state && !sameProcess(state, current)) throw new Error("Packaged Electron process identity is invalid");
+  let closing;
   return {
     child, completion,
     output: () => Buffer.concat(chunks).toString("utf8"),
     assertRunning() { if (exit) throw new Error(`Packaged Electron exited: ${JSON.stringify(exit)}`); },
-    async close() {
-      try {
-        if (!exit && state) stopProcessTree(state);
-        else if (!exit) child.kill();
-        await withTimeout(completion, 20000, "Owned Electron process did not exit");
-      } finally { await writeFile(logPath, Buffer.concat(chunks)); }
+    close() {
+      return closing ??= (async () => {
+        const failures = [];
+        try {
+          if (!exit && state) stopProcessTree(state);
+          else if (!exit) child.kill();
+          await withTimeout(completion, 20000, "Owned Electron process did not exit");
+        } catch (error) { failures.push(error); }
+        try { await writeFile(logPath, Buffer.concat(chunks)); } catch (error) { failures.push(error); }
+        if (failures.length) throw new AggregateError(failures, "Owned Electron cleanup failed");
+        return exit;
+      })();
     },
   };
 }
@@ -99,16 +106,24 @@ export async function main(args = process.argv.slice(2)) {
 
   const nativeReport = path.join(root, "native.json");
   const native = await launchOwned(executable, [path.join(repoRoot, "scripts/fixtures/windows-package-native-smoke.cjs"), archive, nativeReport], { ...env, ELECTRON_RUN_AS_NODE: "1" }, path.join(root, "native.log"));
+  const nativeErrors = [];
   try {
     const result = await withTimeout(native.completion, 60000, "Packaged native ABI smoke timed out");
     assert.equal(result.code, 0, native.output());
-  } finally { await native.close(); }
+  } catch (error) {
+    console.error("Packaged native check failed:", error);
+    nativeErrors.push(error);
+  } finally {
+    try { await native.close(); } catch (error) { nativeErrors.push(error); }
+  }
+  if (nativeErrors.length) throw new AggregateError(nativeErrors, "Packaged native check failed");
   const nativeEvidence = JSON.parse(await readFile(nativeReport, "utf8"));
 
   const app = await launchOwned(executable, ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
   let cdp;
   let observedTargets = [];
   let renderer;
+  const errors = [];
   try {
     const deadline = Date.now() + 90000;
     let target;
@@ -167,24 +182,19 @@ export async function main(args = process.argv.slice(2)) {
     assert.deepEqual(failures, [], "Renderer reported script or resource failures");
     await writeFile(path.join(root, "report.json"), JSON.stringify({ executable, native: nativeEvidence, renderer, preloadIpc: true, modelRequests: "not submitted", dockerExecution: "not exercised" }, null, 2));
     console.log(JSON.stringify({ native: nativeEvidence, renderer, preloadIpc: true, artifacts: root }));
+  } catch (error) {
+    console.error("Packaged Electron check failed:", error);
+    errors.push(error);
   } finally {
+    cdp?.close();
+    try { await app.close(); } catch (error) { errors.push(error); }
     try {
       await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
-      if (cdp) {
-        await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
-        try {
-          await cdp.send("Debugger.enable");
-          await cdp.send("Debugger.pause");
-          await delay(1000);
-        } finally {
-          await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
-        }
-      }
-    } finally {
-      cdp?.close();
-      await app.close();
-    }
+      await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp?.events ?? [], null, 2));
+      await writeFile(path.join(root, "lifecycle.json"), JSON.stringify({ success: errors.length === 0, errors: errors.map(error => ({ message: error.message, stack: error.stack })) }, null, 2));
+    } catch (error) { errors.push(error); }
   }
+  if (errors.length) throw new AggregateError(errors, "Windows package smoke failed");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
