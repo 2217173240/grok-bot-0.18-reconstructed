@@ -53,7 +53,7 @@ jobs:
       - name: Check the fixed product build
         id: product
         continue-on-error: true
-        run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
+        run: node --input-type=module -e 'import { main } from "./scripts/windows-package-smoke.mjs"; await main(["--app-path", "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"], { diagnoseRenderer:true });'
       - name: Isolate the product renderer
         if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
         run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
@@ -72,6 +72,7 @@ jobs:
             .cache/windows-package-smoke-*/*.log
             .cache/windows-package-smoke-*/report.json
             .cache/windows-package-smoke-*/lifecycle.json
+            .cache/windows-package-smoke-*/renderer.cpuprofile
             .cache/windows-package-smoke-*/native.json
             .cache/windows-package-smoke-*/renderer-state.json
             .cache/windows-package-smoke-*/ipc-state.json

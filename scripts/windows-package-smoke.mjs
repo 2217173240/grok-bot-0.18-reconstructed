@@ -90,7 +90,7 @@ export async function launchOwned(executable, args, env, logPath) {
   };
 }
 
-export async function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2), { diagnoseRenderer = false } = {}) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("Windows package smoke requires Windows x64");
   if (args.length !== 2 || args[0] !== "--app-path") throw new Error("Usage: node scripts/windows-package-smoke.mjs --app-path <Grok Bot.exe>");
   const executable = path.resolve(args[1]);
@@ -123,6 +123,8 @@ export async function main(args = process.argv.slice(2)) {
   let cdp;
   let observedTargets = [];
   let renderer;
+  let profile;
+  const diagnosticErrors = [];
   const errors = [];
   try {
     const deadline = Date.now() + 90000;
@@ -141,6 +143,11 @@ export async function main(args = process.argv.slice(2)) {
     assert(target, "Packaged renderer CDP target did not appear");
     cdp = connectCdp(target.webSocketDebuggerUrl);
     await cdp.ready;
+    if (diagnoseRenderer) {
+      await cdp.send("Debugger.enable");
+      await cdp.send("Profiler.enable");
+      await cdp.send("Profiler.start");
+    }
     await cdp.send("Runtime.enable");
     await cdp.send("Network.enable");
     await cdp.send("Page.enable");
@@ -185,13 +192,22 @@ export async function main(args = process.argv.slice(2)) {
   } catch (error) {
     console.error("Packaged Electron check failed:", error);
     errors.push(error);
+    if (diagnoseRenderer && cdp) {
+      try { await cdp.send("Debugger.pause"); await delay(500); }
+      catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer pause failed:", failure); }
+    }
   } finally {
+    if (diagnoseRenderer && cdp) {
+      try { profile = (await cdp.send("Profiler.stop")).profile; }
+      catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer profile failed:", failure); }
+    }
     cdp?.close();
     try { await app.close(); } catch (error) { errors.push(error); }
     try {
       await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
       await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp?.events ?? [], null, 2));
-      await writeFile(path.join(root, "lifecycle.json"), JSON.stringify({ success: errors.length === 0, errors: errors.map(error => ({ message: error.message, stack: error.stack })) }, null, 2));
+      if (profile) await writeFile(path.join(root, "renderer.cpuprofile"), JSON.stringify(profile));
+      await writeFile(path.join(root, "lifecycle.json"), JSON.stringify({ success: errors.length === 0, diagnosticErrors, errors: errors.map(error => ({ message: error.message, stack: error.stack })) }, null, 2));
     } catch (error) { errors.push(error); }
   }
   if (errors.length) throw new AggregateError(errors, "Windows package smoke failed");
