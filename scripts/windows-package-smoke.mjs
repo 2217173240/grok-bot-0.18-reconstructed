@@ -105,9 +105,8 @@ export async function main(args = process.argv.slice(2)) {
   } finally { await native.close(); }
   const nativeEvidence = JSON.parse(await readFile(nativeReport, "utf8"));
 
-  const app = await launchOwned(executable, ["--inspect=0", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
+  const app = await launchOwned(executable, ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
   let cdp;
-  let mainCdp;
   let observedTargets = [];
   let renderer;
   try {
@@ -115,13 +114,6 @@ export async function main(args = process.argv.slice(2)) {
     let target;
     while (Date.now() < deadline && !target) {
       app.assertRunning();
-      const mainEndpoint = /Debugger listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
-      if (mainEndpoint && !mainCdp) {
-        mainCdp = connectCdp(mainEndpoint);
-        await mainCdp.ready;
-        await mainCdp.send("Runtime.enable");
-        await mainCdp.send("Debugger.enable");
-      }
       const endpoint = /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
       if (endpoint) {
         const base = `http://${new URL(endpoint).host}`;
@@ -137,7 +129,6 @@ export async function main(args = process.argv.slice(2)) {
     await cdp.send("Runtime.enable");
     await cdp.send("Network.enable");
     await cdp.send("Page.enable");
-    await cdp.send("Debugger.enable");
     const rendererDeadline = Date.now() + 45000;
     const hasDocumentContext = () => cdp.events.some(event => event.method === "Runtime.executionContextCreated" && event.params.context.auxData?.isDefault === true);
     while (Date.now() < rendererDeadline && !hasDocumentContext()) {
@@ -178,25 +169,9 @@ export async function main(args = process.argv.slice(2)) {
     console.log(JSON.stringify({ native: nativeEvidence, renderer, preloadIpc: true, artifacts: root }));
   } finally {
     try {
-    await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
-    if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
-    if (mainCdp) {
-      await writeFile(path.join(root, "main-events.json"), JSON.stringify(mainCdp.events, null, 2));
-      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), ipc:electron.ipcMain.eventNames().filter(x=>typeof x==='string').map(channel=>({channel,count:electron.ipcMain.listenerCount(channel)})), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible(),loading:w.webContents.isLoading(),processId:w.webContents.getOSProcessId()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
-      await writeFile(path.join(root, "main-state.json"), JSON.stringify(state, null, 2));
-      mainCdp.close();
-    }
-    if (cdp) {
-      if (!renderer) {
-        const start = cdp.events.length;
-        await cdp.send("Debugger.pause");
-        await delay(500);
-        if (cdp.events.slice(start).some(event => event.method === "Debugger.paused")) await cdp.send("Debugger.resume");
-      }
-      await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
-    }
+      await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
+      if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
     } finally {
-      mainCdp?.close();
       cdp?.close();
       await app.close();
     }
