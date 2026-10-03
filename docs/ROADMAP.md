@@ -4,6 +4,8 @@
 
 ## 已交付能力
 
+2026-10-03 完成[多台 Mac 独立部署评审](MAC-PORTABILITY-REVIEW.md)，并按用户新增要求推进 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。该计划集中记录模块归属、依赖顺序、实现及验证状态。本轮完成适配与 Windows CI；用户暂无 Windows 测试机，真实 Windows + WSL2 端到端验收保留为明确待办，不能提前标为支持已验证。
+
 - local admin、容器内 agent 回合、第三方推理、文件与 MCP、Computer、图片附件及前台 Task 结果交付。
 - Colima `grokbot` 为默认环境，OrbStack 为可选 Docker socket 来源；本地回合没有 Mac 执行选项。
 - 基础镜像由独立 `grok-bot-box-image` 仓库提供固定 Release 归档，下载与导入均校验身份；原版安装包统一登记官方来源与 SHA-256。

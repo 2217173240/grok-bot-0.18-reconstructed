@@ -2,6 +2,8 @@
 
 本手册描述当前 `main` 的部署路径：macOS Apple Silicon、Docker 计算机、local-admin、已配置的第三方推理 provider，以及固定的原版 renderer 构建输入。实际验收范围与版本记录见 [ROADMAP.md](ROADMAP.md)。
 
+不同 Mac 各自部署时，使用各自的运行环境、数据根和凭据。当前可移植性缺口、分发方式与新机器验收顺序见 [多台 Mac 独立部署评审](MAC-PORTABILITY-REVIEW.md)。
+
 ## 运行条件
 
 - macOS Apple Silicon（arm64）。
