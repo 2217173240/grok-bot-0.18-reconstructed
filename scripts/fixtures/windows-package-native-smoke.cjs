@@ -10,7 +10,7 @@ async function main() {
   const [archive, reportPath] = process.argv.slice(2);
   const deps = path.join(archive, "dist", "deps");
   const Database = require(path.join(deps, "better-sqlite3"));
-  const database = new Database(":memory:");
+  const database = new Database(":memory:", { nativeBinding: path.join(deps, "better-sqlite3/build/Release/better_sqlite3.node") });
   try {
     database.exec("CREATE TABLE smoke (value TEXT NOT NULL)");
     database.prepare("INSERT INTO smoke VALUES (?)").run("Windows native SQLite");

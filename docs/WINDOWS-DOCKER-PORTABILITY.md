@@ -46,7 +46,9 @@ Windows native 构建使用固定 node-gyp 13.0.2，包含 Node 26/MSVC 的官�
 
 ## Windows 独立部署
 
-目标机器安装 Docker Desktop 并启用 WSL2、Linux containers。源码构建还需要 Git、Node 26.5.0、Python 与 Visual Studio C++ Build Tools。每台机器使用自己的数据和模型账号。
+目标机器安装 Docker Desktop 并启用 WSL2、Linux containers，以及 General 中的 **Use containerd for pulling and storing images**。固定归档需要保留 OCI digest；新版本默认启用该镜像存储，已有安装应核对设置。[Docker 镜像存储说明](https://docs.docker.com/desktop/features/containerd/)
+
+源码构建还需要 Git、Node 26.5.0、Python 与 Visual Studio C++ Build Tools。每台机器使用自己的数据和模型账号。
 
 在 PowerShell 的仓库目录运行：
 

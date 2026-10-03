@@ -81,7 +81,7 @@ export async function main() {
       assert.equal(status, "true", "Production host exited before gateway became ready");
       let health;
       try { health = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(1500) }); }
-      catch (error) { if (error.name !== "TimeoutError" && error.cause?.code !== "ECONNREFUSED" && error.cause?.code !== "UND_ERR_SOCKET") throw error; }
+      catch (error) { if (error.name !== "TimeoutError" && !["ECONNREFUSED", "ECONNRESET", "UND_ERR_SOCKET"].includes(error.cause?.code)) throw error; }
       if (health?.ok) {
         assert.equal((await health.json()).ok, true);
         return endpoint;
