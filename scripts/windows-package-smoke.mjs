@@ -170,7 +170,16 @@ export async function main(args = process.argv.slice(2)) {
   } finally {
     try {
       await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
-      if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+      if (cdp) {
+        await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+        try {
+          await cdp.send("Debugger.enable");
+          await cdp.send("Debugger.pause");
+          await delay(1000);
+        } finally {
+          await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+        }
+      }
     } finally {
       cdp?.close();
       await app.close();
