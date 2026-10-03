@@ -137,6 +137,7 @@ export async function main(args = process.argv.slice(2)) {
     await cdp.send("Runtime.enable");
     await cdp.send("Network.enable");
     await cdp.send("Page.enable");
+    await cdp.send("Debugger.enable");
     const rendererDeadline = Date.now() + 45000;
     const hasDocumentContext = () => cdp.events.some(event => event.method === "Runtime.executionContextCreated" && event.params.context.auxData?.isDefault === true);
     while (Date.now() < rendererDeadline && !hasDocumentContext()) {
@@ -144,15 +145,18 @@ export async function main(args = process.argv.slice(2)) {
       await delay(100);
     }
     assert(hasDocumentContext(), "Packaged renderer document context did not appear");
+    console.log("Checking packaged renderer DOM and preload");
     while (Date.now() < rendererDeadline) {
       app.assertRunning();
       const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.innerText.trim().length ?? 0, controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
       renderer = value.result?.value;
+      await writeFile(path.join(root, "renderer-state.json"), JSON.stringify(renderer ?? null, null, 2));
       if (renderer?.ready === "complete" && renderer.roots > 0 && renderer.textLength > 20 && renderer.controls > 0 && renderer.preload) break;
       await delay(200);
     }
     assert(renderer?.ready === "complete" && renderer.roots > 0 && renderer.textLength > 20 && renderer.controls > 0 && renderer.preload, `Renderer did not mount: ${JSON.stringify(renderer)}`);
     assert.equal(renderer.platform, "win32");
+    console.log("Checking packaged preload window-state IPC");
     const ipc = await cdp.send("Runtime.evaluate", { expression: "window.desktop.getWindowState()", awaitPromise: true, returnByValue: true });
     assert.equal(ipc.exceptionDetails, undefined, JSON.stringify(ipc.exceptionDetails));
     assert(ipc.result?.value && typeof ipc.result.value === "object", "Preload window-state IPC did not return an object");
@@ -166,11 +170,19 @@ export async function main(args = process.argv.slice(2)) {
     await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
     if (mainCdp) {
       await writeFile(path.join(root, "main-events.json"), JSON.stringify(mainCdp.events, null, 2));
-      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
+      const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), ipc:electron.ipcMain.eventNames().filter(x=>typeof x==='string').map(channel=>({channel,count:electron.ipcMain.listenerCount(channel)})), metrics:electron.app.getAppMetrics(), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible(),loading:w.webContents.isLoading(),processId:w.webContents.getOSProcessId()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
       await writeFile(path.join(root, "main-state.json"), JSON.stringify(state, null, 2));
       mainCdp.close();
     }
-    if (cdp) await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+    if (cdp) {
+      if (!renderer) {
+        const start = cdp.events.length;
+        await cdp.send("Debugger.pause");
+        await delay(500);
+        if (cdp.events.slice(start).some(event => event.method === "Debugger.paused")) await cdp.send("Debugger.resume");
+      }
+      await writeFile(path.join(root, "cdp-events.json"), JSON.stringify(cdp.events, null, 2));
+    }
     } finally {
       mainCdp?.close();
       cdp?.close();
