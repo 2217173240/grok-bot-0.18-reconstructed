@@ -34,7 +34,7 @@ try {
   }
   await cp(path.join(repo, "docker/arm64-exec-box.Dockerfile"), path.join(context, "Dockerfile"));
   const output = process.env.GROKBOT_BUILD_IMAGE || `grok-bot-exec-box:${platform.split("/")[1]}`;
-  docker(["build", "--platform", platform, "--build-arg", `BASE_IMAGE=${buildBase}`,
+  docker(["build", "--platform", platform, "--build-arg", `TARGETARCH=${platform.split("/")[1]}`, "--build-arg", `BASE_IMAGE=${buildBase}`,
     "--build-arg", `BASE_IMAGE_REF=${base.reference}`, "--label", `com.grok-bot.local-vm.deps-pin=${pin}`,
     "-t", output, context]);
   const [built] = JSON.parse(docker(["image", "inspect", output], true));

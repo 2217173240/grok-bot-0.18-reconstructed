@@ -50,7 +50,12 @@ jobs:
         with:
           name: windows-build-evidence
           path: |
-            .cache/windows-package-smoke-*/**
-            dist/*.zip
+            .cache/windows-package-smoke-*/*.log
+            .cache/windows-package-smoke-*/*.json
           include-hidden-files: true
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-portable-package
+          path: dist/*.zip
           retention-days: 7

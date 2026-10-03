@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 
 async function main() {
   assert.equal(process.platform, "win32");
@@ -9,8 +10,7 @@ async function main() {
   assert.equal(process.versions.modules, "146");
   const [archive, reportPath] = process.argv.slice(2);
   const deps = path.join(archive, "dist", "deps");
-  const Database = require(path.join(deps, "better-sqlite3"));
-  const database = new Database(":memory:", { nativeBinding: path.join(deps, "better-sqlite3/build/Release/better_sqlite3.node") });
+  const database = new DatabaseSync(":memory:");
   try {
     database.exec("CREATE TABLE smoke (value TEXT NOT NULL)");
     database.prepare("INSERT INTO smoke VALUES (?)").run("Windows native SQLite");
