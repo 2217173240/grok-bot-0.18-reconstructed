@@ -17,7 +17,7 @@ async function withTimeout(operation, milliseconds, message) {
   finally { clearTimeout(timer); }
 }
 
-function connectCdp(url, onEvent = () => {}) {
+function connectCdp(url) {
   const socket = new WebSocket(url, { handshakeTimeout: 10000 });
   let nextId = 0;
   const pending = new Map();
@@ -27,7 +27,7 @@ function connectCdp(url, onEvent = () => {}) {
   socket.on("close", () => fail(new Error("CDP connection closed")));
   socket.on("message", bytes => {
     const message = JSON.parse(bytes.toString());
-    if (message.method) { events.push(message); onEvent(message); return; }
+    if (message.method) { events.push(message); return; }
     const call = pending.get(message.id);
     if (!call) return;
     pending.delete(message.id);
@@ -105,11 +105,10 @@ export async function main(args = process.argv.slice(2)) {
   } finally { await native.close(); }
   const nativeEvidence = JSON.parse(await readFile(nativeReport, "utf8"));
 
-  const app = await launchOwned(executable, ["--inspect-brk=0", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
+  const app = await launchOwned(executable, ["--inspect=0", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", `--user-data-dir=${env.SAND_USER_DATA_DIR}`], env, path.join(root, "app.log"));
   let cdp;
   let mainCdp;
   let observedTargets = [];
-  const mainDiagnosticErrors = [];
   let renderer;
   try {
     const deadline = Date.now() + 90000;
@@ -118,14 +117,10 @@ export async function main(args = process.argv.slice(2)) {
       app.assertRunning();
       const mainEndpoint = /Debugger listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
       if (mainEndpoint && !mainCdp) {
-        mainCdp = connectCdp(mainEndpoint, event => {
-          if (event.method === "Debugger.paused") void mainCdp.send("Debugger.resume").catch(error => mainDiagnosticErrors.push(String(error)));
-        });
+        mainCdp = connectCdp(mainEndpoint);
         await mainCdp.ready;
         await mainCdp.send("Runtime.enable");
         await mainCdp.send("Debugger.enable");
-        await mainCdp.send("Debugger.setPauseOnExceptions", { state: "all" });
-        await mainCdp.send("Runtime.runIfWaitingForDebugger");
       }
       const endpoint = /DevTools listening on (ws:\/\/127\.0\.0\.1:\d+\/[^\s]+)/.exec(app.output())?.[1];
       if (endpoint) {
@@ -142,15 +137,13 @@ export async function main(args = process.argv.slice(2)) {
     await cdp.send("Runtime.enable");
     await cdp.send("Network.enable");
     await cdp.send("Page.enable");
-    // 订阅后重新载入真实 renderer，覆盖其完整启动过程。
-    const reloadStart = cdp.events.length;
-    await cdp.send("Page.reload", { ignoreCache: true });
     const rendererDeadline = Date.now() + 45000;
-    while (Date.now() < rendererDeadline && !cdp.events.slice(reloadStart).some(event => event.method === "Page.loadEventFired")) {
+    const hasDocumentContext = () => cdp.events.some(event => event.method === "Runtime.executionContextCreated" && event.params.context.auxData?.isDefault === true);
+    while (Date.now() < rendererDeadline && !hasDocumentContext()) {
       app.assertRunning();
       await delay(100);
     }
-    assert(cdp.events.slice(reloadStart).some(event => event.method === "Page.loadEventFired"), "Packaged renderer load event did not arrive");
+    assert(hasDocumentContext(), "Packaged renderer document context did not appear");
     while (Date.now() < rendererDeadline) {
       app.assertRunning();
       const value = await cdp.send("Runtime.evaluate", { expression: `({ready:document.readyState, roots:document.querySelector('#root')?.childElementCount ?? 0, textLength:document.body?.innerText.trim().length ?? 0, controls:document.querySelectorAll('button,input,textarea,[contenteditable]').length, platform:window.desktop?.platform, preload:typeof window.desktop?.getWindowState==='function' && typeof window.coordinatorPort==='object', url:location.href})`, returnByValue: true });
@@ -173,7 +166,6 @@ export async function main(args = process.argv.slice(2)) {
     await writeFile(path.join(root, "targets.json"), JSON.stringify(observedTargets, null, 2));
     if (mainCdp) {
       await writeFile(path.join(root, "main-events.json"), JSON.stringify(mainCdp.events, null, 2));
-      await writeFile(path.join(root, "main-diagnostic-errors.json"), JSON.stringify(mainDiagnosticErrors));
       const state = await mainCdp.send("Runtime.evaluate", { expression: `(() => { const electron=process.mainModule.require('electron'); return {ready:electron.app.isReady(), windows:electron.BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL(),visible:w.isVisible()})), handles:process._getActiveHandles().map(h=>h.constructor.name)}; })()`, returnByValue: true });
       await writeFile(path.join(root, "main-state.json"), JSON.stringify(state, null, 2));
       mainCdp.close();
