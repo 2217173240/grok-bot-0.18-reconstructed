@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -193,6 +193,15 @@ export async function main(args = process.argv.slice(2), { diagnoseRenderer = fa
   } catch (error) {
     console.error("Packaged Electron check failed:", error);
     errors.push(error);
+    if (process.env.GITHUB_ACTIONS === "true") {
+      try {
+        const state = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(repoRoot, "scripts/fixtures/capture-windows-desktop.ps1")], {
+          env: { ...process.env, GROKBOT_CAPTURE_PATH: path.join(root, "desktop.png"), GROKBOT_CAPTURE_PID: String(app.child.pid) },
+          windowsHide: true, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"],
+        });
+        await writeFile(path.join(root, "desktop-window.json"), state);
+      } catch (failure) { diagnosticErrors.push(failure.message); console.error("CI desktop capture failed:", failure); }
+    }
     if (diagnoseRenderer && cdp) {
       try { await cdp.send("Debugger.pause"); await delay(500); }
       catch (failure) { diagnosticErrors.push(failure.message); console.error("Renderer pause failed:", failure); }

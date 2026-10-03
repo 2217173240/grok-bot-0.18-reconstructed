@@ -54,14 +54,6 @@ jobs:
         id: product
         continue-on-error: true
         run: node scripts/windows-package-smoke.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe"
-      - name: Check real coordinator port handoff
-        if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
-        continue-on-error: true
-        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant bare-coordinator
-      - name: Check real coordinator request
-        if: steps.product.outcome == 'failure' && steps.electron-control.outcome == 'success'
-        continue-on-error: true
-        run: node scripts/windows-renderer-isolation.mjs --app-path "dist/Grok Bot 0.18 Reconstructed-win32-x64/Grok Bot.exe" --variant bare-coordinator-request
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -74,6 +66,8 @@ jobs:
             .cache/windows-package-smoke-*/*.log
             .cache/windows-package-smoke-*/report.json
             .cache/windows-package-smoke-*/lifecycle.json
+            .cache/windows-package-smoke-*/desktop.png
+            .cache/windows-package-smoke-*/desktop-window.json
             .cache/windows-package-smoke-*/renderer.cpuprofile
             .cache/windows-package-smoke-*/activation-probe.json
             .cache/windows-package-smoke-*/native.json

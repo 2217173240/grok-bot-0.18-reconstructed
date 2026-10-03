@@ -65,6 +65,8 @@ jobs:
             .cache/windows-package-smoke-*/*.log
             .cache/windows-package-smoke-*/report.json
             .cache/windows-package-smoke-*/lifecycle.json
+            .cache/windows-package-smoke-*/desktop.png
+            .cache/windows-package-smoke-*/desktop-window.json
             .cache/windows-package-smoke-*/native.json
             .cache/windows-package-smoke-*/renderer-state.json
             .cache/windows-package-smoke-*/ipc-state.json
