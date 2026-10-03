@@ -72,10 +72,10 @@ async function outputRecord(outputRoot, relative) {
   return { path: relative, bytes: (await stat(target)).size, sha256: sha256(await readFile(target)) };
 }
 
-async function prepareProductionActivations(clean, hostBindingManifest, electronMainBindingManifest, composition = runtimeComposition, { reconstructedPackage = false, localPackageBootstrap = false } = {}) {
+async function prepareProductionActivations(clean, hostBindingManifest, electronMainBindingManifest, composition = runtimeComposition, { reconstructedPackage = false, localPackageBootstrap = false, sourceOnly = false } = {}) {
   const [hostActivation, electronMainActivation] = await Promise.all([
-    buildProductionHostIfSupplied({ outputRoot: clean.outputRoot, manifestPath: hostBindingManifest }),
-    buildProductionElectronMainIfSupplied({ outputRoot: clean.outputRoot, manifestPath: electronMainBindingManifest, reconstructedPackage, localPackageBootstrap }),
+    buildProductionHostIfSupplied({ outputRoot: clean.outputRoot, manifestPath: hostBindingManifest, sourceOnly }),
+    buildProductionElectronMainIfSupplied({ outputRoot: clean.outputRoot, manifestPath: electronMainBindingManifest, reconstructedPackage, localPackageBootstrap, sourceOnly }),
   ]);
   const activatedComposition = compositionWithProductionActivations(hostActivation, electronMainActivation, composition);
   const excludedFallbacks = new Set(fallbackSourcesReplacedByActivations(hostActivation, electronMainActivation));
@@ -269,7 +269,7 @@ export async function buildFidelityReconstructedAsar({
     runtimeReference,
   });
   const base = await buildBaseFidelityDistribution({ outputRoot: cleanOutputRoot, artifactPlatform: runtimeReference?.platform ?? "darwin-arm64" });
-  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, base.buildManifest.runtimeComposition, { reconstructedPackage: true, localPackageBootstrap: runtimeReference?.platform === "win32-x64" });
+  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, base.buildManifest.runtimeComposition, { reconstructedPackage: true, localPackageBootstrap: runtimeReference?.platform === "win32-x64", sourceOnly: runtimeReference?.platform === "win32-x64" });
   if (!prepared.hostActivation.clean || !prepared.electronMainActivation.clean) throw new Error("Packaged runtimes require clean host and Electron main activation");
   const clean = await attachCompositionAudit(prepared);
   await overlayCleanDistribution(clean.outputRoot, { stageRoot, composition: clean.buildManifest.runtimeComposition });

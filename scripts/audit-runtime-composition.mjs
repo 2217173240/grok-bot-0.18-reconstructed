@@ -407,22 +407,23 @@ function externalRequires(text, artifact) {
   return [...byModule.values()].sort((left, right) => left.module.localeCompare(right.module));
 }
 
-async function nativeRuntimeInventory() {
-  const roots = ["src/app/dist/native", "src/app/dist/deps"];
+async function nativeRuntimeInventory(platform = "darwin-arm64") {
+  const artifactRoot = upstreamPlatform(platform).sourceRoot;
+  const roots = [path.join(artifactRoot, "dist/native"), path.join(artifactRoot, "dist/deps")];
   const inventory = [];
   for (const root of roots) {
-    const absolute = path.join(repoRoot, root);
+    const absolute = root;
     for (const relative of await walk(absolute)) {
-      if (!root.endsWith("/native") && !relative.endsWith(".node")) continue;
+      if (path.basename(root) !== "native" && !relative.endsWith(".node")) continue;
       const target = path.join(absolute, relative);
       const bytes = await readFile(target);
-      inventory.push({ path: `${root}/${relative}`, bytes: bytes.byteLength, sha256: sha256(bytes), status: "artifact-runtime-boundary" });
+      inventory.push({ path: path.relative(repoRoot, target).split(path.sep).join("/"), bytes: bytes.byteLength, sha256: sha256(bytes), status: "artifact-runtime-boundary" });
     }
   }
   return inventory.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function runnerCompositionClosure({ hostGraph, hostProductionExtensionsGraph, hostActivation, hostMode }) {
+async function runnerCompositionClosure({ hostGraph, hostProductionExtensionsGraph, hostActivation, hostMode, artifactRoot }) {
   const parity = JSON.parse(await readFile(path.join(repoRoot, runnerParityPath), "utf8"));
   const modules = Array.isArray(parity.modules) ? parity.modules : [];
   const allCleanSources = modules.map((module) => module.cleanSource).sort();
@@ -455,7 +456,7 @@ async function runnerCompositionClosure({ hostGraph, hostProductionExtensionsGra
     throw new Error(`Runner composition metadata ownership/reachability mismatch: modules=${modules.length}, duplicateCleanSources=${duplicateCleanSources.join(",") || "none"}, malformedModules=${malformedModules.length}, capsules=${String(parity.summary?.manifestCapsules)}, clean=${String(parity.summary?.cleanModules)}, high=${String(parity.summary?.high)}, directBehaviorAnchors=${directBehaviorAnchors}`);
   }
 
-  const artifact = "src/app/dist/host/host-main.cjs";
+  const artifact = path.relative(repoRoot, path.join(artifactRoot, "dist/host/host-main.cjs")).split(path.sep).join("/");
   const artifactText = await readFile(path.join(repoRoot, artifact), "utf8");
   const sandHostSource = "source/host/sand-host.ts";
   const sandHostText = await readFile(path.join(repoRoot, sandHostSource), "utf8");
@@ -742,7 +743,7 @@ async function checksumPinnedRendererVerdict(outputRoot, requireOutputs, declara
     if (provenance.mode !== declaration.mode) blockers.push("renderer-artifact-provenance-mode-drift");
     if (provenance.upstreamAppAsarSha256 !== artifact.asarSha256) blockers.push("renderer-artifact-source-identity-drift");
     if (provenance.artifactRoot !== expectedRoot || declaration.artifactRoot !== expectedRoot) blockers.push("renderer-artifact-root-drift");
-    const artifactRoot = path.join(repoRoot, expectedRoot);
+    const artifactRoot = path.isAbsolute(expectedRoot) ? expectedRoot : path.join(repoRoot, expectedRoot);
     const files = [];
     for (const relative of await walk(artifactRoot)) {
       const bytes = await readFile(path.join(artifactRoot, relative));
@@ -774,6 +775,8 @@ export async function assertCleanRuntimeClosures({ outputRoot, runtimes = null, 
 }
 
 export async function createRuntimeCompositionAudit({ outputRoot = null, requireOutputs = outputRoot != null, composition = runtimeComposition, hostActivation = null, electronMainActivation = null } = {}) {
+  const artifactPlatform = composition.find(runtime => runtime.runtime === "renderer")?.upstreamPlatform ?? "darwin-arm64";
+  const artifactRoot = upstreamPlatform(artifactPlatform).sourceRoot;
   const effectiveHostActivation = hostActivation ?? await assembleHostProductionBindingManifest();
   const hostBindingStatus = new Map((effectiveHostActivation.inventory ?? []).map(item => [item.path, item.status]));
   const productionBindingStatus = bindingPath => hostBindingStatus.get(bindingPath) === "bound"
@@ -783,7 +786,8 @@ export async function createRuntimeCompositionAudit({ outputRoot = null, require
   const electronAdapterEvidence = await electronProductionAdapterEvidence();
   const runtimes = {};
   let hostEntrypointGraph = null;
-  for (const [runtimeName, spec] of Object.entries(runtimeSpecs)) {
+  for (const [runtimeName, originalSpec] of Object.entries(runtimeSpecs)) {
+    const spec = { ...originalSpec, artifact: path.relative(repoRoot, path.join(artifactRoot, originalSpec.artifact.slice("src/app/".length))).split(path.sep).join("/") };
     const sourceText = await readFile(path.join(repoRoot, spec.entrypoint), "utf8");
     const artifactText = await readFile(path.join(repoRoot, spec.artifact), "utf8");
     const members = interfaceMembers(sourceText, spec.entrypoint, spec.contract);
@@ -860,7 +864,7 @@ export async function createRuntimeCompositionAudit({ outputRoot = null, require
   if (hostEntrypointGraph == null) throw new Error("Host entrypoint graph was not audited");
   const hostMode = composition.find(runtime => runtime.runtime === "host")?.mode ?? null;
   const hostProductionExtensionsGraph = await sourceGraph("source/host/host-production-extensions.ts");
-  const runnerComposition = await runnerCompositionClosure({ hostGraph: hostEntrypointGraph, hostProductionExtensionsGraph, hostActivation: effectiveHostActivation, hostMode });
+  const runnerComposition = await runnerCompositionClosure({ hostGraph: hostEntrypointGraph, hostProductionExtensionsGraph, hostActivation: effectiveHostActivation, hostMode, artifactRoot });
 
   const cleanRuntimeAssertions = await cleanRuntimeVerdicts(outputRoot, requireOutputs, null, composition);
   const rendererDeclaration = composition.find(runtime => runtime.runtime === "renderer") ?? null;
@@ -914,7 +918,7 @@ export async function createRuntimeCompositionAudit({ outputRoot = null, require
     runnerComposition,
     cleanRuntimeAssertions,
     replacementClosures: runtimes,
-    nativeRuntimeBoundaries: await nativeRuntimeInventory(),
+    nativeRuntimeBoundaries: await nativeRuntimeInventory(artifactPlatform),
     summary: {
       cleanAccepted: cleanRuntimeAssertions.filter(item => item.verdict === "clean").map(item => item.runtime),
       cleanNotEvaluated: cleanRuntimeAssertions.filter(item => item.verdict === "not-evaluated").map(item => item.runtime),

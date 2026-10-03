@@ -252,7 +252,7 @@ try {
 `;
 }
 
-export async function validateElectronMainProductionBindingManifest(manifestPath) {
+export async function validateElectronMainProductionBindingManifest(manifestPath, { sourceOnly = false } = {}) {
   const absoluteManifest = path.resolve(repoRoot, manifestPath);
   const manifestBytes = await readFile(absoluteManifest);
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -263,6 +263,10 @@ export async function validateElectronMainProductionBindingManifest(manifestPath
     const missing = expected.filter(key => !actual.includes(key));
     const extra = actual.filter(key => !expected.includes(key));
     throw new Error(`Electron-main production binding manifest is not exact: missing=[${missing.join(",")}] extra=[${extra.join(",")}]`);
+  }
+  if (sourceOnly) {
+    const bindings = await validateElectronMainBindingEntries(manifest.bindings, absoluteManifest, [], { copiedPackages: new Set(), nativePackages: new Set() }, true);
+    return { manifestPath: normalize(path.relative(repoRoot, absoluteManifest)), manifestSha256: sha256(manifestBytes), bindings };
   }
   const runtimeManifest = JSON.parse(await readFile(path.join(sourceAppDir, "dist/deps/runtime-deps-manifest.json"), "utf8"));
   const copiedPackages = new Set(runtimeManifest.copied ?? []);
@@ -359,7 +363,7 @@ export async function assembleElectronMainProductionBindingManifest(manifestPath
   const suppliedPaths = supplied.manifest.bindings.map(binding => binding?.path);
   const allPaths = [...requiredElectronMainProductionBindings].sort();
   if (JSON.stringify([...suppliedPaths].sort()) === JSON.stringify(allPaths)) {
-    const validated = await validateElectronMainProductionBindingManifest(manifestPath);
+    const validated = await validateElectronMainProductionBindingManifest(manifestPath, { sourceOnly });
     return { ...validated, boundBindings: requiredElectronMainProductionBindings, unboundBindings: [], inventory: electronMainProductionBindingInventorySpecs };
   }
   const builtinPathSet = new Set(electronMainProductionBindingInventoryPaths);

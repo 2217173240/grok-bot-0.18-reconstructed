@@ -33,14 +33,46 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | --- | --- | --- |
 | 1. 架构与输入盘点 | 明确桌面/容器边界，核对现有 Windows 分支及原版构件身份 | 已完成源码评审；Windows 原版 EXE 的固定 SHA 已在镜像仓库 manifest 登记 |
 | 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 代码已实现，34 项本机规则/文件检查及源码类型检查通过；Windows Docker 实机部分尚未验证 |
-| 3. 共用启动配置 | 两种入口共用环境/provider 校验；Windows 幂等启动和所属进程关闭 | 共用配置与薄 PowerShell 入口已实现，5 项本机测试通过；实际 Windows 父子进程检查等待 CI，Mac 入口正在整合 |
-| 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 PR #7 已提交，共用 Dockerfile 的真实 Linux amd64 构建正在 CI 执行；尚未登记未验证 digest |
-| 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | 待实现；需要核对 Windows 原版依赖与 renderer，复用现有构建组件 |
-| 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | 待实现；不得用静态平台字符串断言替代运行验证 |
+| 3. 共用启动配置 | 两种入口共用环境/provider 校验；Windows 幂等启动和所属进程关闭 | Mac 与 PowerShell 已接入共享配置；Windows CI 的真实进程树关闭、创建时间核验和 SQLite 启动互斥已通过 |
+| 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7 已合入；run 37133856976 的 151 项门禁与 17 层扫描通过。固定 digest `e53fd2e73fa9257c6c197df32ef793f145545a063682c722cf7cb7e8ef53ade5` 已登记；Release 下载与薄层 CI 正在接入 |
+| 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | 已实现 Windows x64 unsigned portable 构建；固定 EXE、完整原版文件清单及 131 个 renderer 文件/补丁链通过真实提取与 ASAR 检查。Windows native 编译及包运行验证进行中 |
+| 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | Windows runner 已通过源码类型检查和平台/进程测试；完整打包、真实 Electron 和 Linux host/daemon smoke 已接入，等待最终成功结果 |
 | 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 用户已明确：暂无 Windows 机器，本轮保留实机验收待办 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 开发中随进度更新；未验证构件不标为正式可用发行版 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
+
+Windows native 构建使用固定 node-gyp 13.0.2，包含 Node 26/MSVC 的官方 LTO 修复；开发 Node 保持 26.5.0，Electron 保持 42.1.0/ABI 146。[node-gyp 修复说明](https://github.com/nodejs/node-gyp/pull/3331)
+
+## Windows 独立部署
+
+目标机器安装 Docker Desktop 并启用 WSL2、Linux containers。源码构建还需要 Git、Node 26.5.0、Python 与 Visual Studio C++ Build Tools。每台机器使用自己的数据和模型账号。
+
+在 PowerShell 的仓库目录运行：
+
+```powershell
+npm ci
+git clone https://github.com/2217173240/grok-bot-box-image.git .cache/box-image
+node .cache/box-image/scripts/fetch-artifact.mjs base-amd64 --load
+node docker/build-box.mjs --platform linux/amd64
+npm run package:windows
+```
+
+分发目录为 `dist/Grok Bot 0.18 Reconstructed-win32-x64`，同级生成 ZIP。包内 `Grok Bot.exe` 与 `start-local.ps1` 配套使用；启动脚本使用随包 Electron 的 Node，无需给运行机器另装 Node。构建输入或 lockfile 变化后，重新构建执行镜像，使其 deps pin 与包内 `resources/build-stamp.json` 一致。
+
+默认数据目录为 `%LOCALAPPDATA%\GrokBotLocal`，可用 `-DataRoot` 指定其他目录。默认 provider 为 Claude Code；用本地编辑器将自己的 token 写入数据目录中的 `anthropic-token`，只授予当前账号读取权限。模型、API 地址和子模型映射沿用共享启动配置的显式环境变量；其他 provider 使用该数据目录已保存的设置和各自凭据。
+
+在解压后的分发目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 start
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -StopContainer
+```
+
+`stop` 关闭此启动器持有的应用进程；加上 `-StopContainer` 同时停止归属匹配的项目容器，保留镜像、工作文件和数据卷。`restart` 在停止前检查新配置。直接打开 EXE 也会读取相同本地配置，缺少必需配置时显示错误。
+
+当前 ZIP 为未签名开发验证包。Windows 10/11 的 SmartScreen、Docker Desktop/WSL2、含中文和空格的实际挂载、UI 文件/MCP/Computer、审批、取消与升级由步骤 7 的真实机器验收覆盖。
 
 ## 主要困难和验证重点
 
