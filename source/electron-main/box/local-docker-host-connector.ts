@@ -798,7 +798,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // pre-existing provider-less file from an older boot would survive a
     // write-only-if-absent seed — observed live). The Mac is the source of
     // truth; the merge runs only at container creation.
-    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
+    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\\n");`;
     const seeded = await runDocker(["run", "--rm", "--platform", image !== LOCAL_DOCKER_BOX_IMAGE ? platform.dockerPlatform : "linux/amd64", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     if (!seeded.ok) throw new Error(`Could not prepare local Docker settings: ${seeded.output}`);
     const authMounts = localClaudeMountArguments(claudeMount);
