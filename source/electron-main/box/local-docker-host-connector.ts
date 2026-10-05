@@ -33,6 +33,11 @@ export const SELF_BUILT_EXEC_BOX_IMAGE = localDockerPlatform().image;
 // fallback would trade an actionable failure for a silent one.
 export const SELF_BUILT_DEPS_PIN_LABEL = "com.grok-bot.local-vm.deps-pin";
 
+// 执行镜像里的 box 用户。种子步骤以 root 运行，只为把数据卷根目录和写入的
+// 设置文件交还给它，容器内的 host 与 daemon 才能继续读写自己的数据目录。
+export const SAND_BOX_UID = 1000;
+export const SAND_BOX_GID = 1000;
+
 export interface SelfBuiltImageProbe {
   readonly present: boolean;
   /** The image's baked deps-pin label; undefined when absent or unlabelled. */
@@ -798,8 +803,13 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // pre-existing provider-less file from an older boot would survive a
     // write-only-if-absent seed — observed live). The Mac is the source of
     // truth; the merge runs only at container creation.
-    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\\n");`;
-    const seeded = await runDocker(["run", "--rm", "--platform", image !== LOCAL_DOCKER_BOX_IMAGE ? platform.dockerPlatform : "linux/amd64", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
+    // The volume is mounted at the path production uses. A path absent from the
+    // image is created as root, so the box user could not write to it, and the
+    // same root-owned volume would then be unwritable for the real container.
+    // The data root is also chowned for volumes that already exist with the
+    // wrong owner; the seed runs as root only to do that.
+    const mergeScript = `const fs=require("node:fs");const d=${JSON.stringify(SAND_BOX_DATA_ROOT)};const p=d+"/settings.json";const st=fs.statSync(d);if(st.uid!==${SAND_BOX_UID}||st.gid!==${SAND_BOX_GID})fs.chownSync(d,${SAND_BOX_UID},${SAND_BOX_GID});let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\\n");fs.chownSync(p,${SAND_BOX_UID},${SAND_BOX_GID});`;
+    const seeded = await runDocker(["run", "--rm", "--user", "root", "--platform", image !== LOCAL_DOCKER_BOX_IMAGE ? platform.dockerPlatform : "linux/amd64", "--volume", `${dataVolume}:${SAND_BOX_DATA_ROOT}`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
     if (!seeded.ok) throw new Error(`Could not prepare local Docker settings: ${seeded.output}`);
     const authMounts = localClaudeMountArguments(claudeMount);
     // Plugin definitions are the one input the box cannot obtain for itself.
