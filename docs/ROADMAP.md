@@ -4,7 +4,7 @@
 
 ## 已交付能力
 
-Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批流程；宿主启动与进程操作由平台适配处理。2026-10-05，`868304d` 在 Windows 10 22H2 + Docker Desktop/WSL2 上完成启动、容器替换、数据保留、真实回合、ExternalShell 审批及取消验证；其余功能沿用历史证据并复核数据。本轮已恢复旧版本与匹配镜像，升级版本对为 `5bfad0b → 868304d`，实机执行需要 Windows 宿主连接，详见部署文档。
+Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批流程；宿主启动与进程操作由平台适配处理。2026-10-05，`868304d` 在 Windows 10 22H2 + Docker Desktop/WSL2 上完成启动、容器替换、数据保留、真实回合、ExternalShell 审批及取消验证；其余功能沿用历史证据并复核数据。本轮已在同一台实机用旧版构件与匹配镜像完成跨版本升级，会话、设置、工作文件与数据卷全部保留，升级后回合正常，详见部署文档。
 
 - local admin、容器内 agent 回合、第三方推理、文件与 MCP、Computer、图片附件及前台 Task 结果交付。
 - Mac 默认使用 Colima `grokbot`；Windows/Linux 默认采用当前 Docker context。其他 runtime 通过显式 context 或 host 选择，本地回合在 Linux 容器执行。
