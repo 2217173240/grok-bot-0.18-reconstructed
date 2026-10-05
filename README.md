@@ -106,6 +106,7 @@ To add a local MCP server, create `~/.grokbot-local/mcp-config/shared/mcp-server
 | --- | --- |
 | CI on `main` and on pull requests | TypeScript checks, regression tests, editable frontend build, publication checks and secret scanning; current evidence is recorded in [ROADMAP](docs/ROADMAP.md) |
 | macOS package | repository tests, package verification, and the native `arm64` container's execution and desktop gates |
+| Windows x64 package and physical machine | CI package and GUI checks; `868304d` verified on Windows 10 22H2 with Docker Desktop/WSL2 for startup, container replacement, data preservation, ExternalShell approvals and cancellation. See [Windows evidence and upgrade validation](docs/WINDOWS-DOCKER-PORTABILITY.md). |
 | Local-admin UI, live | conversation, container files, MCP echo, image attachments and image Read; approval denial prevents execution and Allow once executes once |
 | Computer plane, live | `glm-5.3-flash` opens example.com, reads the heading, moves the pointer, uses keyboard navigation and returns a screenshot; audit counts reflect the actions |
 | Egress ledger | no Cursor/xAI egress recorded during the verified path, in both the Mac and container intercept ledgers |
@@ -117,8 +118,8 @@ The exact scope, per-flow evidence, and the account-specific items still open ar
 
 1. **No license is granted.** [NOTICE.md](NOTICE.md) states that no upstream source-code license is asserted or granted, and that publishing or distributing the repository needs an independent review of copyright, trademark, dependency, and service-terms obligations. GitHub therefore reports no license, which means the default all-rights-reserved terms apply.
 2. **The packaged renderer is the pinned original.** The shipped 0.18.0 renderer contains optimized bundles without authored source or source maps, so `frontend/` is a partial evidence-backed reconstruction and packaged builds keep the original renderer with a narrow settings transform.
-3. **macOS arm64 only.** The repository preserves the Windows x64 installer for research continuity and produces no Windows build.
-4. **The original 0.18.0 app is a build input.** `npm run bootstrap` obtains and verifies it, and `npm run package` plus `npm run verify` need it. The test suite itself runs on a fresh checkout without it, the way CI does.
+3. **Platform scope.** Builds target macOS arm64 and Windows x64. Physical Windows evidence covers Windows 10 22H2 with Docker Desktop/WSL2; Windows 11 and ARM64 have no physical-machine acceptance record in this round. The Windows portable package is unsigned.
+4. **The original 0.18.0 app is a build input.** Platform bootstrap obtains and verifies the matching original package. On macOS, bootstrap also installs and verifies the complete Electron runtime before parallel tests.
 5. **Account-specific providers are partly unverified.** OpenRouter and Command Code had no local keys, so no live account call was made; passkey and human-takeover flows need a user-controlled account and manual interaction.
 6. **The app is ad-hoc signed with a different bundle ID.** It is not notarized, does not carry the upstream signature, and macOS will show Gatekeeper prompts.
 7. **One pinned release.** Behaviour against other model services, other macOS versions, or a newer Grok Bot release is untested.

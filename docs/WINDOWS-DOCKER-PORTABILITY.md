@@ -37,12 +37,12 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 的历史 Windows 10 22H2 包通过启动、文本、文件、图片、Computer、MCP、重启和容器替换；审批、取消与升级未完成。当前平台路由分支需要重新执行物理机器端到端验收，历史结果见下文 |
-| 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 文档与未签名 portable ZIP 已具备；源码和秘密扫描通过。Mac 全量检查 333 项：319 通过、14 项环境/平台跳过、零失败。已移除临时 renderer 隔离实验并清理本地实验副本；Windows 实机验收继续保留为步骤 7 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。跨程序版本升级 `5bfad0b → 868304d` 已在同一台机器完成，会话、设置、工作文件与数据卷全部保留，升级后回合正常 |
+| 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | `868304d` 的 Mac、Windows、Linux 和仓库 CI 全部通过；跨程序版本升级纳入本轮。Windows 应用与容器已停止，数据卷、镜像和验收文件保留 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
 
-上表保留已有构建和验收证据。当前平台路由实现、Mac 真实交互记录和各平台 CI 入口见[环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)。当前版本的物理 Windows 端到端验收按下文步骤执行。
+上表保留已有构建和验收证据。平台路由实现、Mac 真实交互记录和各平台 CI 入口见[环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)。下文记录 `868304d` 的 Windows 实机结果与历史版本恢复后的升级验证。
 
 Windows native 构建使用固定 node-gyp 13.0.2，包含 Node 26/MSVC 的官方 LTO 修复；开发 Node 保持 26.5.0，Electron 保持 42.1.0/ABI 146。[node-gyp 修复说明](https://github.com/nodejs/node-gyp/pull/3331)
 
@@ -133,9 +133,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 | MCP | 通过 | 服务器 `acceptance-echo` 状态为 `ready`，工具 `echo` 被列出；调用返回 `echo: WINDOWS-MCP-C4` |
 | 重启与数据保留 | 通过 | 连续两次 `restart` 后容器标识不变（`451e161d…`），会话、设置与工作文件均保留；推理配置变化引起容器更换时，数据卷继续沿用，转录与工作文件同样保留 |
 | 容器替换 | 通过 | 容器被替换为新容器（标识由 `d6d41d92…` 变为 `451e161d…`），未删除数据卷，替换后转录 12 条记录与工作文件内容完整 |
-| 审批 | 未完成 | 当次 Shell、Computer 与 MCP 调用记录为 `permission-allowed`，未出现审批卡，拒绝与单次允许未验收。当前验收应在 Settings 开启自动审查并配置 `blockInstructions` 触发人工审批 |
-| 取消 | 未完成 | 当次确认界面没有独立 Stop 控件，点击发送按钮位置与按下 Esc 未中断输出。尚未验收当前支持的“发送新用户消息以中断正在执行的回合”路径 |
-| 升级 | 未验证 | 两个可识别版本都存在（基线 `90db1aa` 与修复后 `2307264`，deps pin 相同），但基线版本在本机无法运行：它创建容器时命中上文第 1 个缺陷，`start` 报 gateway 超时，容器始终没有建立。旧版本无法进入运行状态，升级无法从它开始；按预定边界不做数据库降级，也不用同版本重新解压充当升级 |
+| 审批 | 已在当前提交完成 | 当次 Shell、Computer 与 MCP 调用记录为 `permission-allowed`，未出现审批卡。`868304d` 的验收用 `ExternalShell` 桥接路径触发审批卡，完成了拒绝、单次允许与权限范围三项，结果见下文当前提交的验收 |
+| 取消 | 已在当前提交完成 | 当次确认界面没有独立 Stop 控件，点击发送按钮位置与按下 Esc 未中断输出。`868304d` 的验收证实中断入口是发送新用户消息，结果见下文当前提交的验收 |
+| 升级 | 已在当前提交完成 | 当次基线 `90db1aa` 在本机无法启动（命中上文第 1 个缺陷，`start` 报 gateway 超时），没有可用的升级起点。改用重建后的 `5bfad0b` 作为旧版，`5bfad0b → 868304d` 的实机升级已完成，结果见下文当前提交的验收 |
 | 另一个盘符 | 通过 | 以 `D:\GrokBot 验收 第二盘符` 作为数据目录（含中文与空格），容器被替换为新容器后，实际挂载为 `D:\GrokBot 验收 第二盘符\box-workspace -> /workspace`；agent 在其中创建 `second-drive.txt`，内容为 `SECONDDISK-D5 第二盘符 验证。`，两侧 SHA-256 同为 `58600569…`。数据卷未删除 |
 
 ### 本轮修复的产品缺陷
@@ -153,12 +153,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 当次宿主 Windows 把 TCP 1324 至 1423 保留给 Hyper-V 与 WSL 动态使用，1340 位于其中，容器端口发布以 `WSAEACCES` 失败，`docker start` 报 `ports are not available`。用户自行处理宿主端口保留、释放 1340 后，重新执行 `start` 显示「应用已经启动，Docker gateway 运行正常」，容器正常建立并发布 1340。遇到同类错误时，检查端口占用和保留区间，由机器管理者处理对应冲突。
 
-### 当前分支的 Windows 端到端验收
+### 当前提交的 Windows 端到端验收（2026-10-05，`868304d`）
 
-1. **完整流程**：在物理 Windows x64 + Docker Desktop/WSL2 上记录当前提交、应用与镜像身份，重复启动、文本、含中文空格及第二盘符的文件、图片、MCP、Computer、重启和数据保留检查。
-2. **审批**：在 Settings 开启自动审查，并配置能够命中测试动作的 `blockInstructions`；验证拒绝阻止执行、Allow once 仅执行一次。`source/host/extensions/auto-review/extension.ts` 为 local admin 提供 `enforce` override；`source/host/runner/sand-auto-review.ts` 仍优先处理 `settingsEnabled=false`，关闭全部审查。仅凭 `sand_auto_review=0` 不能判断最终模式。
-3. **取消与下一条回复**：在回合执行中发送新的用户消息。`source/host/extensions/transcript/send-turn-dispatch.ts` 会调用 `interrupt` 中断当前回合；核对对应任务进程退出、新回合正常回复以及 transcript。当前界面没有独立 Stop 按钮。
-4. **升级**：使用两个都可运行、身份明确的版本，验证会话、设置、工作文件和数据卷保留。历史基线 `90db1aa` 在该机器无法启动，未提供可用的升级起点；同版本重新解压不计作升级。
+同一台 Windows 10 22H2 机器，提交 `868304dbedc3021b34f212a482ac8b78af208a3b`。执行镜像按当前 Dockerfile 重建，deps pin 为 `4277dbdd2e54504445725340b8c8d04dc4f733e366c9968a2d31057947cf9812`；CI 构件 `windows-portable-package` 的 build stamp 记录同一 `sourceRevision` 与同一 deps pin，`upstreamAsarSha256` 与历史包相同。
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| 启动与容器替换 | 通过 | 换成新包后，容器因宿主 hash 变化被替换（标识 `afee8c28…` 变为 `396b0f8a…`），`status` 报「应用已经启动，Docker gateway 运行正常」，1340 正常发布；数据卷未删除 |
+| 数据保留 | 通过 | 替换后转录 68 条记录完整，`winaccept-test.txt`、`cancel-test.txt`、`second-drive.txt` 内容不变；容器挂载仍指向同一含中文与空格的数据目录 |
+| 真实回合 | 通过 | 界面发送后的 Shell 调用返回 `APPROVAL-TEST-A7`，回合与转录正常 |
+| 审批拒绝 | 通过 | `ExternalShell` 写入请求弹出审批卡（`Deny once`、`Allow once`、`Always allow`、`Never`）；选择 `Deny once` 后目标文件在宿主与容器两侧都不存在 |
+| 审批单次允许 | 通过 | 同一动作选择 `Allow once` 后文件真实产生，内容为 `APPROVAL-ALLOW-D9`，18 字节单行；随后该测试文件由本轮清理 |
+| 审批权限范围 | 通过 | `Allow once` 不产生长期授权：下一次同类请求再次弹出审批卡。设置中的 `localToolPermission` 保持默认 `ask`，容器宿主设置同为 `ask` |
+| 取消与下一条回复 | 通过 | 回合执行中发送新的用户消息后，当前回合以 `outcome=cancelled` 结束（provider 阶段 `durationMs` 13 477、清理 435 毫秒），随后新回合正常回复 `INTERRUPT-F2`；界面没有独立 Stop 按钮，中断入口是发送新消息 |
+| 任务中途停止写入 | 通过 | agent 以 `block_until_ms` 阻塞方式运行每秒两行写入 `interrupt-test.txt` 的循环；回合结束时该任务停在 23 行（共 40 次），容器内没有留下该循环的进程，`tool-bridge`、`provider`、`turn` 三个阶段都记为 `cancelled`，清理约 1 秒。触发这次取消的具体动作未能从账本归属于某一个用户操作 |
+| 文件、图片、Computer、MCP、重启 | 沿用历史证据并复核数据 | 功能结果沿用上一轮记录；本轮换包后重新核对挂载、工作文件与数据保留 |
+
+此次审批通过 `ExternalShell` 的“在用户计算机上执行命令”桥接路径触发，验证 `localToolPermission=ask` 下的拒绝、单次允许与权限范围。容器 Shell 的自动审查路径已有 Mac 验证记录，两条路径分别记录。
+
+**跨程序版本升级已在同一台机器上完成，版本对为 `5bfad0b → 868304d`。** `5bfad0b` 与此前实机通过的 `2307264` 运行代码、构建脚本和依赖清单完全相同。旧版 [Windows 构件及 GUI 检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 和 [Linux amd64 镜像、工具、生产 host/daemon 与数据保留检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 均已重新完成，旧镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。
+
+实际执行顺序与结果：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 旧版启动 | `5bfad0b` 包配旧执行镜像（pin `69f36880…`）执行 `start`，报「应用已经启动，Docker gateway 运行正常」；容器按旧 pin 建立 |
+| 旧版写入数据 | 旧版回合创建 `upgrade-old.txt`，内容 `UPGRADE-FROM-5bfad0b`；转录为 105 条记录 |
+| 停止与替换镜像 | `stop -StopContainer` 后容器停止；执行镜像标签切回新 pin `4277dbdd…` |
+| 新版启动与容器替换 | `868304d` 包执行 `start` 报同一健康结果；容器按新 pin 重新建立（pin 标签由 `69f36880…` 变为 `4277dbdd…`） |
+| 数据保留 | 旧版写入的 `upgrade-old.txt` 内容不变；转录仍为 105 条；数据卷、盒内设置与数据目录设置均保留；工作目录在宿主与容器两侧文件一致 |
+| 新版正常回合 | 升级后新回合返回 `UPGRADE-NEW-OK`，转录增至 108 条 |
+
+旧执行镜像与新执行镜像在本机各占一份，升级过程未删除数据卷，也未做数据库降级。
+
+本轮清理后应用进程为零，`grok-bot-local-vm` 已停止，1340 已释放，`winnat` 运行中。审批允许测试产生的宿主文件已删除；验收数据目录中的工作文件、数据卷与镜像继续保留。
+
+本轮清理后应用进程为零，`grok-bot-local-vm` 已停止，1340 已释放，`winnat` 运行中。审批允许测试产生的宿主文件已删除；验收数据目录中的工作文件、数据卷与镜像继续保留。
 
 ### 其他观察
 
@@ -168,4 +198,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ## 保留的验收与发布边界
 
-用户授权本轮完成 Windows 适配与 Windows CI，明确接受真实 Windows 机器验收待办，预期使用 Win10 测试。正式宣称 Windows 支持已验收前，需要在对应 Windows x64 + Docker Desktop/WSL2 上完成步骤 7。公开签名发行另需发布者证书，开发测试包必须明确标记签名状态。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。
+Windows 实机证据覆盖上述 Windows 10 22H2 x64 + Docker Desktop/WSL2 环境，升级构件验证与实机升级结果分别记录。Windows 11 与 Windows ARM64 没有本轮实机验收记录。公开签名发行另需发布者证书，当前 portable ZIP 为未签名开发测试包。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。
