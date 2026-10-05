@@ -32,7 +32,7 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 步骤 | 完成条件 | 当前状态与证据 |
 | --- | --- | --- |
 | 1. 架构与输入盘点 | 明确桌面/容器边界，核对现有 Windows 分支及原版构件身份 | 已完成源码评审；Windows 原版 EXE 的固定 SHA 已在镜像仓库 manifest 登记 |
-| 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 统一 runtime profile 与 Docker client 已实现；应用、启动器、构建与容器检查共用配置。当前分支仍需 Windows Docker 物理机器端到端验收 |
+| 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 统一 runtime profile 与 Docker client 已实现；应用、启动器、构建与容器检查共用配置。`868304d` 已完成 Windows 10 22H2 + Docker Desktop/WSL2 实机验收，结果见下文 |
 | 3. 共用启动配置 | 两种入口共用环境/provider 校验；Windows 幂等启动和所属进程关闭 | Mac 与 PowerShell 已接入共享配置；Windows CI 的真实进程树关闭、创建时间核验和 SQLite 启动互斥已通过 |
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
@@ -171,7 +171,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 此次审批通过 `ExternalShell` 的“在用户计算机上执行命令”桥接路径触发，验证 `localToolPermission=ask` 下的拒绝、单次允许与权限范围。容器 Shell 的自动审查路径已有 Mac 验证记录，两条路径分别记录。
 
-**跨程序版本升级已在同一台机器上完成。** 旧版为升级前那个已通过实机验收的构件：其运行代码包含本轮两个种子修复，但没有后续的平台路由改动，执行镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。旧版 [Windows 构件及 GUI 检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 和 [Linux amd64 镜像、工具、生产 host/daemon 与数据保留检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 均已重新完成，构件由这两次运行产出，不再依赖任何已删除的分支引用。
+**跨程序版本升级已在同一台机器上完成，版本对为 `5bfad0b → 868304d`。** 旧版源码为 `5bfad0b13af0a0a174b4426fca22f7550c40aa4e`，固定在 [acceptance/windows-5bfad0b](https://github.com/2217173240/grok-bot-0.18-reconstructed/tree/acceptance/windows-5bfad0b) 标签。其运行代码包含两个种子修复，执行镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。
+
+[Windows CI 37322980106](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 生成该源码的 Windows 包并通过 GUI 检查。实际升级使用的旧执行镜像在 Windows 本机按该源码重建，并核对 deps pin；[Linux CI 37323356508](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 另行验证该源码的镜像构建、桌面工具、生产 host/daemon 与数据保留，只上传检查日志和报告。固定源码标签用于构件过期后的重新构建。
 
 实际执行顺序与结果：
 

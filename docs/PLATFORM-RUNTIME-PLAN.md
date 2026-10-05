@@ -34,15 +34,20 @@
 - 核对本地审批的实际配置与调用路径；local admin 的 `enforce` override 优先于实验开关。
 - 核对用户中断回合的完整路径，区分排队消息取消、当前回合中断和进程退出。
 - 更新部署文档中的端点选择及版本要求，提供本轮构件对应的 Windows 验收步骤。
-- 完成推送、CI 跟进和必要修复后，停止本次测试进程、容器和虚拟机；Windows 用户机器的端到端验收单独保留。
+- 完成 Mac 与 Windows 实机验收、推送及 CI 检查，记录构件身份与验证结果，停止本次测试进程、容器和虚拟机，保留用户数据。
 
 ## 验证记录
 
-2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。当次 Mac 包的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败；该包含「propagate turn cancellation to container RPC calls」，已并入 `868304d`。
+2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。Mac 包 `327784b` 的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败。
 
-Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用两个可识别的 Mac 构件（前一个含「resolve local runtime configuration through platform adapters」，后一个含「propagate turn cancellation to container RPC calls」，两者均已并入 `868304d`），沿用隔离数据目录、卷及会话。
+Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用以下两个构件，沿用隔离数据目录、卷及会话。表中保留实际 build stamp 的 `sourceRevision`；验收标签固定对应源码，两者的运行代码均已并入 `868304d`。
 
-同一 Mac 构件的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
+| Mac 构件 | build stamp 的 sourceRevision | 固定源码标签 |
+| --- | --- | --- |
+| 升级前 | `f59fbf857569199f902a021107cc28addfe7c0e1` | [acceptance/macos-f59fbf8](https://github.com/2217173240/grok-bot-0.18-reconstructed/tree/acceptance/macos-f59fbf8) |
+| 升级后 | `327784bdd54195940ab3b2a662a52dc3e038e68a` | [acceptance/macos-327784b](https://github.com/2217173240/grok-bot-0.18-reconstructed/tree/acceptance/macos-327784b) |
+
+Mac 构件 `327784b` 的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
 
 中断后的下一回合再次读取升级前的两个文件，确认拒绝文件与延迟文件均不存在，并调用 MCP 返回 `echo:UPGRADE_AND_CANCEL_OK`。镜像构建入口也使用同一 profile，已用数据目录中的 Docker host 配置完成真实 arm64 构建。
 
