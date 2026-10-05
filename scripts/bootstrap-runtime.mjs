@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { archivedDmg, cachedDmg, cachedRuntimeApp, dmgSha256, dmgUrl } from "./lib/config.mjs";
+import { archivedDmg, cachedDmg, cachedRuntimeApp, dmgSha256, dmgUrl, repoRoot } from "./lib/config.mjs";
 import { run } from "./lib/process.mjs";
 import { cacheRuntimeFromApp, hydrateSourcePayloadFromRuntime, validateRuntimeApp } from "./lib/runtime.mjs";
 import { SYSTEM_TOOLS } from "./lib/system-tools.mjs";
+import { verifyInstalledElectronShell } from "./lib/source-only-package.mjs";
 
 async function exists(target) {
   try {
@@ -76,6 +77,10 @@ async function extractRuntime() {
     await rm(mountRoot, { recursive: true, force: true });
   }
 }
+
+// Electron 42 按需下载；并发进程测试开始前完成安装及完整性校验。
+await run(process.execPath, [path.join(repoRoot, "node_modules/electron/install.js")]);
+await verifyInstalledElectronShell();
 
 const configuredApp = process.env.GROK_BOT_018_APP?.trim();
 let runtimeApp;
