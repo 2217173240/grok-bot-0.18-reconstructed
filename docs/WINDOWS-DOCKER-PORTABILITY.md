@@ -166,6 +166,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 | 审批单次允许 | 通过 | 同一动作选择 `Allow once` 后文件真实产生，内容为 `APPROVAL-ALLOW-D9`，18 字节单行；随后该测试文件由本轮清理 |
 | 审批权限范围 | 通过 | `Allow once` 不产生长期授权：下一次同类请求再次弹出审批卡。设置中的 `localToolPermission` 保持默认 `ask`，容器宿主设置同为 `ask` |
 | 取消与下一条回复 | 通过 | 回合执行中发送新的用户消息后，当前回合以 `outcome=cancelled` 结束（provider 阶段 `durationMs` 13 477、清理 435 毫秒），随后新回合正常回复 `INTERRUPT-F2`；界面没有独立 Stop 按钮，中断入口是发送新消息 |
+| 任务中途停止写入 | 通过 | agent 以 `block_until_ms` 阻塞方式运行每秒两行写入 `interrupt-test.txt` 的循环；回合结束时该任务停在 23 行（共 40 次），容器内没有留下该循环的进程，`tool-bridge`、`provider`、`turn` 三个阶段都记为 `cancelled`，清理约 1 秒。触发这次取消的具体动作未能从账本归属于某一个用户操作 |
 | 文件、图片、Computer、MCP、重启 | 通过 | 与前一轮相同的代码路径和同一数据目录，本轮换包后挂载、工作文件与数据保留均已复核 |
 
 本轮仍未完成的项目：
