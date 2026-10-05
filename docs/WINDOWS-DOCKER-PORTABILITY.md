@@ -37,7 +37,7 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 用户已明确：暂无 Windows 机器，本轮保留实机验收待办 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在 Windows 10 22H2 实机完成：启动与幂等、真实文本回合、中文空格挂载的文件读写、图片读取、Computer 桌面与容器浏览器、MCP 连接与调用、重启与容器替换后的数据保留均通过。审批与取消两项在本配置下无法触发，升级缺少第二个版本，详见下文实机验收证据 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 文档与未签名 portable ZIP 已具备；源码和秘密扫描通过。Mac 全量检查 333 项：319 通过、14 项环境/平台跳过、零失败。已移除临时 renderer 隔离实验并清理本地实验副本；Windows 实机验收继续保留为步骤 7 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
@@ -91,6 +91,67 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 现有 `codebase-design` 用于定义集中平台接口，`review` 用于代码及需求审查，`diagnosing-bugs` 用于真实跨平台故障定位，`archify` 用于需要时更新架构图。无需为了 Windows 重做前端。
 
 已检索 Microsoft 官方 [winapp-frameworks](https://github.com/microsoft/winappCli/blob/main/plugins/winapp/skills/winapp-frameworks/SKILL.md) 与 [winapp-package](https://github.com/microsoft/winappCli/blob/main/plugins/winapp/skills/winapp-package/SKILL.md)：前者提供 Electron/Windows 框架接入说明，后者用于 MSIX 打包、manifest 和签名。它们适合后续需要 MSIX/Windows package identity 时参考；当前不因为存在 skill 就引入 Windows App SDK 或重写界面。已完成来源与内容核对，未安装额外 skills。
+
+## Windows 实机验收证据（2026-10-05）
+
+在一台 Windows x64 实机、本机 Docker Desktop 的 Linux 容器中执行。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。
+
+### 机器与运行身份
+
+| 项目 | 实际值 |
+| --- | --- |
+| 操作系统 | Windows 10 Pro for Workstations 22H2，内部版本 19045.6332，x64 |
+| 处理器与内存 | Intel Core i7-11800H（8 核 16 线程），31.5 GB |
+| WSL | 2.5.9.0，内核 6.6.87.2-1；Ubuntu 与 docker-desktop 两个发行版均在运行 |
+| Docker | Docker Desktop 4.93.0，Engine 29.8.1，context `desktop-linux`，引擎为 linux/amd64 |
+| 容器镜像存储 | `UseContainerdSnapshotter=true`；固定归档导入后 RepoDigest 保留 |
+| 固定基础镜像 | `grok-box-base@sha256:e53fd2e73fa9257c6c197df32ef793f145545a063682c722cf7cb7e8ef53ade5`，归档大小与 SHA-256 与镜像仓库 manifest 登记一致，`sourceRevision` 为 `d7e8cc18` |
+| 执行镜像 | `grok-bot-exec-box:amd64`，镜像标识 `sha256:954024ef…`，平台 linux/amd64，deps pin 与应用 build stamp 同为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589` |
+| 构建环境 | 便携 Node 26.5.0 与 npm 11.17.0；系统 Node 22.14.0；Git 2.52.0.windows.1；Python 3.11.7 |
+| 模型账号 | provider `claude-code`，地址 `https://api.deepseek.com/anthropic`，主模型与各子模型均为 `deepseek-v4-flash`；凭据只以数据目录中的 `anthropic-token` 提供，限制为当前 Windows 账号可读 |
+
+系统和硬件条件与 Docker 官方 Windows 要求一致：WSL 2.1.5 以上、Windows 10 22H2 build 19045、LanmanServer 已启动并设为自动。本轮只覆盖 Windows 10 22H2，不据此声明 Windows 11 或 Windows ARM64 已验收。
+
+### 逐项结果
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| 构建与镜像身份 | 通过 | 本机 `npm ci` 与 `npm run package:windows` 成功，产出 175 774 193 字节 ZIP；`verifyWindowsPackage` 在同一命令内通过；包内 build stamp 的 `depsPin` 与执行镜像标签一致，`upstreamAsarSha256` 与基线包相同 |
+| 启动、界面与幂等 | 通过 | `start-local.ps1 start` 后 `status` 报告「应用：运行中」「Docker gateway：运行正常」；再次执行 `start` 只输出「应用已经运行」，进程数与容器数不变 |
+| 容器身份与实际挂载 | 通过 | 容器 `grok-bot-local-vm` 标签含 owner、deps pin、schema version 与基础镜像 digest；`/workspace` 的来源为含中文与空格的宿主目录，另有只读的推理凭据、host、daemon 与 MCP 配置挂载 |
+| 真实文本回合 | 通过 | 界面输入提示词后，模型经容器返回标记 `WINACCEPT-A1`；容器性能账本记录 `turn` 成功、耗时 11.5 秒、首次可见文字 8.3 秒、输入 34 983 与输出 102 个 token |
+| 会话记录与重新打开 | 通过 | 数据卷 `agent-transcripts` 中的记录含用户消息、`SendMessage` 工具调用与最终文本；应用重启后界面完整回到此前的全部往返 |
+| 文件与路径 | 通过 | agent 在 `/workspace` 创建并在其后追加内容；同一文件的 SHA-256 在 Windows 侧与容器侧一致（`5c0adff2…` 与 `2cda2821…`），内容含中文并由界面回读核对 |
+| 图片读取 | 通过 | 以剪贴板粘贴附件后提问，模型只回答图内标记 `ORBIT 7319`；转录中该用户消息带 `[Image]` 前缀 |
+| Computer 与容器桌面 | 通过 | 容器账本记录 `Computer` 的 `screenshot`、`click` 与 `wait` 动作并各自产生截图；容器浏览器打开 example.com 后页面标题为 `Example Domain`；容器截图为 1280x800，与容器 X 显示尺寸一致，宿主桌面为 1707x960，操作未涉及宿主桌面 |
+| MCP | 通过 | 服务器 `acceptance-echo` 状态为 `ready`，工具 `echo` 被列出；调用返回 `echo: WINDOWS-MCP-C4` |
+| 重启与数据保留 | 通过 | 连续两次 `restart` 后容器标识不变（`451e161d…`），会话、设置与工作文件均保留；推理配置变化引起容器更换时，数据卷继续沿用，转录与工作文件同样保留 |
+| 容器替换 | 通过 | 容器被替换为新容器（标识由 `d6d41d92…` 变为 `451e161d…`），未删除数据卷，替换后转录 12 条记录与工作文件内容完整 |
+| 审批 | 阻塞 | 本配置把 `sand_auto_review` 置为 0，且 local admin 下宿主工具统一放行：多次 Shell 写入、Computer 动作与 MCP 调用都记为 `permission-allowed`，界面全程未出现审批卡，无法执行拒绝与单次允许 |
+| 取消 | 阻塞 | 回合进行中界面出现 `Working` 状态，但输入区只暴露「Attach file」与「Start voice input」两个控件，没有停止或取消控件；IPC 入口只提供 `cancelTrial`、`cancelLogin` 等，没有取消回合的入口。agent 启动的 Shell 命令在回合结束后仍在容器中继续运行，因此也没有属于该回合的进程可供终止 |
+| 升级 | 未验证 | 只有一组可识别的应用与执行镜像，没有第二个相互匹配的版本，按预定边界不进行同版本重装以外的升级验证，也不尝试数据库降级 |
+| 另一个盘符 | 未验证 | 工作目录由数据目录决定，容器名与 1340 端口固定，同一 Docker 服务上不支持并行实例；换盘符需要停止本轮实例并用第二个数据目录重跑，本轮未执行 |
+
+### 本轮修复的产品缺陷
+
+实机暴露出两个位于同一处、都会让容器无法创建的缺陷，均已修复并各自带一条测试：
+
+1. `source/electron-main/box/local-docker-host-connector.ts` 把设置写入程序交给 `node -e` 时，模板字面量里的 `\n` 被解释为真实换行，生成的程序无法解析，容器创建以 `SyntaxError` 失败。改为 `\\n`。同一缺陷自 `11f0208`（2026-09-18）起存在。既有测试没有覆盖该程序：`scripts/linux-package-smoke.mjs` 使用自己的一行写入程序。
+2. 同一处的种子步骤把数据卷挂到镜像中并不存在的 `/data`。Docker 会把这个挂载点建为 root 所有，以 `box` 运行的容器无法写入，报 `EACCES`；同一个卷再挂给生产容器时目录同样不可写。改为挂到生产使用的 `SAND_BOX_DATA_ROOT`，使新卷继承镜像中该目录的属主，并在种子步骤中以 root 身份把数据目录与设置文件交还 `box` 用户，让已经存在且属主不对的卷也能恢复。
+
+两项改动位于分支 `fix/local-docker-seed-script`，提交为 `620e2b9` 与 `2307264`。先前的实机验收使用的是以此重建的包；`depsPin` 不包含该文件，因此执行镜像无需重建。
+
+### 环境条件与所需用户操作
+
+宿主 Windows 把 TCP 1324 至 1423 保留给 Hyper-V 与 WSL 动态使用，1340 位于其中，容器端口发布以 `WSAEACCES` 失败，`docker start` 报 `ports are not available`。这一项属于宿主配置：绑定的端口在应用内固定，无法通过配置绕开。本轮由用户在提升权限的 PowerShell 中停止 Windows NAT 服务，端口可用后应用自行恢复并建成容器。
+
+同一台机器再次出现该错误时，依次执行 `net stop winnat`、启动应用、`net start winnat` 即可；若保留区间再次覆盖 1340，需要重启机器让区间重新分配。这一类错误的原因是宿主端口保留，与镜像和挂载无关。
+
+### 其他观察
+
+- 容器桌面持续报告磁盘空间不足，界面顶部显示 `Computer is low on disk space`；本轮未执行清理，也未影响已执行的项目。
+- 输入框中的草稿（文字与图片附件）在应用重启后仍然保留。
+- 直接打开 EXE 时读取的是同一套本地配置；缺少必需凭据时按部署文档给出明确错误。
 
 ## 保留的验收与发布边界
 
