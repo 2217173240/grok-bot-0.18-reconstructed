@@ -128,3 +128,23 @@ test("真实 Docker CLI 无法连接选定端点时保持选择并报告失败",
   await assert.rejects(client.inspect(), /unavailable/);
   assert.equal((await client.profile()).docker.value, endpoint);
 });
+
+test("Windows 与 Linux 采用真实 Docker CLI 当前 context 并保持本次选择", async t => {
+  const root = await temporary(t);
+  const env = { ...process.env, DOCKER_CONFIG: path.join(root, "docker-config") };
+  for (const name of ["DOCKER_CONTEXT", "DOCKER_HOST", "GROKBOT_COLIMA_PROFILE"]) delete env[name];
+  await mkdir(env.DOCKER_CONFIG);
+  const docker = args => execFileSync("docker", args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  docker(["context", "create", "routing-first", "--docker", "host=tcp://127.0.0.1:1"]);
+  docker(["context", "create", "routing-second", "--docker", "host=tcp://127.0.0.1:2"]);
+  for (const platform of ["win32", "linux"]) {
+    docker(["context", "use", "routing-first"]);
+    const client = createLocalDockerClient({ platform, arch: "x64", dataRoot: root, env });
+    assert.equal((await client.profile()).docker.value, "routing-first");
+    docker(["context", "use", "routing-second"]);
+    const selected = await client.run(["context", "show"]);
+    assert.equal(selected.ok, true);
+    assert.equal(selected.output, "routing-first");
+    assert.equal(docker(["context", "show"]), "routing-second");
+  }
+});

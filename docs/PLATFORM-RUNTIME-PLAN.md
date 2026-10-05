@@ -9,7 +9,7 @@
 3. 检查 Docker 的实际系统与架构、镜像身份、依赖 pin 和数据目录；通过后才创建或替换容器。
 4. 平台适配负责宿主进程及应用入口；容器初始化、provider、工具、审批、取消和持久化继续共用。
 
-配置选择顺序为显式启动参数、显式环境变量、数据目录中的 `runtime.json`、平台默认值。Docker 的 `DOCKER_CONTEXT` 优先于 `DOCKER_HOST`。Mac 默认连接专属 Colima `grokbot`；Windows 默认使用 Docker CLI 当前 context；其他环境由用户明确指定。选定环境不可用时报告错误，保持选择不变。
+配置选择顺序为显式启动参数、显式环境变量、数据目录中的 `runtime.json`、平台默认值。Docker 的 `DOCKER_CONTEXT` 优先于 `DOCKER_HOST`。Mac 默认连接专属 Colima `grokbot`；Windows 和 Linux 默认使用 Docker CLI 当前 context，首次使用时固定 context 名称。选定环境不可用时报告错误，保持选择不变。
 
 本轮桌面目标为 macOS Apple Silicon 和 Windows x64。Linux arm64/amd64 用于容器与构建验证。宿主架构决定本版本所需的构件，Docker 实际架构必须匹配；其他桌面平台需要自己的构件及验收。
 

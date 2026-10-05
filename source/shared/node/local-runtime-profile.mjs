@@ -85,8 +85,7 @@ export function resolveLocalRuntimeProfile(options = {}) {
   else if (persisted.docker?.host !== undefined) docker = { kind: "host", value: persisted.docker.host, source: "runtime.json" };
   else if (persisted.docker?.colimaProfile !== undefined) docker = { kind: "host", value: `unix://${paths.join(homeDir, ".colima", persisted.docker.colimaProfile, "docker.sock")}`, source: "runtime.json" };
   else if (platform === "darwin") docker = { kind: "host", value: `unix://${paths.join(homeDir, ".colima", "grokbot", "docker.sock")}`, source: "project-colima" };
-  else if (platform === "win32") docker = { kind: "context", value: undefined, source: "docker-active-context" };
-  else docker = { kind: "host", value: "unix:///var/run/docker.sock", source: "linux-default" };
+  else docker = { kind: "context", value: undefined, source: "docker-active-context" };
   const explicitImage = env.SAND_LOCAL_ADMIN_IMAGE?.trim() || env.GROKBOT_IMAGE?.trim();
   const image = explicitImage ? text(explicitImage, "image") : persisted.image ?? target.image;
   if (/\s/.test(image) || image.startsWith("-") || image === "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest") fail("image must select a local execution image");
