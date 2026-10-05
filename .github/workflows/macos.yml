@@ -34,6 +34,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
+      - name: Install Docker CLI for context selection checks
+        run: brew install docker
       - name: Fetch verified macOS inputs
         run: npm run bootstrap
       - name: Check and build the macOS package

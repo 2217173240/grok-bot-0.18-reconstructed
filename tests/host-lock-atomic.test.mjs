@@ -53,8 +53,18 @@ async function worker(t, lockPath, extra = {}) {
   proc.stderr.on('data', data => { stderr += data; });
   const ended = once(proc, 'exit');
   t.after(async () => { if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL'); await ended; });
-  assert.deepEqual((await once(proc, 'message'))[0], { ready: true }, stderr);
-  return { proc, ended, go() { const message = once(proc, 'message'); proc.send('go'); return message.then(([value]) => value); } };
+  // 子进程提前退出时报告原因，并清除等待消息的监听器。
+  const nextMessage = async () => {
+    const controller = new AbortController();
+    try {
+      return await Promise.race([
+        once(proc, 'message', { signal: controller.signal }).then(([value]) => value),
+        ended.then(([code, signal]) => { throw new Error(`worker exited before IPC message (code=${code}, signal=${signal}, stderr=${stderr})`); }),
+      ]);
+    } finally { controller.abort(); }
+  };
+  assert.deepEqual(await nextMessage(), { ready: true }, stderr);
+  return { proc, ended, go() { const message = nextMessage(); proc.send('go'); return message; } };
 }
 
 test('真实并发进程在整个持有期间互斥，接管等待旧进程退出', { timeout: 30000 }, async t => {
