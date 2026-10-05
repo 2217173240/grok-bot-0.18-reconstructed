@@ -4,7 +4,7 @@
 
 ## 已交付能力
 
-Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批流程；宿主启动与进程操作由平台适配处理。2026-10-05 的 Windows 历史实机结果保留在部署文档中，当前平台路由版本仍需物理 Windows + WSL2 端到端验收。
+Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批流程；宿主启动与进程操作由平台适配处理。2026-10-05，`868304d` 在 Windows 10 22H2 + Docker Desktop/WSL2 上完成启动、容器替换、数据保留、真实回合、ExternalShell 审批及取消验证；其余功能沿用历史证据并复核数据。仅保留下一程序版本发布后的 `868304d → 新版本` 升级验收，详见部署文档。
 
 - local admin、容器内 agent 回合、第三方推理、文件与 MCP、Computer、图片附件及前台 Task 结果交付。
 - Mac 默认使用 Colima `grokbot`；Windows/Linux 默认采用当前 Docker context。其他 runtime 通过显式 context 或 host 选择，本地回合在 Linux 容器执行。
@@ -83,7 +83,7 @@ Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批
 - 请求 ID 持久历史保留最近 200 条。当前错误关联使用最新 ID，当前回合另有内存记录；未发现该上限影响执行正确性。
 - memory synthesis 的待处理证据是后台内存队列，超限已有 `dropped` 报告；完整对话保存在 transcript。它与决定消息补发的权威状态分别管理。
 - 结构化日志运行期超限已有 `overflow_evicted` 计数与 `dropped` 通知；只核对 checkpoint 恢复的实际缺口。
-- 当前支持 macOS arm64、固定 Electron 42 与 AI SDK v4。升级时验证 safeStorage、SDK 工具/流/用量、原生模块和 CLI 入口；不在本轮引入跨平台重写或大版本迁移。
+- 当前构件覆盖 macOS arm64 与 Windows x64，使用固定 Electron 42 与 AI SDK v4。升级时验证 safeStorage、SDK 工具/流/用量、原生模块和 CLI 入口；平台实机范围见对应部署记录。
 - 开发构建使用 Node 26.5.0；容器 Node 22.23.2 的兼容范围由实际容器门禁验证。版本差异与 experimental 警告单独记录，不能直接当作运行失败。
 - 模型默认值可覆盖；配置可读性错误必须在请求 API 前报告。模型可用性仍由具体 provider 与账号决定。
 

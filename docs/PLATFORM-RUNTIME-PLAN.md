@@ -48,4 +48,6 @@ Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、�
 
 Box Exec 与 Control RPC 显式传递 Context 的取消信号。真实 daemon 回归覆盖 Shell 及子进程退出、延迟写入被阻止、下一条工具调用和 Control deadline。Electron 42 的安装与完整归档校验由 bootstrap 在并发测试前完成。
 
-各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。Windows 历史实机记录及当前版本的端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。
+各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。合并提交 `868304d` 的 Mac、Windows、Linux 与仓库 CI 全部通过。
+
+2026-10-05 的 Windows 10 22H2 实机报告确认：`868304d` 与匹配 amd64 执行镜像通过启动、容器替换、数据保留、真实回合、ExternalShell 审批拒绝与单次允许、权限范围及回合取消；阻塞写入任务中途停止且无残留进程。文件、图片、Computer、MCP 和重启沿用上一轮功能证据，本轮复核挂载与数据。当前仅保留下一程序版本发布后的 `868304d → 新版本` 升级验收，现有环境保持停止并保留。详细证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。
