@@ -38,11 +38,11 @@
 
 ## 验证记录
 
-2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。Mac 包 `327784b` 的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败。
+2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。当次 Mac 包的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败；该包含「propagate turn cancellation to container RPC calls」，已并入 `868304d`。
 
-Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用 `f59fbf8` 与 `327784b` 两个构件，沿用隔离数据目录、卷及会话。
+Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用两个可识别的 Mac 构件（前一个含「resolve local runtime configuration through platform adapters」，后一个含「propagate turn cancellation to container RPC calls」，两者均已并入 `868304d`），沿用隔离数据目录、卷及会话。
 
-`327784b` 的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
+同一 Mac 构件的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
 
 中断后的下一回合再次读取升级前的两个文件，确认拒绝文件与延迟文件均不存在，并调用 MCP 返回 `echo:UPGRADE_AND_CANCEL_OK`。镜像构建入口也使用同一 profile，已用数据目录中的 Docker host 配置完成真实 arm64 构建。
 
@@ -50,4 +50,4 @@ Box Exec 与 Control RPC 显式传递 Context 的取消信号。真实 daemon �
 
 各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。合并提交 `868304d` 的 Mac、Windows、Linux 与仓库 CI 全部通过。
 
-2026-10-05 的 Windows 10 22H2 实机报告确认：`868304d` 与匹配 amd64 执行镜像通过启动、容器替换、数据保留、真实回合、ExternalShell 审批拒绝与单次允许、权限范围及回合取消；阻塞写入任务中途停止且无残留进程。文件、图片、Computer、MCP 和重启沿用上一轮功能证据，本轮复核挂载与数据。本轮升级验证使用已重新构建的 `5bfad0b → 868304d`，旧版 Windows 构件和 Linux 镜像检查通过，实机执行需要 Windows 宿主连接。现有 Windows 环境保持停止并保留。详细证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。
+2026-10-05 的 Windows 10 22H2 实机报告确认：`868304d` 与匹配 amd64 执行镜像通过启动、容器替换、数据保留、真实回合、ExternalShell 审批拒绝与单次允许、权限范围及回合取消；阻塞写入任务中途停止且无残留进程。文件、图片、Computer、MCP 和重启沿用上一轮功能证据，本轮复核挂载与数据。本轮跨版本升级已在同一台实机完成：旧版构件与匹配镜像经 CI 检查后，先用旧版写入数据，再升级到 `868304d`，会话、设置、工作文件与数据卷全部保留，升级后回合正常。现有 Windows 环境保持停止并保留。详细证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。

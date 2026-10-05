@@ -37,7 +37,7 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。跨程序版本升级 `5bfad0b → 868304d` 已在同一台机器完成，会话、设置、工作文件与数据卷全部保留，升级后回合正常 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。跨程序版本升级已在同一台机器完成，会话、设置、工作文件与数据卷全部保留，升级后回合正常 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | `868304d` 的 Mac、Windows、Linux 和仓库 CI 全部通过；跨程序版本升级纳入本轮。Windows 应用与容器已停止，数据卷、镜像和验收文件保留 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
@@ -100,7 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ## Windows 历史实机验收证据（2026-10-05）
 
-本节记录 `fix/local-docker-seed-script` 分支、提交 `620e2b9` 与 `2307264` 对应包在一台 Windows x64 实机、本机 Docker Desktop Linux 容器中的历史结果。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。当前平台路由分支的完整验收需另行记录。
+本节记录只含两个种子修复、尚未包含平台路由改动的包在一台 Windows x64 实机、本机 Docker Desktop Linux 容器中的历史结果。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。该轮之后的完整验收见下文当前提交的记录。
 
 ### 机器与运行身份
 
@@ -135,7 +135,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 | 容器替换 | 通过 | 容器被替换为新容器（标识由 `d6d41d92…` 变为 `451e161d…`），未删除数据卷，替换后转录 12 条记录与工作文件内容完整 |
 | 审批 | 已在当前提交完成 | 当次 Shell、Computer 与 MCP 调用记录为 `permission-allowed`，未出现审批卡。`868304d` 的验收用 `ExternalShell` 桥接路径触发审批卡，完成了拒绝、单次允许与权限范围三项，结果见下文当前提交的验收 |
 | 取消 | 已在当前提交完成 | 当次确认界面没有独立 Stop 控件，点击发送按钮位置与按下 Esc 未中断输出。`868304d` 的验收证实中断入口是发送新用户消息，结果见下文当前提交的验收 |
-| 升级 | 已在当前提交完成 | 当次基线 `90db1aa` 在本机无法启动（命中上文第 1 个缺陷，`start` 报 gateway 超时），没有可用的升级起点。改用重建后的 `5bfad0b` 作为旧版，`5bfad0b → 868304d` 的实机升级已完成，结果见下文当前提交的验收 |
+| 升级 | 已在当前提交完成 | 当次基线 `90db1aa` 在本机无法启动（命中上文第 1 个缺陷，`start` 报 gateway 超时），没有可用的升级起点。改用重建后的旧版构件作为升级起点，实机升级已完成，结果见下文当前提交的验收 |
 | 另一个盘符 | 通过 | 以 `D:\GrokBot 验收 第二盘符` 作为数据目录（含中文与空格），容器被替换为新容器后，实际挂载为 `D:\GrokBot 验收 第二盘符\box-workspace -> /workspace`；agent 在其中创建 `second-drive.txt`，内容为 `SECONDDISK-D5 第二盘符 验证。`，两侧 SHA-256 同为 `58600569…`。数据卷未删除 |
 
 ### 本轮修复的产品缺陷
@@ -145,7 +145,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 1. `source/electron-main/box/local-docker-host-connector.ts` 把设置写入程序交给 `node -e` 时，模板字面量里的 `\n` 被解释为真实换行，生成的程序无法解析，容器创建以 `SyntaxError` 失败。改为 `\\n`。同一缺陷自 `11f0208`（2026-09-18）起存在。既有测试没有覆盖该程序：`scripts/linux-package-smoke.mjs` 使用自己的一行写入程序。
 2. 同一处的种子步骤把数据卷挂到镜像中并不存在的 `/data`。Docker 会把这个挂载点建为 root 所有，以 `box` 运行的容器无法写入，报 `EACCES`；同一个卷再挂给生产容器时目录同样不可写。改为挂到生产使用的 `SAND_BOX_DATA_ROOT`，使新卷继承镜像中该目录的属主，并在种子步骤中以 root 身份把数据目录与设置文件交还 `box` 用户，让已经存在且属主不对的卷也能恢复。
 
-两项改动位于分支 `fix/local-docker-seed-script`，提交为 `620e2b9` 与 `2307264`。本轮实机验收使用的是以此重建的包；`depsPin` 不包含该文件，因此执行镜像无需重建。
+两项改动已并入 `868304d`，其提交说明逐条列出了「keep the local Docker settings seed script parseable」与「seed the box settings at the data root the container uses」两条。本轮实机验收使用的是以此重建的包；`depsPin` 不包含该文件，因此执行镜像无需重建。
 
 基线包在这台机器上无法启动：用 `90db1aa` 的包配合同一个数据目录执行 `start`，它命中第 1 个缺陷，`start` 报 gateway 启动超时，容器始终没有建立。因此在修复合入之前，未做过任何改动的用户在这台机器上无法完成首次启动。
 
@@ -171,22 +171,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 此次审批通过 `ExternalShell` 的“在用户计算机上执行命令”桥接路径触发，验证 `localToolPermission=ask` 下的拒绝、单次允许与权限范围。容器 Shell 的自动审查路径已有 Mac 验证记录，两条路径分别记录。
 
-**跨程序版本升级已在同一台机器上完成，版本对为 `5bfad0b → 868304d`。** `5bfad0b` 与此前实机通过的 `2307264` 运行代码、构建脚本和依赖清单完全相同。旧版 [Windows 构件及 GUI 检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 和 [Linux amd64 镜像、工具、生产 host/daemon 与数据保留检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 均已重新完成，旧镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。
+**跨程序版本升级已在同一台机器上完成。** 旧版为升级前那个已通过实机验收的构件：其运行代码包含本轮两个种子修复，但没有后续的平台路由改动，执行镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。旧版 [Windows 构件及 GUI 检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 和 [Linux amd64 镜像、工具、生产 host/daemon 与数据保留检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 均已重新完成，构件由这两次运行产出，不再依赖任何已删除的分支引用。
 
 实际执行顺序与结果：
 
 | 步骤 | 结果 |
 | --- | --- |
-| 旧版启动 | `5bfad0b` 包配旧执行镜像（pin `69f36880…`）执行 `start`，报「应用已经启动，Docker gateway 运行正常」；容器按旧 pin 建立 |
-| 旧版写入数据 | 旧版回合创建 `upgrade-old.txt`，内容 `UPGRADE-FROM-5bfad0b`；转录为 105 条记录 |
+| 旧版启动 | 旧版包配旧执行镜像（pin `69f36880…`）执行 `start`，报「应用已经启动，Docker gateway 运行正常」；容器按旧 pin 建立 |
+| 旧版写入数据 | 旧版回合创建 `upgrade-old.txt` 并写入旧版标记；转录为 105 条记录 |
 | 停止与替换镜像 | `stop -StopContainer` 后容器停止；执行镜像标签切回新 pin `4277dbdd…` |
 | 新版启动与容器替换 | `868304d` 包执行 `start` 报同一健康结果；容器按新 pin 重新建立（pin 标签由 `69f36880…` 变为 `4277dbdd…`） |
 | 数据保留 | 旧版写入的 `upgrade-old.txt` 内容不变；转录仍为 105 条；数据卷、盒内设置与数据目录设置均保留；工作目录在宿主与容器两侧文件一致 |
 | 新版正常回合 | 升级后新回合返回 `UPGRADE-NEW-OK`，转录增至 108 条 |
 
 旧执行镜像与新执行镜像在本机各占一份，升级过程未删除数据卷，也未做数据库降级。
-
-本轮清理后应用进程为零，`grok-bot-local-vm` 已停止，1340 已释放，`winnat` 运行中。审批允许测试产生的宿主文件已删除；验收数据目录中的工作文件、数据卷与镜像继续保留。
 
 本轮清理后应用进程为零，`grok-bot-local-vm` 已停止，1340 已释放，`winnat` 运行中。审批允许测试产生的宿主文件已删除；验收数据目录中的工作文件、数据卷与镜像继续保留。
 
