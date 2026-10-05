@@ -97,7 +97,8 @@ export interface GeneratedContextPropagatingClientFactory<
 > {
   (
     service: GeneratedServiceDescriptor<"agent.v1.ControlService">,
-    transport: Transport
+    transport: Transport,
+    options: { readonly enableAbortSignal: true }
   ): GeneratedControlClient<
     PingRequest,
     UpdateEnvironmentVariablesRequest,
@@ -105,7 +106,8 @@ export interface GeneratedContextPropagatingClientFactory<
   >;
   (
     service: GeneratedServiceDescriptor<"agent.v1.ExecService">,
-    transport: Transport
+    transport: Transport,
+    options: { readonly enableAbortSignal: true }
   ): BoxRemoteExecClient;
 }
 
@@ -174,7 +176,9 @@ export function createProductionBoxGeneratedPorts<
   >
 ): ProductionBoxGeneratedPorts<Transport, ProductionGeneratedBoxAccessor> {
   const createGeneratedControlClient = (transport: Transport) =>
-    bindings.createContextPropagatingClient(bindings.controlService, transport);
+    bindings.createContextPropagatingClient(bindings.controlService, transport, {
+      enableAbortSignal: true
+    });
 
   return {
     createTransport: bindings.createConnectTransport,
@@ -203,7 +207,9 @@ export function createProductionBoxGeneratedPorts<
     },
 
     createExecClient(transport): BoxRemoteExecClient {
-      return bindings.createContextPropagatingClient(bindings.execService, transport);
+      return bindings.createContextPropagatingClient(bindings.execService, transport, {
+        enableAbortSignal: true
+      });
     },
 
     createResourceAccessor(manager): ProductionGeneratedBoxAccessor {
