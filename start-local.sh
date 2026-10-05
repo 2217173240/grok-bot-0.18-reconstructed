@@ -171,7 +171,7 @@ do_start() {
   # 本地管理员模式只在容器执行。
   if [ "${GROKBOT_BOX:-docker}" = "docker" ]; then
     resolve_docker_host || die "no Docker socket found ($(docker_unreachable_hint))"
-    docker info >/dev/null 2>&1 || die "Docker daemon unreachable via ${DOCKER_CONTEXT:-${DOCKER_HOST:-default}} ($(docker_unreachable_hint))"
+    node "$REPO/scripts/lib/local-runtime-cli.mjs" check "$STAMP" || die "selected Docker runtime or execution image is not ready"
     echo docker > "$DATA_ROOT/box-mode"
     say "computer: Docker VM"
   else

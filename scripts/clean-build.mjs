@@ -270,7 +270,7 @@ export async function buildFidelityReconstructedAsar({
     runtimeReference,
   });
   const base = await buildBaseFidelityDistribution({ outputRoot: cleanOutputRoot, artifactPlatform: runtimeReference?.platform ?? "darwin-arm64" });
-  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, base.buildManifest.runtimeComposition, { reconstructedPackage: true, localPackageBootstrap: runtimeReference?.platform === "win32-x64", sourceOnly: runtimeReference?.platform === "win32-x64" });
+  const prepared = await prepareProductionActivations(base, hostBindingManifest, electronMainBindingManifest, base.buildManifest.runtimeComposition, { reconstructedPackage: true, localPackageBootstrap: true, sourceOnly: true });
   if (!prepared.hostActivation.clean || !prepared.electronMainActivation.clean) throw new Error("Packaged runtimes require clean host and Electron main activation");
   const clean = await attachCompositionAudit(prepared);
   await overlayCleanDistribution(clean.outputRoot, { stageRoot, composition: clean.buildManifest.runtimeComposition });

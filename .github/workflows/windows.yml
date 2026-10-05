@@ -40,7 +40,7 @@ jobs:
         run: |
           npm run source:typecheck
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test tests/local-docker-platform.test.mjs tests/local-exec-windows.test.mjs tests/windows-launcher.test.mjs tests/base-image-pin.test.mjs
+          node --test tests/local-runtime-profile.test.mjs tests/local-docker-platform.test.mjs tests/local-exec-windows.test.mjs tests/windows-launcher.test.mjs tests/base-image-pin.test.mjs
       - name: Build the Windows portable package
         run: npm run package:windows
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

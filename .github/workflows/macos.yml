@@ -1,0 +1,55 @@
+name: macOS arm64 package
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      GIT_LFS_SKIP_SMUDGE: '1'
+      TMPDIR: ${{ github.workspace }}/.cache/ci-tmp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          lfs: false
+      - name: Prepare repository-local scratch
+        run: mkdir -p "$TMPDIR"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.5.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Fetch verified macOS inputs
+        run: npm run bootstrap
+      - name: Check and build the macOS package
+        run: npm run package
+      - name: Verify packaged Electron native modules
+        run: |
+          ELECTRON_RUN_AS_NODE=1 "dist/Grok Bot 0.18 Reconstructed.app/Contents/MacOS/Grok Bot" \
+            scripts/fixtures/packaged-native-smoke.cjs \
+            "$GITHUB_WORKSPACE/dist/Grok Bot 0.18 Reconstructed.app/Contents/Resources/app.asar" \
+            "$GITHUB_WORKSPACE/.cache/macos-native-report.json" darwin-arm64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: macos-build-evidence
+          path: |
+            .cache/macos-native-report.json
+            dist/build-stamp.json
+          include-hidden-files: true
+          retention-days: 7

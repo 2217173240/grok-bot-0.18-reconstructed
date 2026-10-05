@@ -9,25 +9,25 @@ const root = path.resolve(import.meta.dirname, "..");
 await mkdir(path.join(root, ".cache"), { recursive: true });
 const directory = await mkdtemp(path.join(root, ".cache/docker-platform-"));
 await build({ entryPoints: [path.join(root, "source/electron-main/box/local-docker-host-connector.ts"), path.join(root, "source/shared/node/local-docker-platform.ts")], outdir: directory, outbase: path.join(root, "source"), outExtension: { ".js": ".mjs" }, bundle: true, platform: "node", format: "esm", packages: "external", logLevel: "silent" });
-const { localDockerPlatform, dockerBindMount } = await import(pathToFileURL(path.join(directory, "shared/node/local-docker-platform.mjs")).href);
-const { dockerSpawnEnv, resolveDockerHost, decideDockerImage, localDockerRunPlan } = await import(pathToFileURL(path.join(directory, "electron-main/box/local-docker-host-connector.mjs")).href);
+const { dockerBindMount, localDockerPlatform } = await import(pathToFileURL(path.join(directory, "shared/node/local-docker-platform.mjs")).href);
+const { localDockerRunPlan } = await import(pathToFileURL(path.join(directory, "electron-main/box/local-docker-host-connector.mjs")).href);
+const profile = await import(pathToFileURL(path.join(root, "source/shared/node/local-runtime-profile.mjs")).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
-test("Windows x64 和 Mac arm64 使用独立 Linux 镜像与数据卷", () => {
-  assert.deepEqual(localDockerPlatform("win32", "x64"), { image: "grok-bot-exec-box:amd64", dockerPlatform: "linux/amd64", dataVolume: "grok-bot-local-vm-data-amd64" });
-  assert.deepEqual(localDockerPlatform("darwin", "arm64"), { image: "grok-bot-exec-box:arm64", dockerPlatform: "linux/arm64", dataVolume: "grok-bot-local-vm-data-arm64" });
-  assert.throws(() => localDockerPlatform("win32", "arm64"), /unsupported architecture/);
-  const platform = localDockerPlatform("win32", "x64");
-  assert.equal(decideDockerImage({}, { present: true, depsPin: "pin" }, "pin", platform).image, platform.image);
-  assert.equal(decideDockerImage({}, { present: true, depsPin: "old" }, "pin", platform).selection, "self-built-stale");
+test("canonical runtime profile maps Windows and arm64 inputs", () => {
+  assert.equal(profile.localDockerPlatform("win32", "x64").dockerPlatform, "linux/amd64");
+  assert.equal(profile.localDockerPlatform("darwin", "arm64").dockerPlatform, "linux/arm64");
+  assert.throws(() => profile.localDockerPlatform("win32", "arm64"), /unsupported host/);
 });
 
-test("Windows Docker CLI 保留当前 context、显式 endpoint 与完整环境", () => {
-  const envs = [{ PATH: "C:\\Docker", USERPROFILE: "C:\\Users\\测试" }, { DOCKER_HOST: "npipe:////./pipe/docker_engine", DOCKER_TLS_VERIFY: "1" }, { DOCKER_CONTEXT: "desktop-linux", DOCKER_HOST: "tcp://ignored:2376", DOCKER_CERT_PATH: "C:\\certs" }];
-  for (const env of envs) assert.deepEqual(dockerSpawnEnv(env, "win32"), env);
-  assert.equal(resolveDockerHost({}, directory, "absent", "win32"), undefined);
-  assert.equal(resolveDockerHost(envs[1], directory, "absent", "win32"), envs[1].DOCKER_HOST);
-  assert.equal(resolveDockerHost(envs[2], directory, "absent", "win32"), undefined);
+test("canonical profile validates Docker architecture and dependency pin", () => {
+  const runtime = profile.resolveLocalRuntimeProfile({ platform: "win32", arch: "x64", env: {}, dataRoot: path.join(directory, "data"), homeDir: "C:\\Users\\测试" });
+  assert.equal(runtime.container.platform, "linux/amd64");
+  assert.equal(runtime.container.image, "grok-bot-exec-box:amd64");
+  const pin = "a".repeat(64);
+  assert.doesNotThrow(() => profile.validateDockerImage(runtime, { Os: "linux", Architecture: "amd64", Config: { Labels: { "com.grok-bot.local-vm.deps-pin": pin } } }, pin));
+  assert.throws(() => profile.validateDockerImage(runtime, { Os: "linux", Architecture: "arm64", Config: { Labels: {} } }, pin), /match/);
+  assert.throws(() => profile.validateDockerImage(runtime, { Os: "linux", Architecture: "amd64", Config: { Labels: {} } }, pin), /dependencies/);
 });
 
 test("Windows bind 路径保留盘符、Unicode、空格并转义 CSV 字段", () => {

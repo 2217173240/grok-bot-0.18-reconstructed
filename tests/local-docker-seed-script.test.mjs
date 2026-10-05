@@ -1,65 +1,153 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import test from "node:test";
-import { build } from "esbuild";
 
 const root = path.resolve(import.meta.dirname, "..");
-const connectorPath = path.join(root, "source/electron-main/box/local-docker-host-connector.ts");
-await mkdir(path.join(root, ".cache"), { recursive: true });
-const directory = await mkdtemp(path.join(root, ".cache/docker-seed-"));
-await build({
-  entryPoints: [connectorPath, path.join(root, "source/host/host-paths.ts")],
-  outdir: directory, outbase: path.join(root, "source"), outExtension: { ".js": ".mjs" },
-  bundle: true, platform: "node", format: "esm", packages: "external", logLevel: "silent",
+const modulePath = path.join(root, "docker/bin/seed-local-settings.cjs");
+const { seedLocalSettings } = createRequire(import.meta.url)(modulePath);
+fs.mkdirSync(path.join(root, ".cache"), { recursive: true });
+const directory = fs.mkdtempSync(path.join(root, ".cache/docker-seed-"));
+test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+const identity = { uid: process.getuid(), gid: process.getgid() };
+
+function fixture(content) {
+  const dataRoot = fs.mkdtempSync(path.join(directory, "data-"));
+  const file = path.join(dataRoot, "settings.json");
+  if (content !== undefined) fs.writeFileSync(file, content);
+  return { dataRoot, file };
+}
+
+test("创建设置内容并设定文件权限及属主", () => {
+  const dataRoot = path.join(directory, "new", "data");
+  seedLocalSettings(dataRoot, { provider: "claude-code", ...identity });
+  const file = path.join(dataRoot, "settings.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { inferenceProvider: "claude-code" });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(file).uid, identity.uid);
+  assert.equal(fs.statSync(file).gid, identity.gid);
+  assert.deepEqual(fs.readdirSync(dataRoot), ["settings.json"]);
 });
-const { SAND_BOX_UID, SAND_BOX_GID } = await import(pathToFileURL(path.join(directory, "electron-main/box/local-docker-host-connector.mjs")).href);
-const { SAND_BOX_DATA_ROOT } = await import(pathToFileURL(path.join(directory, "host/host-paths.mjs")).href);
-test.after(() => rm(directory, { recursive: true, force: true }));
 
-// 容器创建时把这段程序交给 `docker run --entrypoint node -e`。它必须是合法 JavaScript：
-// 模板字面量里的转义如果写成 "\n" 而不是 "\\n"，生成的程序会带真实换行并直接解析失败，
-// 容器就再也建不起来。挂载目标同理：挂到镜像里不存在的路径，新建的卷根目录归 root，
-// box 用户写不进去，同一个卷交给生产容器后也不可写。这里按源码原文重建程序并断言。
-function mergeScriptTemplate() {
-  const line = readFileSync(connectorPath, "utf8").split("\n").find(entry => entry.includes("const mergeScript ="));
-  assert.ok(line, "没有找到 mergeScript 的构造位置");
-  const start = line.indexOf("`");
-  const end = line.lastIndexOf("`");
-  assert.ok(start !== -1 && end > start, "mergeScript 不是模板字面量");
-  return line.slice(start + 1, end);
+test("保留未知字段及未传入的model，明确传入时更新model，重复执行保持文件", () => {
+  const { dataRoot, file } = fixture(JSON.stringify({ custom: { enabled: true }, commandCodeModel: "existing", version: 7 }));
+  seedLocalSettings(dataRoot, { provider: "claude-code", ...identity });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {
+    custom: { enabled: true }, commandCodeModel: "existing", version: 7, inferenceProvider: "claude-code",
+  });
+  seedLocalSettings(dataRoot, { provider: "command-code", commandCodeModel: "selected", ...identity });
+  const before = fs.statSync(file);
+  const bytes = fs.readFileSync(file);
+  seedLocalSettings(dataRoot, { provider: "command-code", commandCodeModel: "selected", ...identity });
+  assert.deepEqual(fs.readFileSync(file), bytes);
+  assert.equal(fs.statSync(file).ino, before.ino);
+  assert.equal(fs.statSync(file).mtimeMs, before.mtimeMs);
+  assert.equal(JSON.parse(bytes).commandCodeModel, "selected");
+});
+
+for (const content of ["{broken", "[]", "null", "12", '"text"', "false", ""]) {
+  test(`拒绝无效object并保留原文件：${JSON.stringify(content)}`, () => {
+    const { dataRoot, file } = fixture(content);
+    const before = fs.statSync(file);
+    assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code", ...identity }));
+    assert.equal(fs.readFileSync(file, "utf8"), content);
+    assert.equal(fs.statSync(file).ino, before.ino);
+    assert.equal(fs.statSync(file).mode, before.mode);
+    assert.deepEqual(fs.readdirSync(dataRoot), ["settings.json"]);
+  });
 }
 
-function buildSeedScript(provider, commandCodeModel) {
-  const template = mergeScriptTemplate();
-  return new Function(
-    "provider", "commandCodeModel", "SAND_BOX_DATA_ROOT", "SAND_BOX_UID", "SAND_BOX_GID",
-    `return \`${template}\`;`,
-  )(provider, commandCodeModel, SAND_BOX_DATA_ROOT, SAND_BOX_UID, SAND_BOX_GID);
-}
+test("损坏JSON的错误和stack不包含设置原文", () => {
+  const marker = "seed-sensitive-marker-827ac3";
+  const content = Buffer.from(`{"headers": ${marker}}`);
+  const { dataRoot, file } = fixture(content);
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code", ...identity }), error => {
+    assert.equal(error.message, "settings.json 包含无效 JSON");
+    assert.ok(!String(error).includes(marker));
+    assert.ok(!error.stack.includes(marker));
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  assert.deepEqual(fs.readFileSync(file), content);
+});
 
-test("容器设置写入程序是单行合法 JavaScript，写到生产数据目录", () => {
-  for (const commandCodeModel of [undefined, "command-code-model"]) {
-    const script = buildSeedScript("claude-code", commandCodeModel);
-    assert.ok(!script.includes("\n"), "生成的程序不能包含真实换行");
-    assert.doesNotThrow(() => new Function(script), "生成的程序必须可解析");
-    assert.match(script, new RegExp(`const d=${JSON.stringify(SAND_BOX_DATA_ROOT).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "必须挂载并使用生产数据目录");
-    assert.doesNotMatch(script, /"\/data/, "不能再写到镜像里不存在的 /data");
-    assert.match(script, /JSON\.stringify\(s,null,2\)\+"\\n"\)/, "写文件时必须以换行结束");
-    assert.match(script, new RegExp(`fs\\.chownSync\\(d,${SAND_BOX_UID},${SAND_BOX_GID}\\)`), "必须把数据目录交还 box 用户");
-    assert.match(script, new RegExp(`fs\\.chownSync\\(p,${SAND_BOX_UID},${SAND_BOX_GID}\\)`), "必须把设置文件交还 box 用户");
-    assert.match(script, /s\.inferenceProvider="claude-code"/);
-    if (commandCodeModel === undefined) assert.ok(!script.includes("commandCodeModel"));
-    else assert.match(script, /s\.commandCodeModel="command-code-model"/);
+test("拒绝settings符号链接、目录及FIFO，以及数据目录符号链接", () => {
+  const { dataRoot, file } = fixture();
+  const target = path.join(directory, "target.json");
+  fs.writeFileSync(target, "{}");
+  fs.symlinkSync(target, file);
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code" }), /常规文件/);
+  assert.equal(fs.readFileSync(target, "utf8"), "{}");
+  fs.unlinkSync(file);
+  fs.symlinkSync(path.join(directory, "missing.json"), file);
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code" }), /常规文件/);
+  assert.ok(fs.lstatSync(file).isSymbolicLink());
+  fs.unlinkSync(file);
+  fs.mkdirSync(file);
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code" }), /常规文件/);
+  fs.rmdirSync(file);
+  const fifo = spawnSync("mkfifo", [file], { encoding: "utf8" });
+  assert.equal(fifo.status, 0, fifo.stderr);
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code" }), /常规文件/);
+  const link = path.join(directory, "linked-data");
+  fs.symlinkSync(dataRoot, link);
+  assert.throws(() => seedLocalSettings(link, { provider: "claude-code" }), /常规目录/);
+});
+
+test("现有设置收紧为0600，其他数据权限保持不变", () => {
+  const { dataRoot, file } = fixture('{"inferenceProvider":"claude-code"}');
+  const unrelated = path.join(dataRoot, "other.txt");
+  fs.writeFileSync(unrelated, "other", { mode: 0o644 });
+  fs.chmodSync(file, 0o666);
+  const before = fs.statSync(unrelated);
+  seedLocalSettings(dataRoot, { provider: "claude-code", ...identity });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(unrelated).mode, before.mode);
+  assert.equal(fs.statSync(unrelated).uid, before.uid);
+});
+
+test("不可读设置报错并保留原字节", { skip: process.getuid() === 0 }, () => {
+  const { dataRoot, file } = fixture('{"kept":true}');
+  fs.chmodSync(file, 0o000);
+  try {
+    assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code", ...identity }), { code: "EACCES" });
+    assert.equal(fs.statSync(file).mode & 0o777, 0);
+  } finally { fs.chmodSync(file, 0o600); }
+  assert.equal(fs.readFileSync(file, "utf8"), '{"kept":true}');
+});
+
+test("目录写入失败时保留原文件", { skip: process.getuid() === 0 }, () => {
+  const { dataRoot, file } = fixture('{"kept":true}');
+  const before = fs.statSync(file);
+  fs.chmodSync(dataRoot, 0o500);
+  try {
+    assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code", ...identity }), { code: "EACCES" });
+    assert.equal(fs.readFileSync(file, "utf8"), '{"kept":true}');
+    assert.equal(fs.statSync(file).ino, before.ino);
+    assert.deepEqual(fs.readdirSync(dataRoot), ["settings.json"]);
+  } finally { fs.chmodSync(dataRoot, 0o700); }
+});
+
+test("数据验证先于属主修改", { skip: process.getuid() === 0 }, () => {
+  const { dataRoot, file } = fixture("null");
+  assert.throws(() => seedLocalSettings(dataRoot, { provider: "claude-code", uid: identity.uid + 1, gid: identity.gid }), /JSON object/);
+  assert.equal(fs.readFileSync(file, "utf8"), "null");
+  assert.equal(fs.statSync(dataRoot).uid, identity.uid);
+});
+
+test("子进程加载模块并执行文件写入", () => {
+  const { dataRoot, file } = fixture();
+  const result = spawnSync(process.execPath, ["-e", "require(process.argv[1]).seedLocalSettings(process.argv[2], {provider: process.argv[3]})", modulePath, dataRoot, "command-code"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).inferenceProvider, "command-code");
+});
+
+test("CLI拒绝缺失provider和自定义数据目录参数", () => {
+  for (const args of [[], ["--data-root", directory, "--provider", "claude-code"]]) {
+    const result = spawnSync(process.execPath, [modulePath, ...args], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /provider|Unknown option/);
   }
-});
-
-test("种子步骤以 root 运行并按生产路径挂载数据卷", () => {
-  const source = readFileSync(connectorPath, "utf8");
-  const run = source.split("\n").find(entry => entry.includes("const seeded = await runDocker("));
-  assert.ok(run, "没有找到种子步骤的 docker run");
-  assert.match(run, /"--user", "root"/, "种子需要 root 才能纠正卷根属主");
-  assert.match(run, /`\$\{dataVolume\}:\$\{SAND_BOX_DATA_ROOT\}`/, "数据卷必须挂到生产数据目录");
 });

@@ -27,7 +27,7 @@ await mkdir(path.join(repo, ".cache"), { recursive: true });
 const context = await mkdtemp(path.join(repo, ".cache", "box-build-"));
 try {
   const files = ["package.json", "package-lock.json", "scripts/apply-third-party-patches.mjs",
-    "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate"];
+    "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/bin/seed-local-settings.cjs"];
   for (const file of files) {
     await mkdir(path.dirname(path.join(context, file)), { recursive: true });
     await cp(path.join(repo, file), path.join(context, file));

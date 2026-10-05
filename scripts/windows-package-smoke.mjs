@@ -105,7 +105,7 @@ export async function main(args = process.argv.slice(2)) {
   console.log(`Windows package smoke artifacts: ${root}`);
 
   const nativeReport = path.join(root, "native.json");
-  const native = await launchOwned(executable, [path.join(repoRoot, "scripts/fixtures/windows-package-native-smoke.cjs"), archive, nativeReport], { ...env, ELECTRON_RUN_AS_NODE: "1" }, path.join(root, "native.log"));
+  const native = await launchOwned(executable, [path.join(repoRoot, "scripts/fixtures/packaged-native-smoke.cjs"), archive, nativeReport, "win32-x64"], { ...env, ELECTRON_RUN_AS_NODE: "1" }, path.join(root, "native.log"));
   const nativeErrors = [];
   try {
     const result = await withTimeout(native.completion, 60000, "Packaged native ABI smoke timed out");

@@ -37,12 +37,12 @@ test('共享启动环境保留用户模型参数并强制本地运行策略', ()
 });
 
 test('启动路径相对于分发目录，数据目录使用当前用户配置', () => {
-  const root = path.resolve('distribution');
-  const local = path.resolve('user data');
+  const root = 'C:\\distribution';
+  const local = 'D:\\user data';
   const result = resolveOptions(['start'], { LOCALAPPDATA: local }, root);
-  assert.equal(result.appPath, path.join(root, 'Grok Bot.exe'));
-  assert.equal(result.dataRoot, path.join(local, 'GrokBotLocal'));
-  assert.equal(defaultDataRoot({ HOME: local }, 'darwin'), path.join(local, '.grokbot-local'));
+  assert.equal(result.appPath, path.win32.join(root, 'Grok Bot.exe'));
+  assert.equal(result.dataRoot, path.win32.join(local, 'GrokBotLocal'));
+  assert.equal(defaultDataRoot({ HOME: '/Users/example' }, 'darwin'), '/Users/example/.grokbot-local');
   assert.equal(resolveOptions(['stop', '--data-root', local, '--stop-container'], {}, root).stopContainer, true);
   assert.throws(() => resolveOptions(['start', '--stop-container'], { LOCALAPPDATA: local }, root));
 });
