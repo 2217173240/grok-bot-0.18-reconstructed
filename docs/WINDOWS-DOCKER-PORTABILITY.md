@@ -1,6 +1,6 @@
 # Windows Docker 适配与执行计划
 
-更新日期：2026-10-03。用户要求 Mac 与 Windows 各自独立部署，agent、推理 CLI、文件工具和 Computer 都在本机 Linux Docker 容器运行。当前目标为 Windows 10 22H2（build 19045）/Windows 11 x64、Docker Desktop 的 WSL2/Linux containers 模式；Windows ARM64 需要独立构件及验收，不自动宣称支持。Docker 官方要求 WSL 至少 2.1.5，并将支持范围与 Microsoft 的系统维护期限关联；Win10 的实际 Docker 版本和系统维护状态需在用户机器记录。[Docker Windows 系统要求](https://docs.docker.com/desktop/setup/install/windows-install/)
+更新日期：2026-10-05。用户要求 Mac 与 Windows 各自独立部署，agent、推理 CLI、文件工具和 Computer 都在本机 Linux Docker 容器运行。当前目标为 Windows 10 22H2（build 19045）/Windows 11 x64、Docker Desktop 的 WSL2/Linux containers 模式；Windows ARM64 需要独立构件及验收，不自动宣称支持。Docker 官方要求 WSL 至少 2.1.5，并将支持范围与 Microsoft 的系统维护期限关联；Win10 的实际 Docker 版本和系统维护状态需在用户机器记录。[Docker Windows 系统要求](https://docs.docker.com/desktop/setup/install/windows-install/)
 
 进度入口为 [ROADMAP.md](ROADMAP.md)，运行架构依据 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)，Mac 可移植性依据 [MAC-PORTABILITY-REVIEW.md](MAC-PORTABILITY-REVIEW.md)。每次实现、CI 或验收后更新下表的证据与剩余事项，保持代码版本和文档状态一致。
 
@@ -32,15 +32,17 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 步骤 | 完成条件 | 当前状态与证据 |
 | --- | --- | --- |
 | 1. 架构与输入盘点 | 明确桌面/容器边界，核对现有 Windows 分支及原版构件身份 | 已完成源码评审；Windows 原版 EXE 的固定 SHA 已在镜像仓库 manifest 登记 |
-| 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 代码已实现，34 项本机规则/文件检查及源码类型检查通过；Windows Docker 实机部分尚未验证 |
+| 2. 平台与配置接口 | Windows Docker endpoint、路径和镜像选择；Mac 现有行为保持 | 统一 runtime profile 与 Docker client 已实现；应用、启动器、构建与容器检查共用配置。当前分支仍需 Windows Docker 物理机器端到端验收 |
 | 3. 共用启动配置 | 两种入口共用环境/provider 校验；Windows 幂等启动和所属进程关闭 | Mac 与 PowerShell 已接入共享配置；Windows CI 的真实进程树关闭、创建时间核验和 SQLite 启动互斥已通过 |
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在 Windows 10 22H2 实机完成：启动与幂等、真实文本回合、中文空格挂载的文件读写、图片读取、Computer 桌面与容器浏览器、MCP 连接与调用、重启与容器替换后的数据保留均通过。审批与取消两项在本配置下无法触发，升级缺少第二个版本，详见下文实机验收证据 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 的历史 Windows 10 22H2 包通过启动、文本、文件、图片、Computer、MCP、重启和容器替换；审批、取消与升级未完成。当前平台路由分支需要重新执行物理机器端到端验收，历史结果见下文 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 文档与未签名 portable ZIP 已具备；源码和秘密扫描通过。Mac 全量检查 333 项：319 通过、14 项环境/平台跳过、零失败。已移除临时 renderer 隔离实验并清理本地实验副本；Windows 实机验收继续保留为步骤 7 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
+
+上表保留已有构建和验收证据。当前平台路由实现、Mac 真实交互记录和各平台 CI 入口见[环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)。当前版本的物理 Windows 端到端验收按下文步骤执行。
 
 Windows native 构建使用固定 node-gyp 13.0.2，包含 Node 26/MSVC 的官方 LTO 修复；开发 Node 保持 26.5.0，Electron 保持 42.1.0/ABI 146。[node-gyp 修复说明](https://github.com/nodejs/node-gyp/pull/3331)
 
@@ -64,6 +66,10 @@ npm run package:windows
 
 默认数据目录为 `%LOCALAPPDATA%\GrokBotLocal`，可用 `-DataRoot` 指定其他目录。默认 provider 为 Claude Code；用本地编辑器将自己的 token 写入数据目录中的 `anthropic-token`，只授予当前账号读取权限。模型、API 地址和子模型映射沿用共享启动配置的显式环境变量；其他 provider 使用该数据目录已保存的设置和各自凭据。
 
+Docker 选择优先级为 `DOCKER_CONTEXT` → `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE` → 数据目录中的 `runtime.json` → 平台默认值。Windows/Linux 默认使用 Docker CLI 当前 context，客户端首次连接时读取并固定其名称；Mac 默认使用专属 Colima `grokbot`。`GROKBOT_COLIMA_PROFILE` 仅限 macOS。显式 context 或 host 可选择其他本地 runtime；选择不可用时直接报告错误。
+
+可选 `runtime.json` 要求 `"version": 1`，`docker` 和 `image` 均可省略。提供 `docker` 时，必须在 `context`、`host`、仅限 macOS 的 `colimaProfile` 中选择一个字段。例如 Windows 可保存 `{"version":1,"docker":{"context":"desktop-linux"}}`。执行镜像按 `SAND_LOCAL_ADMIN_IMAGE` → `GROKBOT_IMAGE` → `runtime.json` 的 `image` → 平台默认镜像选择。应用、启动器、镜像构建和容器检查复用同一配置规则。
+
 在解压后的分发目录执行：
 
 ```powershell
@@ -79,7 +85,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 ## 主要困难和验证重点
 
 1. **原生依赖与构件组成。** Mac 的 `.node`、Mach-O 与 `.app` 无法在 Windows 加载。核对 Electron ABI、tree-sitter、原生辅助程序及资源路径；只有平台实际加载成功才能证明完整。
-2. **Docker endpoint。** 当前 Unix socket 搜索需要 Windows 分支；尊重 Docker context/DOCKER_HOST 的明确选择，确认 daemon 为 Linux、镜像为 amd64，保持容器所有权检查。
+2. **Docker endpoint。** 使用共享 profile 选定的 context 或 host，确认 daemon 为 Linux、镜像为 amd64，保持容器所有权检查。
 3. **路径和权限。** 正确处理 drive letter、反斜杠、空格、中文和 mount 字段转义。Mac Keychain 密文不跨设备复制；每台机器重新配置自己的凭据。本地 admin 的推理 token 使用数据目录中的受限权限文件，运行密钥不进入构建层。
 4. **生命周期。** Windows 宿主关闭不能直接假设 POSIX 进程组语义。仅终止身份匹配的本项目进程；停止容器不删除数据，不全局关闭其他项目的 WSL 或 Docker。
 5. **首次运行。** Docker/WSL 未安装、未启动、模式错误、端口占用、路径权限不足、凭据缺失要给出具体错误；失败不改走宿主执行或官方远端。
@@ -92,9 +98,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 已检索 Microsoft 官方 [winapp-frameworks](https://github.com/microsoft/winappCli/blob/main/plugins/winapp/skills/winapp-frameworks/SKILL.md) 与 [winapp-package](https://github.com/microsoft/winappCli/blob/main/plugins/winapp/skills/winapp-package/SKILL.md)：前者提供 Electron/Windows 框架接入说明，后者用于 MSIX 打包、manifest 和签名。它们适合后续需要 MSIX/Windows package identity 时参考；当前不因为存在 skill 就引入 Windows App SDK 或重写界面。已完成来源与内容核对，未安装额外 skills。
 
-## Windows 实机验收证据（2026-10-05）
+## Windows 历史实机验收证据（2026-10-05）
 
-在一台 Windows x64 实机、本机 Docker Desktop 的 Linux 容器中执行。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。
+本节记录 `fix/local-docker-seed-script` 分支、提交 `620e2b9` 与 `2307264` 对应包在一台 Windows x64 实机、本机 Docker Desktop Linux 容器中的历史结果。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。当前平台路由分支的完整验收需另行记录。
 
 ### 机器与运行身份
 
@@ -127,8 +133,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 | MCP | 通过 | 服务器 `acceptance-echo` 状态为 `ready`，工具 `echo` 被列出；调用返回 `echo: WINDOWS-MCP-C4` |
 | 重启与数据保留 | 通过 | 连续两次 `restart` 后容器标识不变（`451e161d…`），会话、设置与工作文件均保留；推理配置变化引起容器更换时，数据卷继续沿用，转录与工作文件同样保留 |
 | 容器替换 | 通过 | 容器被替换为新容器（标识由 `d6d41d92…` 变为 `451e161d…`），未删除数据卷，替换后转录 12 条记录与工作文件内容完整 |
-| 审批 | 阻塞 | 本配置把 `sand_auto_review` 置为 0，且 local admin 下宿主工具统一放行：多次 Shell 写入、Computer 动作与 MCP 调用都记为 `permission-allowed`，界面全程未出现审批卡，无法执行拒绝与单次允许 |
-| 取消 | 阻塞 | 回合进行中界面出现 `Working` 状态，此时界面的全部按钮只有「Attach file」与「Start voice input」，没有停止或取消控件；在流式输出进行中点击发送按钮位置与按下 Esc 都未中断输出；IPC 入口只提供 `cancelTrial`、`cancelLogin` 等，没有取消回合的入口。agent 启动的 Shell 命令在回合结束后仍在容器中继续运行，因此也没有属于该回合的进程可供终止 |
+| 审批 | 未完成 | 当次 Shell、Computer 与 MCP 调用记录为 `permission-allowed`，未出现审批卡，拒绝与单次允许未验收。当前验收应在 Settings 开启自动审查并配置 `blockInstructions` 触发人工审批 |
+| 取消 | 未完成 | 当次确认界面没有独立 Stop 控件，点击发送按钮位置与按下 Esc 未中断输出。尚未验收当前支持的“发送新用户消息以中断正在执行的回合”路径 |
 | 升级 | 未验证 | 两个可识别版本都存在（基线 `90db1aa` 与修复后 `2307264`，deps pin 相同），但基线版本在本机无法运行：它创建容器时命中上文第 1 个缺陷，`start` 报 gateway 超时，容器始终没有建立。旧版本无法进入运行状态，升级无法从它开始；按预定边界不做数据库降级，也不用同版本重新解压充当升级 |
 | 另一个盘符 | 通过 | 以 `D:\GrokBot 验收 第二盘符` 作为数据目录（含中文与空格），容器被替换为新容器后，实际挂载为 `D:\GrokBot 验收 第二盘符\box-workspace -> /workspace`；agent 在其中创建 `second-drive.txt`，内容为 `SECONDDISK-D5 第二盘符 验证。`，两侧 SHA-256 同为 `58600569…`。数据卷未删除 |
 
@@ -145,19 +151,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ### 环境条件与所需用户操作
 
-宿主 Windows 把 TCP 1324 至 1423 保留给 Hyper-V 与 WSL 动态使用，1340 位于其中，容器端口发布以 `WSAEACCES` 失败，`docker start` 报 `ports are not available`。这一项属于宿主配置：绑定的端口在应用内固定，无法通过配置绕开。本轮由用户在提升权限的 PowerShell 中停止 Windows NAT 服务，端口可用后应用自行恢复并建成容器。
+当次宿主 Windows 把 TCP 1324 至 1423 保留给 Hyper-V 与 WSL 动态使用，1340 位于其中，容器端口发布以 `WSAEACCES` 失败，`docker start` 报 `ports are not available`。用户自行处理宿主端口保留、释放 1340 后，重新执行 `start` 显示「应用已经启动，Docker gateway 运行正常」，容器正常建立并发布 1340。遇到同类错误时，检查端口占用和保留区间，由机器管理者处理对应冲突。
 
-同一台机器再次出现该错误时，依次执行 `net stop winnat`、启动应用、`net start winnat` 即可；若保留区间再次覆盖 1340，需要重启机器让区间重新分配。这一类错误的原因是宿主端口保留，与镜像和挂载无关。
+### 当前分支的 Windows 端到端验收
 
-重启 Windows NAT 服务后，动态保留区间重新分配，1340 不再属于任何保留区间且可以绑定。在这种正常环境下重新执行 `start`，应用报「应用已经启动，Docker gateway 运行正常」，容器正常建立并发布 1340，说明该失败只来自宿主当时的保留区间。
-
-### 尚需用户决定的事项
-
-以下三项无法由本机操作单独解决，都需要产品侧的决定或改动：
-
-1. **审批**：local admin 下宿主工具统一放行，自动审查被启动脚本固定关闭，界面因此不会出现审批卡。要在本机验收审批，需要先决定本地模式是否提供审批策略（例如恢复自动审查，或为本地模式增加人工确认）。
-2. **取消**：打包的界面没有提供停止或取消回合的控件，进程间入口也没有对应方法，因此即使宿主内部实现了取消，用户也无法触发。需要先决定是否在本地模式暴露取消入口。
-3. **升级**：需要两个都能运行的版本。当前唯一的旧版本正是被本轮修复的缺陷所阻断，无法启动。修复合入并发布之后，后续版本之间才能做真正的升级验证。
+1. **完整流程**：在物理 Windows x64 + Docker Desktop/WSL2 上记录当前提交、应用与镜像身份，重复启动、文本、含中文空格及第二盘符的文件、图片、MCP、Computer、重启和数据保留检查。
+2. **审批**：在 Settings 开启自动审查，并配置能够命中测试动作的 `blockInstructions`；验证拒绝阻止执行、Allow once 仅执行一次。`source/host/extensions/auto-review/extension.ts` 为 local admin 提供 `enforce` override；`source/host/runner/sand-auto-review.ts` 仍优先处理 `settingsEnabled=false`，关闭全部审查。仅凭 `sand_auto_review=0` 不能判断最终模式。
+3. **取消与下一条回复**：在回合执行中发送新的用户消息。`source/host/extensions/transcript/send-turn-dispatch.ts` 会调用 `interrupt` 中断当前回合；核对对应任务进程退出、新回合正常回复以及 transcript。当前界面没有独立 Stop 按钮。
+4. **升级**：使用两个都可运行、身份明确的版本，验证会话、设置、工作文件和数据卷保留。历史基线 `90db1aa` 在该机器无法启动，未提供可用的升级起点；同版本重新解压不计作升级。
 
 ### 其他观察
 

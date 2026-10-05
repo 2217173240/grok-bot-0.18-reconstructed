@@ -19,12 +19,12 @@
 
 | 模块 | 输入与输出 | 验收依据 | 状态 |
 | --- | --- | --- | --- |
-| 环境配置 | 宿主事实、显式配置、`runtime.json` → 确定的运行配置及来源 | 显式优先级、损坏配置、受支持平台、端点不可用时保持原选择 | 实施中 |
-| 启动与打包接入 | Shell、PowerShell、直接打开应用 → 同一环境配置模块 | 两端入口使用同一选择结果，独立分发包包含所需模块 | 实施中 |
-| Docker 校验 | 运行配置、实际 daemon/image → 可执行容器计划 | 拒绝 Windows containers、架构不符和 deps pin 不符，显式镜像也接受身份检查 | 实施中 |
-| 设置初始化 | 已有卷、provider/model → 保留其他设置的原子更新 | 新卷、已有卷、损坏 JSON、异常权限、重复执行，生产与测试运行同一程序 | 实施中 |
-| 宿主进程适配 | PID、创建时间、命令与 generation → 身份、终止结果 | Windows 与 POSIX 实现分离，公共生命周期等待实际退出，异步查询不阻塞界面 | 实施中 |
-| 自动检查与发布 | 同一源码提交 → Mac/Windows 构建及 Linux 运行证据 | Mac 实际构建、原生进程检查；Windows CI；真实 Linux 卷、工具与数据保留检查 | 待验证 |
+| 环境配置 | 宿主事实、显式配置、`runtime.json` → 确定的运行配置及来源 | 显式优先级、损坏配置、受支持平台、端点不可用时保持原选择；真实 Docker CLI context 切换验证 | 已完成 |
+| 启动与打包接入 | Shell、PowerShell、直接打开应用 → 同一环境配置模块 | 两端入口使用同一选择结果，独立分发包包含所需模块 | 已完成 |
+| Docker 校验 | 运行配置、实际 daemon/image → 可执行容器计划 | 拒绝 Windows containers、架构不符和 deps pin 不符，显式镜像也接受身份检查 | 已完成 |
+| 设置初始化 | 已有卷、provider/model → 保留其他设置的原子更新 | 17 项真实文件检查及 10 项真实 Docker 检查；生产与测试运行同一程序 | 已完成 |
+| 宿主进程适配 | PID、创建时间、命令与 generation → 身份、终止结果 | Windows 与 POSIX 实现分离，公共生命周期等待实际退出，异步查询不阻塞界面 | 已完成 |
+| 自动检查与发布 | 同一源码提交 → Mac/Windows 构建及 Linux 运行证据 | Mac 构建及实际 Electron 原生模块；Windows 完整 GUI smoke；Linux 工具、初始化与重建数据保留 | 已接入 CI |
 
 共享代码修改需要覆盖两个宿主平台；平台实现修改执行对应系统的真实检查。已有源码字符串测试由模块行为测试替代。Docker 验证使用隔离卷和测试目录，保留已安装应用、生产数据卷及账号。
 
@@ -36,4 +36,14 @@
 - 更新部署文档中的端点选择及版本要求，提供本轮构件对应的 Windows 验收步骤。
 - 完成推送、CI 跟进和必要修复后，停止本次测试进程、容器和虚拟机；Windows 用户机器的端到端验收单独保留。
 
-Windows 历史实机证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。本轮最终结果与版本在完成验证后更新。
+## 验证记录
+
+2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。Mac 包 `327784b` 的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败。
+
+Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用 `f59fbf8` 与 `327784b` 两个构件，沿用隔离数据目录、卷及会话。
+
+`327784b` 的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
+
+Box Exec 与 Control RPC 显式传递 Context 的取消信号。真实 daemon 回归覆盖 Shell 及子进程退出、延迟写入被阻止、下一条工具调用和 Control deadline。Electron 42 的安装与完整归档校验由 bootstrap 在并发测试前完成。
+
+各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。Windows 历史实机记录及当前版本的端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。

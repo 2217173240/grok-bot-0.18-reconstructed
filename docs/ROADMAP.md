@@ -1,13 +1,13 @@
 # 本地运行维护计划
 
-更新日期：2026-09-29。运行代码验收基线为 `aabe568`，完整构建、安装重启、文件、MCP、本地浏览器页面与截图交付已通过；两仓库 CI 均通过，没有开放 PR。审批、图片等未改变的路径继续使用已完成的验证证据。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
+更新日期：2026-10-05。环境识别、平台适配和当前验证记录见 [环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)，当前 Windows 构件的物理机器端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
 
 ## 已交付能力
 
-2026-10-03 完成[多台 Mac 独立部署评审](MAC-PORTABILITY-REVIEW.md)，并按用户新增要求推进 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。该计划集中记录模块归属、依赖顺序、实现及验证状态。本轮完成适配与 Windows CI；用户暂无 Windows 测试机，真实 Windows + WSL2 端到端验收保留为明确待办，不能提前标为支持已验证。
+Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批流程；宿主启动与进程操作由平台适配处理。2026-10-05 的 Windows 历史实机结果保留在部署文档中，当前平台路由版本仍需物理 Windows + WSL2 端到端验收。
 
 - local admin、容器内 agent 回合、第三方推理、文件与 MCP、Computer、图片附件及前台 Task 结果交付。
-- Colima `grokbot` 为默认环境，OrbStack 为可选 Docker socket 来源；本地回合没有 Mac 执行选项。
+- Mac 默认使用 Colima `grokbot`；Windows/Linux 默认采用当前 Docker context。其他 runtime 通过显式 context 或 host 选择，本地回合在 Linux 容器执行。
 - 基础镜像由独立 `grok-bot-box-image` 仓库提供固定 Release 归档，下载与导入均校验身份；原版安装包统一登记官方来源与 SHA-256。
 - 发布包保留固定原版 renderer，源码运行模块独立编译，构件组成、原生依赖、ASAR 与签名分别验证。
 - 镜像与浏览器 profile 持久化、会话同步、随机 noVNC 凭证、窗口配额、桌面健康探测与明确重建已有真实容器验证。

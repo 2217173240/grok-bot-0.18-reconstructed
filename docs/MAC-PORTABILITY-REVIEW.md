@@ -1,14 +1,18 @@
 # 多台 Mac 独立部署评审
 
-评审日期：2026-10-03。代码基线：`ff8d986`。用户在各自 Mac 安装同一版本、配置自己的第三方账号，应用在该机器的 Docker sandbox 内执行并保存结果；需要人工判断的动作仍由本机用户批准。
+初次评审日期：2026-10-03，基线 `ff8d986`；配置说明更新于 2026-10-05。用户在各自 Mac 安装同一版本、配置自己的第三方账号，应用在该机器的 Docker sandbox 内执行并保存结果；需要人工判断的动作仍由本机用户批准。
 
-目标是普通项目的独立安装体验：新机器无需开发者的用户名、目录、缓存、凭据或旧容器。当前已验证范围为 macOS Apple Silicon；Intel Mac 尚未建立对应应用构件、基础镜像和实际验收。本页记录部署评审与已落地的共用启动配置；现有 Mac 安装、虚拟机和数据保留，未新增安装器。
+目标是普通项目的独立安装体验：新机器无需开发者的用户名、目录、缓存、凭据或旧容器。当前已验证范围为 macOS Apple Silicon；Intel Mac 尚未建立对应应用构件、基础镜像和实际验收。本页记录部署评审与共用启动配置；现有 Mac 安装、虚拟机和数据保留，未新增安装器。
 
 Windows 已由用户确认为正式交付目标，实施状态与真实机器验收边界见 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。该实现同时完成 Mac 的 `GROKBOT_APP_PATH` 路径配置、App/build stamp 统一定位、共享 provider 校验与 Docker context 传递；本页其余事项继续作为独立 Mac 部署的评审依据。
 
 ## 推荐部署方式
 
 每台 Mac 保持一个独立实例：相同发布版本，各自的 Colima `grokbot`、数据卷、工作目录、凭据和审批状态。设备之间共享经过校验的程序构件，各自生成运行身份和访问 token。固定容器名和回环端口可以在不同机器重复使用。
+
+应用、启动器、镜像构建与容器检查使用统一的 runtime profile。Docker 选择顺序为 `DOCKER_CONTEXT` → `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE` → 数据根中的 `runtime.json` → 平台默认值。Mac 默认使用专属 Colima `grokbot`；Windows/Linux 默认使用 Docker CLI 当前 context，客户端首次连接时固定该名称。所选 runtime 不可用时报告错误；OrbStack 等其他 runtime 仍可通过 context 或 host 显式选择。
+
+`runtime.json` 必须包含 `"version": 1`，`docker` 和 `image` 均可省略。提供 `docker` 时，从 `context`、`host`、仅限 macOS 的 `colimaProfile` 中选择一个字段。镜像优先级为 `SAND_LOCAL_ADMIN_IMAGE` → `GROKBOT_IMAGE` → `runtime.json` 的 `image` → 平台默认镜像。完整操作见[部署手册](DEPLOY-HANDBOOK.md)。
 
 目前可执行的路径是[源码构建部署手册](DEPLOY-HANDBOOK.md)。推荐的分发目标是维护者构建一次，用户下载匹配的 App、执行镜像和启动工具，在本机校验并初始化。执行镜像与基础镜像构件继续统一由 `grok-bot-box-image` 仓库管理；应用源码与运行代码版本由本仓库管理。
 
@@ -27,15 +31,15 @@ Windows 已由用户确认为正式交付目标，实施状态与真实机器验
 
 这是源码与既有验收支持的能力清单。当前证据来自一台开发 Mac 和隔离测试，尚无第二台全新 Mac 的独立安装记录。
 
-## 需要处理的机器依赖
+## 部署能力与剩余验收
 
 | 优先级 | 发现与代码位置 | 对其他 Mac 的影响 | 推荐修改与完成条件 |
 | --- | --- | --- | --- |
-| P1 | `start-local.sh:21,177` 固定 `/Applications/...`，App 与 build stamp 路径分别声明 | 安装在用户 Applications 或改名后启动失败 | 统一解析 App 路径，保留标准位置默认值；用含空格的用户目录、不同安装位置做真实启动检查 |
-| P1 | `start-local.sh:93` 无条件要求 anthropic-token；`:156–157` 默认指定 GLM 模型与地址 | 选择其他 provider 的用户也被 Claude 文件检查阻止；默认模型依赖账号权限 | 从实际 provider 配置决定所需凭据，首次配置显示必要字段；配置损坏明确报错。验证各 provider 缺失凭据、有效配置和错误响应，账号范围按用户授权 |
-| P1 | 完整环境由 `start-local.sh` 注入；安装手册依赖仓库脚本 | 单独分发 App 没有完整的首次启动入口保证 | 将现有启动能力作为版本化分发工具，统一配置来源；明确支持的打开入口，并验证 Finder 启动或提供可见的本地启动器 |
-| P1 | CI 只有 Ubuntu 检查；没有新 Mac 的 package/install 路径 | CI 通过不足以证明其他 Mac 可安装 | 增加 macOS arm64 构建检查及独立新机器验收；下载构件、创建干净用户环境、安装、首次运行、重启、升级均有记录 |
-| P2 | `docker/container-gates.sh:229` 读取固定 `$HOME/.grokbot-local`，启动脚本支持 `GROKBOT_DATA_ROOT` | 自定义数据根的验收可能使用错误 token 或报告失败 | 门禁复用数据根解析规则；在默认与自定义根分别执行真实鉴权检查 |
+| P1 | `GROKBOT_APP_PATH` 与 App/build stamp 统一定位已实现 | 支持标准目录之外的安装位置 | 独立新 Mac 继续验收含空格目录、不同安装位置 |
+| P1 | 共享 `local-launch-config.mjs` 按 provider 校验凭据 | Claude Code 使用 token 文件；其他 provider 使用各自配置 | 账号范围按授权分别验收 |
+| P1 | 启动入口共用配置解析与 runtime profile | 配置错误明确报告，Docker 目标明确选择 | 独立新 Mac 验收首次启动、重启与升级 |
+| P1 | 已有 macOS 与 Windows 构建检查，以及 Linux 容器检查 | 平台 CI 验证对应构建和运行路径 | 第二台全新 Mac 的安装记录仍待补充 |
+| P2 | 容器门禁共用 runtime profile 与数据根解析 | 自定义数据根和 daemon 与应用使用相同选择规则 | 用对应数据根检查实际鉴权 |
 | P2 | `start-local.sh` 的 stop 保留容器和 local-exec；VM 继续运行 | 用户退出窗口后仍可能占用内存 | 提供明确的“退出应用”和“停止本项目全部运行资源”；验证只停止本项目进程、容器及专用 VM，保留镜像、数据与其他项目 |
 
 现有 `GROKBOT_DATA_ROOT` 不能证明同一 Docker daemon 上支持多个并行实例：connector 固定容器名、数据卷名和端口。本目标是每台 Mac 一个实例，保持这些默认常量即可，无需引入实例注册中心。`/workspace`、`/home/box` 属于镜像内约定，digest、版本和平台约束属于可复核构建输入，均应保留并验证。
@@ -78,4 +82,4 @@ Windows 已由用户确认为正式交付目标，实施状态与真实机器验
 
 ## 本次结论与下一步
 
-分析与文档更新已完成。部署改进按“路径与账号配置可移植 → 完整启动/停止入口 → 新 Mac 实测 → 版本化构件发布”执行；公开二进制发布同时需要权利审查与发布者签名条件。Intel Mac 需要自己的构件与验收记录，当前支持范围继续明确为 Apple Silicon。以上实现及第二台机器验收尚未执行，本次保留已停止的运行环境。
+路径、provider 与 Docker 配置已集中实现。第二台全新 Mac 的独立安装、升级和版本化构件发布仍保留各自验收范围；公开二进制发布同时需要权利审查与发布者签名条件。Intel Mac 需要自己的构件与验收记录，当前 Mac 支持范围继续明确为 Apple Silicon。Windows 当前分支的物理机器端到端验收见 [Windows 部署文档](WINDOWS-DOCKER-PORTABILITY.md)。
