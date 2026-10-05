@@ -44,6 +44,8 @@ Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、�
 
 `327784b` 的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
 
+中断后的下一回合再次读取升级前的两个文件，确认拒绝文件与延迟文件均不存在，并调用 MCP 返回 `echo:UPGRADE_AND_CANCEL_OK`。镜像构建入口也使用同一 profile，已用数据目录中的 Docker host 配置完成真实 arm64 构建。
+
 Box Exec 与 Control RPC 显式传递 Context 的取消信号。真实 daemon 回归覆盖 Shell 及子进程退出、延迟写入被阻止、下一条工具调用和 Control deadline。Electron 42 的安装与完整归档校验由 bootstrap 在并发测试前完成。
 
 各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。Windows 历史实机记录及当前版本的端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。

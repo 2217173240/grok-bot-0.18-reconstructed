@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { resolveLocalRuntimeProfile, validateDockerImage } from "../../source/shared/node/local-runtime-profile.mjs";
+import { validateDockerImage } from "../../source/shared/node/local-runtime-profile.mjs";
 import { createLocalDockerClient } from "../../source/shared/node/local-docker-client.mjs";
 
 const action = process.argv[2] ?? "env";
 if (action === "env") {
-  const profile = resolveLocalRuntimeProfile();
+  const profile = await createLocalDockerClient().profile();
   for (const [key, value] of Object.entries(profile.docker.kind === "host" ? { DOCKER_HOST: profile.docker.value, DOCKER_CONTEXT: "" } : { DOCKER_HOST: "", DOCKER_CONTEXT: profile.docker.value ?? "" })) process.stdout.write(`${key}=${value ?? ""}\n`);
 } else if (action === "check") {
   const stampPath = process.argv[3];
