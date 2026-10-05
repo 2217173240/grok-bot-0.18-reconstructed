@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { spawn } from "node:child_process";
-import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { existsSync, type Dirent } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep, basename } from "node:path";
@@ -18,71 +17,18 @@ import { LOCAL_MCP_PLUGINS_DIRNAME, prepareLocalMcpPluginsDir } from "../../shar
 import { SAND_BOX_DATA_ROOT } from "../../host/host-paths.js";
 import { stopLocalAdminHost } from "./local-admin-host.js";
 import { dockerBindMount, localDockerPlatform, type LocalDockerPlatform } from "../../shared/node/local-docker-platform.js";
+import { createLocalDockerClient, type LocalDockerClient } from "../../shared/node/local-docker-client.mjs";
+import { validateDockerImage } from "../../shared/node/local-runtime-profile.mjs";
 
-export const LOCAL_DOCKER_BOX_IMAGE = "public.ecr.aws/k0i0n2g5/cursorenvironments/universal:sand-box-latest";
-// SAND_LOCAL_ADMIN_IMAGE 选择本地构建镜像；容器内 host 启动 exec-daemon。
-export const SAND_LOCAL_ADMIN_IMAGE_ENV = "SAND_LOCAL_ADMIN_IMAGE";
-export const SELF_BUILT_EXEC_BOX_IMAGE = localDockerPlatform().image;
-
-// How the computer's image was chosen. The official image runs amd64 under
-// QEMU; keeping it as the no-build default preserves out-of-the-box usability,
-// but the choice must never be silent — the fallback carries a ledger record
-// and a status line so a 5-16x execution penalty is a fact the user can act on.
-// A present-but-stale self-built image is a separate case: it is an honest
-// error, never a downgrade — an expired pin that silently fell into the
-// fallback would trade an actionable failure for a silent one.
 export const SELF_BUILT_DEPS_PIN_LABEL = "com.grok-bot.local-vm.deps-pin";
 
-export interface SelfBuiltImageProbe {
-  readonly present: boolean;
-  /** The image's baked deps-pin label; undefined when absent or unlabelled. */
-  readonly depsPin: string | undefined;
-}
-
-export type DockerImageChoice =
-  | { readonly selection: "explicit"; readonly image: string }
-  | { readonly selection: "self-built"; readonly image: string }
-  | { readonly selection: "self-built-stale"; readonly image: string; readonly reason: "deps-pin-mismatch"; readonly expectedDepsPin: string; readonly imageDepsPin: string | undefined }
-  | { readonly selection: "official-fallback"; readonly image: string; readonly reason: "self-built-image-missing" };
-
-export function decideDockerImage(env: NodeJS.ProcessEnv, probe: SelfBuiltImageProbe, expectedDepsPin?: string, platform: LocalDockerPlatform = localDockerPlatform()): DockerImageChoice {
-  const explicit = env[SAND_LOCAL_ADMIN_IMAGE_ENV]?.trim();
-  if (isLocalAdminEnabled(env) && env.SAND_LOCAL_ADMIN_TURN === "host") {
-    if (explicit === LOCAL_DOCKER_BOX_IMAGE) throw new Error("The official image does not support local in-box turns. Run node docker/build-box.mjs and select the local image.");
-    if (!explicit && !probe.present) throw new Error("The sandbox image is not built locally. Run node docker/build-box.mjs before starting local in-box turns.");
-  }
-  if (explicit != null && explicit.length > 0) return { selection: "explicit", image: explicit };
-  if (!probe.present) return { selection: "official-fallback", image: LOCAL_DOCKER_BOX_IMAGE, reason: "self-built-image-missing" };
-  // Stale is not missing: pin mismatch selects the stale error even though a
-  // QEMU-capable image exists — the caller must fail with the rebuild action.
-  if (expectedDepsPin != null && probe.depsPin !== expectedDepsPin) {
-    return { selection: "self-built-stale", image: platform.image, reason: "deps-pin-mismatch", expectedDepsPin, imageDepsPin: probe.depsPin };
-  }
-  return { selection: "self-built", image: platform.image };
-}
-
-// The reachability seam for the fallback honesty contract: a default-path
-// fallback MUST map to an intercept record; explicit, native, and stale
-// choices map to none. Undefined means "nothing to annotate", never
-// "annotation optional".
-export function officialImageQemuFallbackRecord(choice: DockerImageChoice): Readonly<Record<string, unknown>> | undefined {
-  if (choice.selection !== "official-fallback") return undefined;
-  return {
-    kind: "docker",
-    event: "official-image-qemu-fallback",
-    image: choice.image,
-    reason: choice.reason,
-    hint: "build the native image with docker/build-arm64-box.sh (5-16x faster than the emulated official image)",
-  };
-}
-
-async function resolveDockerImageForComputer(env: NodeJS.ProcessEnv = process.env, expectedDepsPin?: string): Promise<DockerImageChoice> {
-  const inspected = await runDocker(["image", "inspect", "--format", `{{index .Config.Labels "${SELF_BUILT_DEPS_PIN_LABEL}"}}`, SELF_BUILT_EXEC_BOX_IMAGE]);
-  const trimmed = inspected.output.trim();
-  const probe: SelfBuiltImageProbe = inspected.ok
-    ? { present: true, depsPin: trimmed.length > 0 ? trimmed : undefined }
-    : { present: false, depsPin: undefined };
-  return decideDockerImage(env, probe, expectedDepsPin);
+async function resolveDockerImageForComputer(expectedDepsPin?: string): Promise<string> {
+  const profile = await dockerClient().profile();
+  const image = profile.container.image;
+  const inspected = await runDocker(["image", "inspect", "--format", "{{json .}}", image]);
+  if (!inspected.ok) throw new Error(`Execution image ${image} is unavailable. Build it with node docker/build-box.mjs --platform ${profile.container.platform}. ${inspected.output}`);
+  validateDockerImage(profile, JSON.parse(inspected.output), expectedDepsPin);
+  return image;
 }
 
 // 应用的 deps pin 在打包时写入 bundle 附近。connector 可能位于
@@ -139,7 +85,6 @@ export function resolveLocalAdminBox(env: NodeJS.ProcessEnv, dockerAvailable: bo
 export interface LocalDockerRunPlan {
   readonly image: string;
   readonly args: readonly string[];
-  readonly custom: boolean;
 }
 
 const LOCAL_DOCKER_INFERENCE_ENV_NAMES = [
@@ -187,10 +132,9 @@ export function localDockerRunPlan(options: {
    */
   readonly pluginsHostDir?: string;
 }): LocalDockerRunPlan {
-  const image = options.image ?? LOCAL_DOCKER_BOX_IMAGE;
-  const custom = image !== LOCAL_DOCKER_BOX_IMAGE;
   const platform = options.platform ?? localDockerPlatform();
-  const dataVolume = options.dataVolume ?? (custom ? platform.dataVolume : "grok-bot-local-vm-data");
+  const image = options.image ?? platform.image;
+  const dataVolume = options.dataVolume ?? platform.dataVolume;
   const hasCredential = options.inferenceCredential != null;
   const inferenceEnv = options.inferenceEnv ?? process.env;
   // 宿主工作目录挂载到 /workspace，daemon、Claude SDK 和上传使用同一目录。
@@ -250,7 +194,6 @@ export function localDockerRunPlan(options: {
     ...(options.inferenceFileDir == null ? [] : ["--mount", dockerBindMount(options.inferenceFileDir, "/run/grok-bot", true)]),
     ...(options.authMounts ?? []),
   ];
-  if (custom) {
     // 本地镜像由 host 启动 daemon；box-init-exec 启动桌面进程并以 exec 启动 host。
     const desktopEntrypoint = options.desktop === true
       ? [
@@ -266,7 +209,6 @@ export function localDockerRunPlan(options: {
       : ["--entrypoint", "/usr/local/bin/node"];
     return {
       image,
-      custom,
       args: [...common,
         "--platform", platform.dockerPlatform,
         "--env", "SAND_DATA_ROOT=/home/box/sand-data",
@@ -274,20 +216,6 @@ export function localDockerRunPlan(options: {
         ...desktopEntrypoint,
         image, "/home/box/sand-host/host-main.cjs"],
     };
-  }
-  // Official image: amd64 via QEMU, supervisor entrypoint, pre-provisioned daemon
-  // (its workspaceRoot is already /workspace, so only the agent-side pins are
-  // new here; the workspace mount and the dual-track removal are shared).
-  return {
-    image,
-    custom,
-    args: [...common,
-      "--platform", "linux/amd64",
-      "--env", "SAND_SUPERVISOR_ENABLED=1", "--env", "SAND_BOX_AUTO_UPDATE=0", "--env", "SAND_USE_EXISTING_BOX_EXEC_DAEMON=1", "--env", "SAND_TREE_SITTER_NODE_DEPS=/home/box/deps", "--env", "NODE_PATH=/home/box/deps",
-      "--publish", "127.0.0.1:1337:1337", "--publish", "127.0.0.1:1339:1339",
-      "--publish", "127.0.0.1:6080:6080", "--publish", "127.0.0.1:6081:6081", "--publish", "127.0.0.1:8790:8790",
-      image],
-  };
 }
 export const LOCAL_DOCKER_BOX_CONTAINER = "grok-bot-local-vm";
 export const LOCAL_DOCKER_GATEWAY_URL = "http://127.0.0.1:1340";
@@ -309,13 +237,8 @@ export const LOCAL_DOCKER_HOST_TURN_LABEL = "com.grok-bot.local-vm.host-turn";
 export const LOCAL_DOCKER_BOX_EXEC_DAEMON_SHA_LABEL = "com.grok-bot.local-vm.box-exec-daemon-sha256";
 export const SAND_LOCAL_ADMIN_DESKTOP_ENV = "SAND_LOCAL_ADMIN_DESKTOP";
 
-// The desktop plane is the DEFAULT for the self-built computer (the goal is
-// the complete bot; both gate profiles are green). SAND_LOCAL_ADMIN_DESKTOP=0
-// opts back to the headless exec plane; the official image never gets a
-// desktop (its branch does not know the contract).
-export function resolveDesktopMode(env: NodeJS.ProcessEnv, customImage: boolean): boolean {
-  if (env[SAND_LOCAL_ADMIN_DESKTOP_ENV]?.trim() === "0") return false;
-  return customImage;
+export function resolveDesktopMode(env: NodeJS.ProcessEnv): boolean {
+  return env[SAND_LOCAL_ADMIN_DESKTOP_ENV]?.trim() !== "0";
 }
 // v2 stages host-main.cjs under sand-host/ because the stock host resolves its
 // box-exec-daemon at dirname(argv[1])/../box-exec-daemon/main.cjs — the in-box
@@ -342,67 +265,10 @@ interface CommandResult { readonly ok: boolean; readonly output: string }
 interface InferenceCredential { readonly accessToken: string; readonly backendUrl: string; readonly expiresAtMs: number }
 interface LocalHostBundle { readonly path: string; readonly sha256: string; readonly boxExecDaemonPath: string; readonly boxExecDaemonSha256: string }
 
-export const DOCKER_PROFILE_ENV = "GROKBOT_COLIMA_PROFILE";
-export const DEFAULT_DOCKER_PROFILE = "grokbot";
-
-// The Colima profile this project uses. Naming it here keeps the choice explicit
-// instead of borrowing whatever profile another project happens to have left on
-// the machine; an operator who keeps their runtime under a different name sets
-// GROKBOT_COLIMA_PROFILE.
-export function colimaProfileName(env: NodeJS.ProcessEnv = process.env): string {
-  const named = env[DOCKER_PROFILE_ENV]?.trim();
-  return named != null && named.length > 0 ? named : DEFAULT_DOCKER_PROFILE;
-}
-
-// 候选顺序与 scripts/lib/docker-socket.sh 一致，独立于主机上的 socket 状态。
-export function dockerSocketCandidates(env: NodeJS.ProcessEnv, homeDir: string, profiles: readonly string[], systemSocket = "/var/run/docker.sock"): string[] {
-  return [
-    join(homeDir, ".colima", colimaProfileName(env), "docker.sock"),
-    systemSocket,
-    join(homeDir, ".colima", "docker.sock"),
-    join(homeDir, ".colima", "default", "docker.sock"),
-    ...[...profiles].sort().map((profile) => join(homeDir, ".colima", profile, "docker.sock")),
-    join(homeDir, ".orbstack", "run", "docker.sock"),
-  ];
-}
-
-export function resolveDockerHost(env: NodeJS.ProcessEnv = process.env, homeDir = homedir(), systemSocket = "/var/run/docker.sock", platform: NodeJS.Platform = process.platform): string | undefined {
-  if (env.DOCKER_CONTEXT?.trim()) return undefined;
-  const configured = env.DOCKER_HOST?.trim();
-  if (configured != null && configured.length > 0) return configured;
-  // Windows 由 Docker CLI 读取当前 context 和 named pipe 端点。
-  if (platform === "win32") return undefined;
-  let profiles: string[] = [];
-  try {
-    profiles = readdirSync(join(homeDir, ".colima"));
-  } catch {}
-  for (const socket of dockerSocketCandidates(env, homeDir, profiles, systemSocket)) {
-    try {
-      if (statSync(socket).isSocket()) return `unix://${socket}`;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM" || code === "ELOOP") continue;
-      throw error;
-    }
-  }
-  return undefined;
-}
-
-export function dockerSpawnEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
-  const dockerHost = resolveDockerHost(env, homedir(), "/var/run/docker.sock", platform);
-  return dockerHost == null || env.DOCKER_HOST?.trim() ? env : { ...env, DOCKER_HOST: dockerHost };
-}
-
+let selectedDockerClient: LocalDockerClient | undefined;
+function dockerClient(): LocalDockerClient { return selectedDockerClient ??= createLocalDockerClient(); }
 function runDocker(args: readonly string[]): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn("docker", [...args], { stdio: ["ignore", "pipe", "pipe"], env: dockerSpawnEnv() });
-    let output = "";
-    const append = (chunk: Buffer): void => { output += chunk.toString(); if (output.length > 200_000) output = output.slice(-200_000); };
-    child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
-    child.once("error", (error) => resolve({ ok: false, output: `${output}\n${error.message}`.trim() }));
-    child.once("close", (code) => resolve({ ok: code === 0, output: output.trim() }));
-  });
+  return dockerClient().run(args);
 }
 
 function credentialPath(settingsPath: string): string {
@@ -497,10 +363,11 @@ async function inspectContainer(): Promise<{ exists: boolean; running: boolean; 
 }
 
 export async function getLocalDockerStatus(settingsPath: string): Promise<LocalDockerStatus> {
-  const daemon = await runDocker(["info", "--format", "{{.ServerVersion}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
-  if (!daemon.ok) return { available: false, running: false, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: LOCAL_DOCKER_BOX_IMAGE, detail: daemon.output || "Docker is not running." };
+  const profile = await dockerClient().profile();
+  try { await dockerClient().inspect(); }
+  catch (error) { return { available: false, running: false, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: profile.container.image, detail: error instanceof Error ? error.message : "Selected Docker runtime is unavailable" }; }
   const inspected = await inspectContainer();
-  if (!inspected.exists) return { available: true, running: false, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: LOCAL_DOCKER_BOX_IMAGE, detail: "Ready to create the local VM." };
+  if (!inspected.exists) return { available: true, running: false, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: profile.container.image, detail: "Ready to create the local VM." };
   if (!inspected.owned) return { available: true, running: inspected.running, ready: false, containerName: LOCAL_DOCKER_BOX_CONTAINER, image: inspected.image, detail: `Container ${LOCAL_DOCKER_BOX_CONTAINER} exists but is not owned by Grok Bot.` };
   const gateway = inspected.running && await gatewayReady(await readOrCreateToken(settingsPath));
   let detail = gateway ? "Local Docker VM is ready." : inspected.running ? "Container is starting." : "Local Docker VM is stopped.";
@@ -523,7 +390,6 @@ const localHostBreaker = createLocalDockerCircuitBreaker(LOCAL_HOST_AUTO_FAILURE
 const probeDockerAvailable = createDockerAvailabilityProbe(async () => (await runDocker(["info", "--format", "{{.ServerVersion}}"])).ok);
 // Written once per process: the image choice is re-derived on every connect,
 // the QEMU-fallback annotation is not — reconnects must not spam the ledger.
-let officialImageFallbackAnnotated = false;
 
 async function isDirectory(path: string): Promise<boolean> {
   try { return (await stat(path)).isDirectory(); } catch { return false; }
@@ -720,45 +586,21 @@ function localClaudeMountArguments(wanted: boolean): string[] {
 }
 
 async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: InferenceCredential): Promise<GatewayConnection> {
+  await dockerClient().inspect();
   const token = await readOrCreateToken(settingsPath);
-  const daemon = await runDocker(["info", "--format", "{{.OSType}}"]).catch(() => ({ ok: false, output: "Docker is not installed." }));
-  if (!daemon.ok) throw new Error(`Local Docker VM is selected, but Docker is unavailable: ${daemon.output || "start Docker and try again"}`);
-  if (daemon.output !== "linux") throw new Error("Local Docker execution requires Linux containers. Select Docker Desktop's Linux containers engine.");
   const expectedDepsPin = await readExpectedDepsPin();
-  const imageChoice = await resolveDockerImageForComputer(process.env, expectedDepsPin);
-  // Stale is not missing: a present image whose dependency pin disagrees with
-  // this app is refused with the rebuild action — it must never reach the
-  // annotated QEMU fallback, which is reserved for a genuinely missing image.
-  if (imageChoice.selection === "self-built-stale") {
-    appendLocalIntercept({ kind: "docker", event: "stale-image-refused", image: imageChoice.image, expectedDepsPin: imageChoice.expectedDepsPin, imageDepsPin: imageChoice.imageDepsPin ?? "(unlabelled)" });
-    throw new Error(`The self-built computer image is stale: its dependency pin ${imageChoice.imageDepsPin ?? "(unlabelled)"} does not match this app's ${imageChoice.expectedDepsPin}. Rebuild it with node docker/build-box.mjs.`);
-  }
-  const image = imageChoice.image;
-  if (imageChoice.selection === "explicit") {
-    const present = await runDocker(["image", "inspect", "--format", "1", image]);
-    if (!present.ok) throw new Error(`The local computer image ${image} is not built locally. Build it with node docker/build-box.mjs.`);
-  }
+  const image = await resolveDockerImageForComputer(expectedDepsPin);
   const hostBundle = await stageCurrentHostBundle(settingsPath);
   const inferenceFile = inferenceCredential == null ? undefined : await persistInferenceCredential(settingsPath, inferenceCredential);
   // Desktop mode: default for the self-built image once the dual gate
   // profiles were green (S-4); SAND_LOCAL_ADMIN_DESKTOP=0 opts out.
-  const desktop = resolveDesktopMode(process.env, image !== LOCAL_DOCKER_BOX_IMAGE);
+  const desktop = resolveDesktopMode(process.env);
   // Host-turn wiring mounts only when the turn plane actually runs in the box.
-  const hostTurn = process.env.SAND_LOCAL_ADMIN_TURN === "host" && image !== LOCAL_DOCKER_BOX_IMAGE;
+  const hostTurn = process.env.SAND_LOCAL_ADMIN_TURN === "host";
   const anthropicTokenPath = existsSync(join(dirname(settingsPath), "anthropic-token")) ? join(dirname(settingsPath), "anthropic-token") : undefined;
   const inspected = await inspectContainer();
   if (inspected.exists && !inspected.owned) throw new Error(`Local Docker VM cannot use ${LOCAL_DOCKER_BOX_CONTAINER}: an unowned container already has that name.`);
   if (inspected.exists && inspected.image !== image) throw new Error(`Local Docker VM container uses unexpected image ${inspected.image}. Remove it explicitly before changing images.`);
-  // Annotated, not silent — but only once every refusal guard has passed: the
-  // record claims the official image is about to run, and writing it before
-  // the guards made the ledger narrate a fallback that never happened (seen
-  // when the image tag was removed while its container kept running). One
-  // record per process; reconnects must not spam the bounded ledger.
-  const fallbackRecord = officialImageQemuFallbackRecord(imageChoice);
-  if (fallbackRecord != null && !officialImageFallbackAnnotated) {
-    officialImageFallbackAnnotated = true;
-    appendLocalIntercept(fallbackRecord);
-  }
   // Pin drift on an existing container means it predates the current app's
   // dependencies: replace it, the same as a schema or host-bundle change. A
   // desktop-mode mismatch replaces too — the entrypoint only applies at run.
@@ -786,20 +628,11 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     // docker run 之前由当前用户创建宿主工作目录。
     const workspaceHostPath = join(dirname(settingsPath), "box-workspace");
     await mkdir(workspaceHostPath, { recursive: true });
-    // Seed the box's settings into the data volume (idempotent, only when
-    // absent): without a settings file the in-box host defaults its inference
-    // provider to cursor and host turns die against the blocked backend
-    // (observed live). The provider mirrors the Mac's setting; the file lives
-    // in the volume, so container replacement keeps it.
+    // 设置初始化使用执行镜像内的同一程序，保留已有配置并修正卷根属主。
     const platform = localDockerPlatform();
-    const dataVolume = image !== LOCAL_DOCKER_BOX_IMAGE ? platform.dataVolume : "grok-bot-local-vm-data";
+    const dataVolume = platform.dataVolume;
     const { provider, commandCodeModel } = routing;
-    // Force-merge the provider key (the host persists the file itself, and a
-    // pre-existing provider-less file from an older boot would survive a
-    // write-only-if-absent seed — observed live). The Mac is the source of
-    // truth; the merge runs only at container creation.
-    const mergeScript = `const fs=require("node:fs");const p="/data/settings.json";let s={};try{s=JSON.parse(fs.readFileSync(p,"utf8"))}catch{};s.inferenceProvider=${JSON.stringify(provider)};${commandCodeModel === undefined ? "" : `s.commandCodeModel=${JSON.stringify(commandCodeModel)};`}fs.writeFileSync(p,JSON.stringify(s,null,2)+"\n");`;
-    const seeded = await runDocker(["run", "--rm", "--platform", image !== LOCAL_DOCKER_BOX_IMAGE ? platform.dockerPlatform : "linux/amd64", "--volume", `${dataVolume}:/data`, "--entrypoint", "/usr/local/bin/node", image, "-e", mergeScript]);
+    const seeded = await runDocker(["run", "--rm", "--network", "none", "--user", "root", "--platform", platform.dockerPlatform, "--volume", `${dataVolume}:${SAND_BOX_DATA_ROOT}`, "--entrypoint", "/usr/local/bin/node", image, "/usr/local/bin/seed-local-settings.cjs", "--provider", provider, ...(commandCodeModel === undefined ? [] : ["--command-code-model", commandCodeModel])]);
     if (!seeded.ok) throw new Error(`Could not prepare local Docker settings: ${seeded.output}`);
     const authMounts = localClaudeMountArguments(claudeMount);
     // Plugin definitions are the one input the box cannot obtain for itself.
@@ -827,7 +660,7 @@ async function ensureLocalDockerBox(settingsPath: string, inferenceCredential?: 
     if (!created.ok) throw new Error(`Could not create the local Docker VM: ${created.output}`);
     // Dual-path report: the same directory seen from both sides, so tool
     // output that mentions /workspace is actionable on the Mac.
-    if (plan.custom) appendLocalIntercept({ kind: "docker", event: "workspace-bind-mount", containerPath: "/workspace", hostPath: workspaceHostPath });
+    appendLocalIntercept({ kind: "docker", event: "workspace-bind-mount", containerPath: "/workspace", hostPath: workspaceHostPath });
   }
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {

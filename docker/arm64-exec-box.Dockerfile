@@ -55,6 +55,7 @@ ENV NODE_PATH=/home/box/deps/node_modules \
 COPY --chown=box:box docker/bin/box-init-exec /usr/local/bin/box-init-exec
 COPY --chown=box:box docker/bin/xtest-input-local.py /usr/local/bin/xtest-input-local.py
 COPY --chown=box:box docker/bin/box-navigate /usr/local/bin/box-navigate
+COPY docker/bin/seed-local-settings.cjs /usr/local/bin/seed-local-settings.cjs
 USER root
 RUN chmod 0755 /usr/local/bin/box-init-exec /usr/local/bin/xtest-input-local.py /usr/local/bin/box-navigate
 USER box

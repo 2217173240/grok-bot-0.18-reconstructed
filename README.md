@@ -47,7 +47,7 @@ The tested local path uses a third-party model service for conversation, files, 
 - Node.js **26.5.x** (`package.json` pins `>=26.5.0 <27`)
 - Xcode Command Line Tools, Git
 - Network access for dependencies and for the pinned 0.18.0 release input — Git LFS can supply the preserved installer, and when only its pointer is present, bootstrap downloads and verifies the original release
-- For container mode: a running Docker-compatible daemon (Colima is the default and recommended runtime; OrbStack works as an optional socket source) and the `linux/arm64` base image named in [docker/base-image.json](docker/base-image.json)
+- For container mode: a running Docker-compatible daemon (macOS defaults to the dedicated Colima profile `grokbot`; other runtimes can be selected explicitly by Docker context or host) and the `linux/arm64` base image named in [docker/base-image.json](docker/base-image.json)
 
 ## Build the macOS app
 
@@ -60,7 +60,7 @@ npm run check
 npm run package
 ```
 
-The package is written to `dist/Grok Bot 0.18 Reconstructed.app`. `npm run bootstrap` accepts `GROK_BOT_018_APP` when you already have the matching original app. Packaging needs the original app as an input and never modifies the installed copy.
+The package is written to `dist/Grok Bot 0.18 Reconstructed.app`. `npm run bootstrap` installs and verifies the complete Electron test runtime before parallel checks, and accepts `GROK_BOT_018_APP` when you already have the matching original app. Packaging needs the original app as an input and never modifies the installed copy.
 
 ## Run the local container computer
 
@@ -81,6 +81,10 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 ```
 
 Put your model provider's token in `anthropic-token` as a single line; the file stays in the local data directory and is passed to the provider process inside the container. The launcher defaults to `https://open.bigmodel.cn/api/anthropic` with the vision-capable model `glm-5.3-flash`; set `ANTHROPIC_BASE_URL` and `SAND_CLAUDE_MODEL` for another compatible service. Agent files are shared under `~/.grokbot-local/box-workspace`.
+
+Docker selection is shared by the application, launchers, image build and container checks: `DOCKER_CONTEXT` → `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE` → the data directory's `runtime.json` → platform default. macOS defaults to `~/.colima/grokbot/docker.sock`. Windows and Linux use the Docker CLI's current context, resolving and retaining its name when each client first connects. An unavailable selection produces an error. OrbStack and other local runtimes remain available through an explicit context or host.
+
+An optional `runtime.json` requires `"version": 1`. Its optional `docker` object selects exactly one of `context`, `host`, or macOS-only `colimaProfile`; its optional `image` selects the execution image. For example: `{"version":1,"docker":{"colimaProfile":"grokbot"}}`. Image precedence is `SAND_LOCAL_ADMIN_IMAGE` → `GROKBOT_IMAGE` → `runtime.json` → the platform default. The `DOCKER_HOST` export above also directs the separate image repository's fetch helper to the same daemon; clear an inherited `DOCKER_CONTEXT` when using that host selection.
 
 `./start-local.sh` also takes `stop`, `restart`, and `logs`. Local admin mode executes turns inside the container, and `start` fails loudly when the image or the installed app is missing.
 

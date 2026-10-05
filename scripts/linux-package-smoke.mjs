@@ -8,19 +8,23 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { readDepsPin } from "./lib/deps-pin.mjs";
+import { createLocalDockerClient } from "../source/shared/node/local-docker-client.mjs";
+import { dockerEnvironment } from "../source/shared/node/local-runtime-profile.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const execute = promisify(execFile);
-const image = "grok-bot-exec-box:amd64";
+let runtimeEnvironment = process.env;
 const ownerKey = "com.grok-bot.package-smoke";
 const mount = (source, destination) => ["type=bind", `src=${source}`, `dst=${destination}`, "readonly"].map(value => /[,"\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(",");
 
 async function docker(args) {
-  return (await execute("docker", args, { cwd: root, encoding: "utf8", timeout: 120000, maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
+  return (await execute("docker", args, { cwd: root, env: runtimeEnvironment, encoding: "utf8", timeout: 120000, maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
 }
 
 export async function main() {
-  if (process.platform !== "linux" || process.arch !== "x64") throw new Error("Linux package smoke requires Linux x64");
+  const runtime = await createLocalDockerClient().inspect();
+  runtimeEnvironment = dockerEnvironment(runtime);
+  const { image, platform } = runtime.container;
   await mkdir(path.join(root, ".cache"), { recursive: true });
   const directory = await mkdtemp(path.join(root, ".cache/linux-package-smoke-"));
   const temporary = path.join(directory, "temporary");
@@ -28,8 +32,8 @@ export async function main() {
   Object.assign(process.env, { TMPDIR: temporary, TMP: temporary, TEMP: temporary });
   console.log(`Linux package smoke artifacts: ${directory}`);
   const [imageInfo] = JSON.parse(await docker(["image", "inspect", image]));
-  assert.equal(`${imageInfo.Os}/${imageInfo.Architecture}`, "linux/amd64");
-  const depsPin = await readDepsPin(root, "linux/amd64");
+  assert.equal(`${imageInfo.Os}/${imageInfo.Architecture}`, platform);
+  const depsPin = await readDepsPin(root, platform);
   assert.equal(imageInfo.Config.Labels?.["com.grok-bot.local-vm.deps-pin"], depsPin);
   const outputRoot = path.join(directory, "runtime");
   const { buildCleanDistribution } = await import("./lib/clean-build.mjs");
@@ -50,7 +54,7 @@ export async function main() {
   const token = randomBytes(32).toString("hex");
   const marker = randomUUID();
   const label = `${ownerKey}=${session}`;
-  const evidence = { image: imageInfo.Id, platform: "linux/amd64", depsPin, host: "clean-source", rounds: [] };
+  const evidence = { image: imageInfo.Id, platform, depsPin, host: "clean-source", rounds: [] };
   let volumeCreated = false;
 
   async function removeContainer(target) {
@@ -68,9 +72,9 @@ export async function main() {
       SAND_GATEWAY_BIND_HOST: "0.0.0.0", SAND_HOST_PORT: "1340", SAND_GATEWAY_TOKEN: token, SAND_GATEWAY_REQUIRE_AUTH: "1",
       SAND_DATA_ROOT: "/home/box/sand-data", SAND_WORKSPACE_ROOT: "/workspace", SAND_AGENT_WORKSPACE: "/workspace",
       SAND_FEATURE_GATE_OVERRIDES: "sand_new_transcript_journal=0,sand_action_audit_logs=0,sand_auto_review=0,sand_agent_network=0",
-      TMPDIR: "/home/box/sand-data/.cache", TMP: "/home/box/sand-data/.cache", TEMP: "/home/box/sand-data/.cache",
+      TMPDIR: "/home/box/.cache", TMP: "/home/box/.cache", TEMP: "/home/box/.cache",
     };
-    await docker(["run", "--detach", "--init", "--name", name, "--label", label, "--platform", "linux/amd64", "--memory", "2g", "--publish", "127.0.0.1::1340", "--mount", mount(path.join(outputRoot, "dist/host"), "/home/box/sand-host"), "--mount", mount(path.join(outputRoot, "dist/box-exec-daemon"), "/home/box/box-exec-daemon"), "--mount", mount(checks, "/home/box/.cache/package-smoke"), "--mount", mount(workspace, "/workspace").replace(/,readonly$/, ""), "--volume", `${volume}:/home/box/sand-data`, ...Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]), "--entrypoint", "/usr/local/bin/node", image, "/home/box/sand-host/host-main.cjs"]);
+    await docker(["run", "--detach", "--init", "--name", name, "--label", label, "--platform", platform, "--memory", "2g", "--publish", "127.0.0.1::1340", "--mount", mount(path.join(outputRoot, "dist/host"), "/home/box/sand-host"), "--mount", mount(path.join(outputRoot, "dist/box-exec-daemon"), "/home/box/box-exec-daemon"), "--mount", mount(checks, "/home/box/.cache/package-smoke"), "--mount", mount(workspace, "/workspace").replace(/,readonly$/, ""), "--volume", `${volume}:/home/box/sand-data`, ...Object.entries(environment).flatMap(([key, value]) => ["--env", `${key}=${value}`]), "--entrypoint", "/usr/local/bin/node", image, "/home/box/sand-host/host-main.cjs"]);
     const [info] = JSON.parse(await docker(["inspect", name]));
     assert.equal(info.Config.Labels[ownerKey], session);
     assert.equal(info.HostConfig.Init, true);
@@ -94,8 +98,7 @@ export async function main() {
   try {
     await docker(["volume", "create", "--label", label, volume]);
     volumeCreated = true;
-    const seed = "const fs=require('node:fs');fs.mkdirSync('/data/.cache',{recursive:true});fs.writeFileSync('/data/settings.json',JSON.stringify({version:1,inferenceProvider:'codex',boxRuntime:'local-docker'}));";
-    await docker(["run", "--rm", "--name", prepareName, "--label", label, "--network", "none", "--platform", "linux/amd64", "--user", "root", "--volume", `${volume}:/data`, "--entrypoint", "/bin/sh", image, "-c", 'node -e "$1" && chown -R box:box /data', "seed", seed]);
+    await docker(["run", "--rm", "--name", prepareName, "--label", label, "--network", "none", "--platform", platform, "--user", "root", "--volume", `${volume}:/home/box/sand-data`, "--entrypoint", "/usr/local/bin/node", image, "/usr/local/bin/seed-local-settings.cjs", "--provider", "codex"]);
     for (const mode of ["write", "verify"]) {
       const endpoint = await start();
       const request = headers => fetch(`${endpoint}/api/listAgents`, { method: "POST", headers, body: "{}", signal: AbortSignal.timeout(10000) });
@@ -103,10 +106,10 @@ export async function main() {
       assert.equal((await request({ authorization: "Bearer invalid" })).status, 401);
       const authorized = await request({ authorization: `Bearer ${token}` });
       assert.equal(authorized.status, 200, await authorized.text());
-      const rpc = JSON.parse(await docker(["exec", name, "/usr/local/bin/node", "/home/box/.cache/package-smoke/rpc.cjs", mode, marker]));
+      const rpc = JSON.parse(await docker(["exec", name, "/usr/local/bin/node", "/home/box/.cache/package-smoke/rpc.cjs", mode, marker, platform === "linux/arm64" ? "arm64" : "x64"]));
       assert.equal(await readFile(path.join(workspace, "package-smoke.txt"), "utf8"), marker);
       evidence.rounds.push({ ...rpc, gatewayHealth: true, gatewayAuthentication: true });
-      const logs = await execute("docker", ["logs", name], { encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+      const logs = await execute("docker", ["logs", name], { env: runtimeEnvironment, encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
       await writeFile(path.join(directory, `${mode}.log`), logs.stdout + logs.stderr);
       await docker(["stop", "--time", "15", name]);
       await removeContainer(name);
@@ -119,7 +122,7 @@ export async function main() {
     await attempt(async () => {
       const remaining = await docker(["ps", "-aq", "--filter", `name=^/${name}$`]);
       if (!remaining) return;
-      const logs = await execute("docker", ["logs", name], { encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+      const logs = await execute("docker", ["logs", name], { env: runtimeEnvironment, encoding: "utf8", timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
       await writeFile(path.join(directory, "failure.log"), logs.stdout + logs.stderr);
     });
     await attempt(() => removeContainer(name));

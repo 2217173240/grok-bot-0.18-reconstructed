@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readJson, loadSettings, launchEnvironment, validateProvider, defaultDataRoot } from './lib/local-launch-config.mjs';
+import { createLocalDockerClient } from '../source/shared/node/local-docker-client.mjs';
+import { dockerEnvironment, validateDockerImage } from '../source/shared/node/local-runtime-profile.mjs';
 
 const distribution = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const containerName = 'grok-bot-local-vm';
@@ -13,19 +15,19 @@ const containerName = 'grok-bot-local-vm';
 export function resolveOptions(args, env = process.env, root = distribution) {
   const action = args[0] ?? 'start';
   if (!['start', 'stop', 'status', 'restart'].includes(action)) throw new Error('操作必须为 start、stop、status 或 restart');
-  let appPath = path.join(root, 'Grok Bot.exe');
+  let appPath = path.win32.join(root, 'Grok Bot.exe');
   let dataRoot = env.GROKBOT_DATA_ROOT || (env.LOCALAPPDATA ? defaultDataRoot(env, 'win32') : undefined);
   let stopContainer = false;
   for (let index = 1; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--stop-container') { stopContainer = true; continue; }
     if (!['--app-path', '--data-root'].includes(arg) || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error('启动参数无效');
-    if (arg === '--app-path') appPath = path.resolve(root, args[++index]);
-    else dataRoot = path.resolve(args[++index]);
+    if (arg === '--app-path') appPath = path.win32.resolve(root, args[++index]);
+    else dataRoot = path.win32.resolve(args[++index]);
   }
   if (!dataRoot) throw new Error('需要 LOCALAPPDATA 或 --data-root');
   if (stopContainer && !['stop', 'restart'].includes(action)) throw new Error('--stop-container 适用于 stop 或 restart');
-  return { action, appPath: path.resolve(appPath), dataRoot: path.resolve(dataRoot), stopContainer };
+  return { action, appPath: path.win32.resolve(appPath), dataRoot: path.win32.resolve(dataRoot), stopContainer };
 }
 
 function powershell(script) {
@@ -147,9 +149,10 @@ try {
 `);
 }
 
-function docker(args) {
-  try { return execFileSync('docker', args, { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
-  catch { throw new Error('Docker 操作失败，请检查 Docker Desktop 的 Linux containers 状态'); }
+async function docker(client, args) {
+  const result = await client.run(args);
+  if (!result.ok) throw new Error(`Docker 操作失败：${result.output}`);
+  return result.output;
 }
 
 export function assertOwnedContainer(value, dataRoot) {
@@ -161,12 +164,12 @@ export function assertOwnedContainer(value, dataRoot) {
   if (value?.Config?.Labels?.['com.grok-bot.local-vm'] !== '1' || !value.Mounts?.some(mount => mount.Destination === '/workspace' && normalize(mount.Source) === wanted)) throw new Error('容器归属与当前数据目录不匹配');
 }
 
-function stopContainer(dataRoot) {
-  const ids = docker(['ps', '-aq', '--filter', `name=^/${containerName}$`]);
+async function stopContainer(dataRoot, client) {
+  const ids = await docker(client, ['ps', '-aq', '--filter', `name=^/${containerName}$`]);
   if (!ids) return;
-  const [value] = JSON.parse(docker(['inspect', containerName]));
+  const [value] = JSON.parse(await docker(client, ['inspect', containerName]));
   assertOwnedContainer(value, dataRoot);
-  docker(['stop', value.Id]);
+  await docker(client, ['stop', value.Id]);
 }
 
 async function health(dataRoot) {
@@ -178,15 +181,18 @@ async function health(dataRoot) {
   catch { return false; }
 }
 
-async function prepareStart(options) {
+async function prepareStart(options, client) {
   const { dataRoot, appPath } = options;
   if (!existsSync(appPath) || !statSync(appPath).isFile()) throw new Error(`应用文件不存在：${appPath}`);
-  const env = launchEnvironment(dataRoot);
+  const runtime = await client.inspect();
+  const env = launchEnvironment(dataRoot, { ...dockerEnvironment(runtime), SAND_LOCAL_ADMIN_IMAGE: runtime.container.image });
   const settingsFile = path.join(dataRoot, 'settings.json');
   const settings = loadSettings(dataRoot);
   validateProvider(settings, dataRoot, env);
-  const daemon = JSON.parse(docker(['info', '--format', '{{json .}}']));
-  if (daemon.OSType !== 'linux' || !['x86_64', 'amd64'].includes(daemon.Architecture)) throw new Error('需要 Docker Desktop 的 Linux amd64 引擎');
+  const stamp = readJson(path.join(path.dirname(appPath), 'resources', 'build-stamp.json'));
+  if (typeof stamp.depsPin !== 'string' || !/^[a-f0-9]{64}$/.test(stamp.depsPin)) throw new Error('应用 build stamp 的 deps pin 无效');
+  const image = JSON.parse(await docker(client, ['image', 'inspect', '--format', '{{json .}}', runtime.container.image]));
+  validateDockerImage(runtime, image, stamp.depsPin);
   const timeout = Number(env.GROKBOT_READY_TIMEOUT_S ?? 45);
   if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 600) throw new Error('GROKBOT_READY_TIMEOUT_S 必须在 0 到 600 秒之间');
   await health(dataRoot);
@@ -221,20 +227,21 @@ async function start(options, prepared) {
   throw new Error('Docker gateway 启动超时；应用保留运行，可使用 status 或 stop');
 }
 
-function stop(options) {
+async function stop(options, client) {
   const state = readState(options.dataRoot);
   if (state) {
     const current = inspectProcess(state.pid);
     if (current) stopProcessTree(state);
     unlinkSync(path.join(options.dataRoot, 'windows-launch.json'));
   }
-  if (options.stopContainer) stopContainer(options.dataRoot);
+  if (options.stopContainer) await stopContainer(options.dataRoot, client);
   console.log(options.stopContainer ? '应用和本项目容器已经停止' : '应用已经停止；Docker 容器保持运行');
 }
 
 export async function main(args = process.argv.slice(2)) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('此入口需要 Windows x64');
   const options = resolveOptions(args);
+  const client = createLocalDockerClient({ dataRoot: options.dataRoot });
   mkdirSync(options.dataRoot, { recursive: true });
   return withLaunchGuard(options.dataRoot, async () => {
     if (options.action === 'status') {
@@ -242,8 +249,8 @@ export async function main(args = process.argv.slice(2)) {
       console.log(state && sameProcess(state, inspectProcess(state.pid)) ? '应用：运行中' : '应用：未运行');
       console.log(await health(options.dataRoot) ? 'Docker gateway：运行正常' : 'Docker gateway：未就绪');
     } else {
-      const prepared = ['start', 'restart'].includes(options.action) ? await prepareStart(options) : undefined;
-      if (['stop', 'restart'].includes(options.action)) stop(options);
+      const prepared = ['start', 'restart'].includes(options.action) ? await prepareStart(options, client) : undefined;
+      if (['stop', 'restart'].includes(options.action)) await stop(options, client);
       if (prepared) await start(options, prepared);
     }
   });

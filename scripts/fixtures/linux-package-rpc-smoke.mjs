@@ -6,9 +6,10 @@ import { ExecServerMessage } from "../../source/packages/proto/generated/agent/v
 import { ReadArgs } from "../../source/packages/proto/generated/agent/v1/read_exec_pb.js";
 import { ShellArgs, ShellCommandParsingResult, ShellCommandParsingResult_ExecutableCommand } from "../../source/packages/proto/generated/agent/v1/shell_exec_pb.js";
 
-const [mode, marker] = process.argv.slice(2);
+const [mode, marker, expectedArch] = process.argv.slice(2);
 assert(["write", "verify"].includes(mode));
 assert(/^[a-f0-9-]{36}$/.test(marker));
+assert(["arm64", "x64"].includes(expectedArch));
 const token = process.env.SAND_GATEWAY_TOKEN;
 assert(token?.length >= 32);
 
@@ -38,11 +39,11 @@ const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const command = `node -e ${quote(javascript)}`;
 const shell = await execute(client, { case: "shellArgs", value: new ShellArgs({ command, workingDirectory: "/workspace", timeout: 15000, skipApproval: true, toolCallId: "linux-package-shell", parsingResult: new ShellCommandParsingResult({ parsingFailed: false, executableCommands: [new ShellCommandParsingResult_ExecutableCommand({ name: "node", args: ["-e", javascript], fullText: command })], hasRedirects: false, hasCommandSubstitution: false }) }) }, "shellResult");
 assert.equal(shell.exitCode, 0);
-assert.deepEqual(JSON.parse(shell.stdout), { platform: "linux", arch: "x64", marker });
+assert.deepEqual(JSON.parse(shell.stdout), { platform: "linux", arch: expectedArch, marker });
 const read = await execute(client, readArgs, "readResult");
 assert.equal(read.output.case, "content");
 assert.equal(read.output.value, marker);
-console.log(JSON.stringify({ mode, platform: "linux", arch: "x64", shell: true, read: true, daemonAuthentication: true, dataVolume: true, marker }));
+console.log(JSON.stringify({ mode, platform: "linux", arch: expectedArch, shell: true, read: true, daemonAuthentication: true, dataVolume: true, marker }));
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

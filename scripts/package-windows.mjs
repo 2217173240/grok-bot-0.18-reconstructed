@@ -50,7 +50,7 @@ await rm(packagedAsar, { force: true });
 await cp(built.builtAsar, packagedAsar);
 await rm(`${packagedAsar}.unpacked`, { recursive: true, force: true });
 await cp(built.builtAsarUnpacked, `${packagedAsar}.unpacked`, { recursive: true, dereference: false });
-for (const file of ["start-local.ps1", "scripts/windows-local-launch.mjs", "scripts/lib/local-launch-config.mjs"]) {
+for (const file of ["start-local.ps1", "scripts/windows-local-launch.mjs", "scripts/lib/local-launch-config.mjs", "source/shared/node/local-runtime-profile.mjs", "source/shared/node/local-docker-client.mjs"]) {
   await mkdir(path.dirname(path.join(packageRoot, file)), { recursive: true });
   await cp(path.join(repoRoot, file), path.join(packageRoot, file));
 }

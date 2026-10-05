@@ -42,7 +42,7 @@ export async function verifyElectronShellAgainstOfficialArchive(shell, { archive
   const filename = "electron-v42.1.0-darwin-arm64.zip";
   if (checksums[filename] !== expectedElectronArchiveSha256) throw new Error("Installed Electron package checksum material drifted from the pinned official archive");
   try { await access(archivePath); }
-  catch { throw new Error(`Verified Electron npm archive cache is missing at ${archivePath}; rerun npm ci with Electron install scripts enabled`); }
+  catch { throw new Error(`Verified Electron npm archive cache is missing at ${archivePath}; run npm run bootstrap`); }
   if (await sha256(archivePath) !== expectedElectronArchiveSha256) throw new Error("Electron 42.1.0 archive failed its official SHA-256 check");
   const cacheRoot = path.join(repoRoot, ".cache");
   await mkdir(cacheRoot, { recursive: true });

@@ -10,7 +10,7 @@ Windows x64 的构建、启动与实机验收状态见 [Windows Docker 部署](W
 
 - macOS Apple Silicon（arm64）。
 - Xcode Command Line Tools、Git、Node `26.5.0`（`.node-version`）、Docker CLI。
-- Colima，默认 profile 为 `grokbot`；OrbStack 作为 Colima 候选不可用时的最后候选。
+- Colima，默认使用专属 profile `grokbot`；其他本地 runtime 可通过 Docker context 或 host 显式选择。
 - 运行期需要 local-admin、Docker 和一个已配置的第三方 inference provider。当前生产启动脚本默认 `claude-code`，Codex 仅在隔离验收范围内验证，本手册不指导 Mac 回合使用 Codex。
 - 构建需要访问仓库锁定的下载源、npm registry、GitHub 以及基础镜像独立仓库的固定构件。
 
@@ -45,7 +45,15 @@ docker/build-arm64-box.sh
 
 发布包、执行镜像和容器门禁使用 `scripts/lib/deps-pin.mjs` 计算的同一个依赖 pin。其输入变化后，先重新构建执行镜像；启动会明确拒绝过期镜像。原数据卷和基础镜像继续保留。
 
-`scripts/lib/docker-socket.sh` 与 `source/electron-main/box/local-docker-host-connector.ts` 维护同一候选顺序：显式 `DOCKER_HOST`、`GROKBOT_COLIMA_PROFILE` 指定的 profile（默认 `grokbot`）、系统 socket、无 profile/default Colima socket、按名称排序的其余 Colima profile、OrbStack socket。若需要指定 socket，可以在当前 shell 设置 `DOCKER_HOST=unix://<socket>`。
+应用、启动器、镜像构建和容器检查共用 `source/shared/node/local-runtime-profile.mjs` 与 `local-docker-client.mjs`。Docker 选择顺序为 `DOCKER_CONTEXT` → `DOCKER_HOST` → `GROKBOT_COLIMA_PROFILE` → 数据根中的 `runtime.json` → 平台默认值。Mac 默认连接 `~/.colima/grokbot/docker.sock`；Windows/Linux 默认读取 Docker CLI 当前 context，并在客户端首次连接时固定其名称。所选 runtime 不可用时报告错误。OrbStack 等其他本地 runtime 可以显式设置 context 或 host。
+
+可选的 `runtime.json` 必须包含 `"version": 1`。`docker` 和 `image` 均可省略；提供 `docker` 时，必须在 `context`、`host`、`colimaProfile` 中选择一个字段，`colimaProfile` 仅限 macOS。例如：
+
+```json
+{"version": 1, "docker": {"colimaProfile": "grokbot"}}
+```
+
+执行镜像按 `SAND_LOCAL_ADMIN_IMAGE` → `GROKBOT_IMAGE` → `runtime.json` 的 `image` → 平台默认值选择。上面的 `DOCKER_HOST` 同时供独立镜像仓库的 fetch 工具使用；使用此 host 前，应清除继承的 `DOCKER_CONTEXT`，或者明确选择同一 daemon 的 context。
 
 ## 构建和安装 App
 
@@ -105,7 +113,7 @@ scripts/zero-remote-live.sh
 ## 故障边界
 
 - `missing .../anthropic-token`：使用文本编辑器保存 token 文件并设置 `chmod 600`，不要把 token 写进命令行。
-- `no Docker socket found`：启动 Colima `grokbot` profile，启动 OrbStack，或设置正确的 `DOCKER_HOST`。
+- 所选 Docker runtime 不可用：启动配置指定的 runtime，核对 `DOCKER_CONTEXT`、`DOCKER_HOST` 和 `runtime.json`；默认 Mac 配置需要运行 Colima `grokbot` profile。
 - gateway 超时：查看 `./start-local.sh logs`、Docker container logs 和 host 日志，确认镜像 pin、数据卷权限、runtime staging 与 1340 端口状态。
 - installed app 行为与源码不同：比较 build stamp 的 `sourceRevision` 和当前仓库提交，重新执行 `npm run package`、`npm run verify` 后重新 `ditto`。
 - handover URL 失效：重新执行 `status` 获取当前 URL，并在任何外部分享前隐藏完整 URL 行。

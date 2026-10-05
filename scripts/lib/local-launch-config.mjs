@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dockerEnvironment, resolveLocalDataRoot, resolveLocalRuntimeProfile } from '../../source/shared/node/local-runtime-profile.mjs';
 
 const providers = ['claude-code', 'codex', 'openrouter', 'command-code'];
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -25,10 +26,7 @@ export function readJson(file) {
 }
 
 export function defaultDataRoot(env = process.env, platform = process.platform) {
-  if (env.GROKBOT_DATA_ROOT) return path.resolve(env.GROKBOT_DATA_ROOT);
-  const parent = platform === 'win32' ? env.LOCALAPPDATA : env.HOME;
-  if (!parent) throw new Error(platform === 'win32' ? '需要 LOCALAPPDATA 或 GROKBOT_DATA_ROOT' : '需要 HOME 或 GROKBOT_DATA_ROOT');
-  return path.join(parent, platform === 'win32' ? 'GrokBotLocal' : '.grokbot-local');
+  return resolveLocalDataRoot({ env, platform });
 }
 
 export function validateSettings(settings) {
@@ -48,12 +46,13 @@ export function loadSettings(dataRoot) {
 
 export function launchEnvironment(dataRoot, env = process.env) {
   if ((env.GROKBOT_BOX ?? 'docker') !== 'docker' || (env.GROKBOT_TURN ?? 'host') !== 'host') throw new Error('本地回合必须使用 Docker 容器');
-  const result = { ...env, SAND_LOCAL_ADMIN: '1', SAND_DISABLE_SENTRY: '1', SAND_DISABLE_TELEMETRY: '1', SAND_DISABLE_UPDATES: '1', DISABLE_AUTOUPDATER: '1',
+  const runtime = resolveLocalRuntimeProfile({ dataRoot, env });
+  const result = { ...dockerEnvironment(runtime, env), SAND_LOCAL_ADMIN: '1', SAND_DISABLE_SENTRY: '1', SAND_DISABLE_TELEMETRY: '1', SAND_DISABLE_UPDATES: '1', DISABLE_AUTOUPDATER: '1',
     SAND_DATA_ROOT: dataRoot, SAND_USER_DATA_DIR: path.join(dataRoot, 'profile'), SAND_LOCAL_ADMIN_BOX: 'docker', SAND_LOCAL_ADMIN_TURN: 'host',
     SAND_LOCAL_ADMIN_DESKTOP: env.GROKBOT_DESKTOP === '0' ? '0' : '1', ENABLE_TOOL_SEARCH: 'true',
     SAND_CLAUDE_MODEL: env.SAND_CLAUDE_MODEL || 'glm-5.3-flash', ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || 'https://open.bigmodel.cn/api/anthropic' };
   delete result.ELECTRON_RUN_AS_NODE;
-  if (env.GROKBOT_IMAGE) result.SAND_LOCAL_ADMIN_IMAGE = env.GROKBOT_IMAGE;
+  result.SAND_LOCAL_ADMIN_IMAGE = runtime.container.image;
   result.ANTHROPIC_MODEL = env.ANTHROPIC_MODEL || result.SAND_CLAUDE_MODEL;
   result.CLAUDE_CODE_SUBAGENT_MODEL = env.CLAUDE_CODE_SUBAGENT_MODEL || result.SAND_CLAUDE_MODEL;
   for (const name of ['FABLE', 'HAIKU', 'OPUS', 'SONNET']) {

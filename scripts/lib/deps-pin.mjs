@@ -13,6 +13,7 @@ export const DEPS_PIN_FILES = [
   "docker/bin/box-init-exec",
   "docker/bin/xtest-input-local.py",
   "docker/bin/box-navigate",
+  "docker/bin/seed-local-settings.cjs",
   "docker/base-image.json",
 ];
 

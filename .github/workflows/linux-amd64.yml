@@ -52,6 +52,8 @@ jobs:
           node docker/build-box.mjs --platform linux/amd64
       - name: Exercise native desktop tools
         run: python3 .cache/box-image/tests/test-native-image.py grok-bot-exec-box:amd64 linux/amd64
+      - name: Exercise production settings initialization and data preservation
+        run: node scripts/docker-settings-seed-smoke.mjs
       - name: Exercise production host, daemon, files and data preservation
         run: node scripts/linux-package-smoke.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -61,5 +63,6 @@ jobs:
           path: |
             .cache/linux-package-smoke-*/*.log
             .cache/linux-package-smoke-*/report.json
+            .cache/docker-seed-smoke-*/report.json
           include-hidden-files: true
           retention-days: 7

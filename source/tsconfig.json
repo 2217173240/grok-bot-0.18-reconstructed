@@ -4,11 +4,12 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "allowJs": true,
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "shared/node/local-runtime-profile.mjs", "shared/node/local-docker-client.mjs"]
 }

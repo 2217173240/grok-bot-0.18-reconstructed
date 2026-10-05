@@ -87,9 +87,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(mainEdge, /invoke\(deps\.boxRecovery, "restartCoordinator"\)/);
   assert.match(mainEdge, /mode === "local-docker"\) await startLocalDockerBox\(settingsPath\); else await stopLocalDockerBox\(\)/);
   assert.match(mainEdge, /setBoxRuntime", mode === "local-docker" \? "remote" : "local-docker"/);
-  assert.match(localDocker, /public\.ecr\.aws\/k0i0n2g5\/cursorenvironments\/universal:sand-box-latest/);
   assert.match(localDocker, /"127\.0\.0\.1:1340:1340"/);
-  assert.match(localDocker, /SAND_BOX_AUTO_UPDATE=0/);
   assert.match(localDocker, /dockerBindMount\(options\.hostMainPath, "\/home\/box\/sand-host", true\)/);
   // The staged host tree carries its runtime siblings (agent-isolation and
   // extension workers) — an in-box turn died on a missing worker when the
@@ -192,7 +190,7 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.match(await readFile(path.join(repoRoot, "source/electron-main/account/cursor-auth.ts"), "utf8"), /if \(this\.localAdminEnabled\)/);
   assert.match(localDocker, /isLocalAdminEnabled\(\) \|\| settings\.getBoxRuntime\(\) === "local-docker"/);
   assert.match(localDocker, /if \(isLocalAdminEnabled\(\)\) \{/);
-  assert.match(localDocker, /export function resolveDockerHost/);
+  assert.match(localDocker, /createLocalDockerClient/);
   // Local admin selects Docker before connecting, then returns the container
   // gateway. A failed Docker connection must propagate instead of switching
   // to a Mac host process.
@@ -201,13 +199,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(localDocker, /ensureLocalAdminHost\(/);
   assert.match(localDocker, /resolveLocalAdminBox/);
   assert.match(localDocker, /if \(!dockerAvailable\) throw new Error\("Docker sandbox is unavailable/);
-  assert.match(localDocker, /if \(!present.ok\) throw new Error\(`The local computer image/);
-  assert.match(localDocker, /SELF_BUILT_EXEC_BOX_IMAGE/);
-  // The default-path fallback (self-built image missing, no explicit pin) is
-  // annotated, never silent: the choice maps to an intercept record and the
-  // status surface carries the same warning.
-  assert.match(localDocker, /official-image-qemu-fallback/);
-  assert.match(localDocker, /officialImageQemuFallbackRecord\(imageChoice\)/);
+  assert.match(localDocker, /validateDockerImage\(profile, JSON.parse\(inspected.output\), expectedDepsPin\)/);
+  assert.match(localDocker, /if \(!inspected.ok\) throw new Error\(`Execution image/);
   assert.match(await readFile(path.join(repoRoot, "start-local.sh"), "utf8"), /self-built arm64 image missing/);
   // One workspace, one owner: the container's /workspace is a bind mount of
   // the Mac-side directory, and the daemon root, agent cwd, and Mac alias all
@@ -228,12 +221,8 @@ test("Router settings use the trusted backend and display recorded inference usa
   assert.doesNotMatch(gates, /bash -c "echo \$MARKER"/);
   assert.match(gates, /15s performance sentinel/);
   assert.match(await readFile(path.join(repoRoot, "docker", "run-arm64-box.sh"), "utf8"), /SAND_WORKSPACE_ROOT=\/workspace/);
-  // Image freshness pin (A-3): one canonical implementation feeds the package
-  // stamp, the image label, and the gate; a present-but-stale image is
-  // refused with the rebuild action and must never reach the QEMU fallback.
+  // 应用、镜像与容器检查共用依赖身份。
   assert.match(localDocker, /SELF_BUILT_DEPS_PIN_LABEL = "com\.grok-bot\.local-vm\.deps-pin"/);
-  assert.match(localDocker, /stale-image-refused/);
-  assert.match(localDocker, /throw new Error\(`The self-built computer image is stale/);
   assert.match(await readFile(path.join(repoRoot, "scripts", "package-macos.mjs"), "utf8"), /depsPin/);
   assert.match(await readFile(path.join(repoRoot, "docker", "build-box.mjs"), "utf8"), /com\.grok-bot\.local-vm\.deps-pin=/);
   assert.match(gates, /G0 image deps pin/);

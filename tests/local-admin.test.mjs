@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -313,109 +312,6 @@ test("local admin intercept blocks Cursor production fetches and records them", 
   }
 });
 
-test("docker CLI finds the project's own Colima profile instead of whichever one exists", async () => {
-  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
-  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
-  const home = await mkdtemp(path.join(repoRoot, ".cache", "c-"));
-  const servers = [];
-  async function listen(socket) {
-    await mkdir(path.dirname(socket), { recursive: true });
-    const server = createServer();
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(path.relative(process.cwd(), socket), resolve);
-    });
-    servers.push(server);
-  }
-  try {
-    const own = path.join(home, ".colima", "grokbot", "docker.sock");
-    await listen(own);
-    assert.equal(loaded.module.resolveDockerHost({}, home), `unix://${own}`);
-    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "grokbot" }, home), `unix://${own}`);
-
-    const named = path.join(home, ".colima", "custom-runtime", "docker.sock");
-    await listen(named);
-    assert.equal(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home), `unix://${named}`);
-
-    const file = path.join(home, ".colima", "file", "docker.sock");
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, "");
-    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "file" }, home), `unix://${file}`);
-
-    const blocked = path.join(home, ".colima", "blocked");
-    await writeFile(blocked, "");
-    assert.notEqual(loaded.module.resolveDockerHost({ GROKBOT_COLIMA_PROFILE: "blocked" }, home), `unix://${path.join(blocked, "docker.sock")}`);
-
-    // 候选顺序不依赖测试主机上的 /var/run/docker.sock。
-    assert.deepEqual(loaded.module.dockerSocketCandidates({ GROKBOT_COLIMA_PROFILE: "custom-runtime" }, home, ["zzz", "aaa"]), [
-      named,
-      "/var/run/docker.sock",
-      path.join(home, ".colima", "docker.sock"),
-      path.join(home, ".colima", "default", "docker.sock"),
-      path.join(home, ".colima", "aaa", "docker.sock"),
-      path.join(home, ".colima", "zzz", "docker.sock"),
-      path.join(home, ".orbstack", "run", "docker.sock"),
-    ]);
-
-    const explicit = loaded.module.resolveDockerHost({ DOCKER_HOST: "unix:///explicit.sock" }, home);
-    assert.equal(explicit, "unix:///explicit.sock");
-  } finally {
-    await Promise.all(servers.map((server) => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
-    await rm(home, { recursive: true, force: true });
-    await loaded.dispose();
-  }
-});
-
-test("docker CLI uses an existing OrbStack socket when DOCKER_HOST is unset", async () => {
-  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
-  await mkdir(path.join(repoRoot, ".cache"), { recursive: true });
-  const home = await mkdtemp(path.join(repoRoot, ".cache", "o-"));
-  const servers = [];
-  async function listen(socket) {
-    await mkdir(path.dirname(socket), { recursive: true });
-    const server = createServer();
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(path.relative(process.cwd(), socket), resolve);
-    });
-    servers.push(server);
-  }
-  const shell = (systemSocket, dockerHost) => {
-    const result = spawnSync("bash", ["-c", '. "$1"; resolve_docker_host "$2"; printf "%s" "$DOCKER_HOST"', "bash", path.join(repoRoot, "scripts/lib/docker-socket.sh"), systemSocket], {
-      cwd: repoRoot,
-      env: { ...process.env, HOME: home, DOCKER_HOST: dockerHost ?? "" },
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 0, result.stderr);
-    return result.stdout;
-  };
-  try {
-    const socket = path.join(home, ".orbstack", "run", "docker.sock");
-    const absentSystemSocket = path.join(home, "missing-system.sock");
-    await listen(socket);
-    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${socket}`);
-    assert.equal(shell(absentSystemSocket), `unix://${socket}`);
-
-    const otherColima = path.join(home, ".colima", "other", "docker.sock");
-    await listen(otherColima);
-    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${otherColima}`);
-    assert.equal(shell(absentSystemSocket), `unix://${otherColima}`);
-
-    const ownColima = path.join(home, ".colima", "grokbot", "docker.sock");
-    await listen(ownColima);
-    assert.equal(loaded.module.resolveDockerHost({}, home, absentSystemSocket), `unix://${ownColima}`);
-    assert.equal(shell(absentSystemSocket), `unix://${ownColima}`);
-
-    const explicit = "unix:///explicit.sock";
-    assert.equal(loaded.module.resolveDockerHost({ DOCKER_HOST: explicit }, home, absentSystemSocket), explicit);
-    assert.equal(shell(absentSystemSocket, explicit), explicit);
-  } finally {
-    await Promise.all(servers.map((server) => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))));
-    await rm(home, { recursive: true, force: true });
-    await loaded.dispose();
-  }
-});
-
 test("live Docker runtime files do not name another project's Colima context", async () => {
   const files = ["start-local.sh"];
   async function collect(relativeDir) {
@@ -461,51 +357,6 @@ async function hostLifecyclePorts() {
     dispose: async () => { await defaultGateway?.close(); },
   };
 }
-
-test("docker image selection annotates the QEMU fallback instead of hiding it", async () => {
-  const loaded = await loadModule("source/electron-main/box/local-docker-host-connector.ts");
-  try {
-    const { decideDockerImage, officialImageQemuFallbackRecord, SELF_BUILT_EXEC_BOX_IMAGE, LOCAL_DOCKER_BOX_IMAGE, SAND_LOCAL_ADMIN_IMAGE_ENV } = loaded.module;
-    const pin = "a".repeat(64);
-    // An explicit pin wins whatever it points at and is never annotated.
-    const explicit = decideDockerImage({ [SAND_LOCAL_ADMIN_IMAGE_ENV]: "my-image:dev" }, { present: false, depsPin: undefined }, pin);
-    assert.equal(explicit.selection, "explicit");
-    assert.equal(explicit.image, "my-image:dev");
-    assert.equal(officialImageQemuFallbackRecord(explicit), undefined);
-    // Self-built image present with a matching pin (or no expectation) → the
-    // native image, no annotation.
-    for (const expectation of [pin, undefined]) {
-      const native = decideDockerImage({}, { present: true, depsPin: pin }, expectation);
-      assert.equal(native.selection, "self-built");
-      assert.equal(native.image, SELF_BUILT_EXEC_BOX_IMAGE);
-      assert.equal(officialImageQemuFallbackRecord(native), undefined);
-    }
-    // Default path with the image missing → the official image MUST carry an
-    // annotation record: the fallback stays available, it just stops being
-    // silent. Reachability, not an error string.
-    const fallback = decideDockerImage({}, { present: false, depsPin: undefined }, pin);
-    assert.equal(fallback.selection, "official-fallback");
-    assert.equal(fallback.image, LOCAL_DOCKER_BOX_IMAGE);
-    const record = officialImageQemuFallbackRecord(fallback);
-    assert.notEqual(record, undefined, "a default-path QEMU fallback must map to an intercept record");
-    assert.equal(record.event, "official-image-qemu-fallback");
-    assert.equal(record.image, LOCAL_DOCKER_BOX_IMAGE);
-    assert.match(String(record.hint), /build-arm64-box\.sh/);
-    // The ordering trap: stale is NOT missing. A present image whose pin
-    // disagrees (including unlabelled pre-pin images) must select the stale
-    // error — it must never fall through to the QEMU fallback, which would
-    // trade an actionable rebuild hint for a silent downgrade.
-    for (const imagePin of ["b".repeat(64), undefined]) {
-      const stale = decideDockerImage({}, { present: true, depsPin: imagePin }, pin);
-      assert.equal(stale.selection, "self-built-stale", `image pin ${imagePin ?? "(unlabelled)"} with expectation must be stale, never a fallback`);
-      assert.equal(stale.imageDepsPin, imagePin);
-      assert.equal(stale.expectedDepsPin, pin);
-      assert.equal(officialImageQemuFallbackRecord(stale), undefined, "stale is an error to surface, not a fallback to annotate");
-    }
-  } finally {
-    await loaded.dispose();
-  }
-});
 
 test("local admin host failure carries the child exit code and output tail with port 1340 occupied", async () => {
   const loaded = await loadModule("source/electron-main/box/local-admin-host.ts");
@@ -610,13 +461,11 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     const pin = "c".repeat(64);
     const cases = [
       ["custom", loaded.module.localDockerRunPlan({ ...base, image: "grok-bot-exec-box:arm64", workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", depsPin: pin })],
-      ["official", loaded.module.localDockerRunPlan({ ...base, workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", depsPin: pin })],
+      ["default", loaded.module.localDockerRunPlan({ ...base, workspaceHostPath: "/Users/me/.grokbot-local/box-workspace", depsPin: pin })],
     ];
     for (const [label, plan] of cases) {
       const args = plan.args.join(" ");
-      // One workspace, bind-mounted from the Mac side (Finder-visible) — the
-      // fallback image converges on the same contract instead of keeping a
-      // second file face on a named volume.
+      // 工作目录通过同一个宿主 bind mount 进入容器。
       assert.match(args, /type=bind,src=\/Users\/me\/\.grokbot-local\/box-workspace,dst=\/workspace(?!\S)/, `${label} plan must bind-mount /workspace`);
       assert.doesNotMatch(args, /--volume [^ ]+:\/workspace/, `${label} plan must not use a workspace volume`);
       // The daemon's workspaceRoot, the agent cwd, and the Mac-side alias are
@@ -627,8 +476,6 @@ test("the computer plan converges every file surface on one bind-mounted workspa
       // The expected deps pin rides along as a container label for drift.
       assert.ok(plan.args.includes(`com.grok-bot.local-vm.deps-pin=${pin}`), label);
     }
-    assert.equal(cases[0][1].custom, true);
-    assert.equal(cases[1][1].custom, false);
     // Desktop opt-in (B1 topology): the entrypoint becomes box-init-exec so
     // the desktop plane runs in the background and the host is the foreground
     // via exec; the mode rides as a label for drift replacement. The default
@@ -660,7 +507,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
     assert.equal(resolveDesktopMode({}, true), true);
     assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "1" }, true), true);
     assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "0" }, true), false);
-    assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "1" }, false), false);
+    assert.equal(resolveDesktopMode({ [SAND_LOCAL_ADMIN_DESKTOP_ENV]: "1" }, false), true);
     // No Mac-side directory, no plan — for either image: silently falling
     // back to a named volume would reinstate the dual track the contract
     // exists to remove.
@@ -673,7 +520,7 @@ test("the computer plan converges every file surface on one bind-mounted workspa
 
 test("the self-built deps pin is canonical, deterministic, and order-sensitive", async () => {
   const depsPinModule = await import(`${pathToFileURL(path.join(repoRoot, "scripts", "lib", "deps-pin.mjs")).href}?${Date.now()}`);
-  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package.json", "package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/base-image.json"]);
+  assert.deepEqual(depsPinModule.DEPS_PIN_FILES, ["package.json", "package-lock.json", "scripts/apply-third-party-patches.mjs", "docker/arm64-exec-box.Dockerfile", "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/bin/seed-local-settings.cjs", "docker/base-image.json"]);
   const contents = ["alpha", "beta", "gamma"];
   assert.equal(depsPinModule.computeDepsPin(contents), depsPinModule.computeDepsPin([...contents]));
   // Concatenation order is part of the pin: reordering inputs must change it,

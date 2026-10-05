@@ -3,6 +3,8 @@ import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readBaseImage, readDepsPin } from "../scripts/lib/deps-pin.mjs";
+import { createLocalDockerClient } from "../source/shared/node/local-docker-client.mjs";
+import { dockerEnvironment } from "../source/shared/node/local-runtime-profile.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -12,8 +14,9 @@ if (args.length !== 2 || args[0] !== "--platform" || !["linux/arm64", "linux/amd
 const platform = args[1];
 const base = await readBaseImage(repo, platform);
 const pin = await readDepsPin(repo, platform);
+const env = dockerEnvironment(await createLocalDockerClient().profile());
 function docker(args, capture = false) {
-  return execFileSync("docker", args, { encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
+  return execFileSync("docker", args, { env, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
 }
 const [image] = JSON.parse(docker(["image", "inspect", base.reference], true));
 if (!image.RepoDigests?.includes(base.reference) || `${image.Os}/${image.Architecture}` !== platform ||
@@ -27,7 +30,7 @@ await mkdir(path.join(repo, ".cache"), { recursive: true });
 const context = await mkdtemp(path.join(repo, ".cache", "box-build-"));
 try {
   const files = ["package.json", "package-lock.json", "scripts/apply-third-party-patches.mjs",
-    "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate"];
+    "docker/bin/box-init-exec", "docker/bin/xtest-input-local.py", "docker/bin/box-navigate", "docker/bin/seed-local-settings.cjs"];
   for (const file of files) {
     await mkdir(path.dirname(path.join(context, file)), { recursive: true });
     await cp(path.join(repo, file), path.join(context, file));
