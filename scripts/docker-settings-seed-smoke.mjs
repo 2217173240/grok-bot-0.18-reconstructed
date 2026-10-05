@@ -20,7 +20,7 @@ await mkdir(directory, { recursive: true });
 
 async function required(args, description) {
   const result = await client.run(args);
-  assert.ok(result.ok, `${description}: Docker command failed`);
+  assert.ok(result.ok, `${description}: ${result.output}`);
   return result.output;
 }
 
@@ -37,12 +37,17 @@ async function run(args, { user = "root", readonly = false } = {}) {
 
 async function check(action, options, ...args) {
   const result = await run(["-e", fixture, action, ...args], options);
-  assert.ok(result.ok, `${action}: container check failed`);
+  assert.ok(result.ok, `${action}: ${result.output}`);
 }
 
 async function seed(provider, model, options) {
   return run(["/usr/local/bin/seed-local-settings.cjs", "--provider", provider,
     ...(model === undefined ? [] : ["--command-code-model", model])], options);
+}
+
+async function requireSeed(provider, model) {
+  const result = await seed(provider, model);
+  assert.ok(result.ok, `Settings initialization failed: ${result.output}`);
 }
 
 async function cleanup() {
@@ -78,21 +83,21 @@ try {
   const [created] = JSON.parse(await required(["volume", "inspect", volume], "verify created volume"));
   assert.equal(created.Labels?.[ownerLabel], session, "created volume ownership label");
 
-  assert.ok((await seed("claude-code")).ok, "new volume initialization failed");
+  await requireSeed("claude-code");
   await check("fresh");
   report.passed.push("new-volume");
   await check("box-write", { user: "box" });
   report.passed.push("box-writable");
 
   await check("existing");
-  assert.ok((await seed("command-code")).ok, "existing settings merge failed");
+  await requireSeed("command-code");
   await check("merged");
   await check("box-write", { user: "box" });
   report.passed.push("preserve-fields-and-model", "repair-owner", "unrelated-file-unchanged");
-  assert.ok((await seed("command-code")).ok, "repeat seed failed");
+  await requireSeed("command-code");
   await check("unchanged");
   report.passed.push("idempotent");
-  assert.ok((await seed("command-code", "selected-model")).ok, "explicit model update failed");
+  await requireSeed("command-code", "selected-model");
   await check("model");
   report.passed.push("explicit-model");
 

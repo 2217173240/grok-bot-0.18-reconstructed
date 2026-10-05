@@ -103,7 +103,7 @@ test("数据目录的显式值优先且保留平台路径规则", async t => {
   const root = await temporary(t);
   assert.equal(resolveLocalDataRoot({ dataRoot: root, env: { GROKBOT_DATA_ROOT: "ignored" } }), path.resolve(root));
   assert.equal(resolveLocalDataRoot({ platform: "win32", env: { LOCALAPPDATA: "C:\\Users\\测试\\AppData\\Local" } }), "C:\\Users\\测试\\AppData\\Local\\GrokBotLocal");
-  assert.equal(resolveLocalDataRoot({ platform: "darwin", env: { HOME: root } }), path.join(root, ".grokbot-local"));
+  assert.equal(resolveLocalDataRoot({ platform: "darwin", env: { HOME: "/Users/验收 user" } }), "/Users/验收 user/.grokbot-local");
 });
 
 test("Shell 与 Node 共用配置，配置错误不被 Shell 吞掉", { skip: process.platform === "win32" }, async t => {
