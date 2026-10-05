@@ -106,7 +106,7 @@ To add a local MCP server, create `~/.grokbot-local/mcp-config/shared/mcp-server
 | --- | --- |
 | CI on `main` and on pull requests | TypeScript checks, regression tests, editable frontend build, publication checks and secret scanning; current evidence is recorded in [ROADMAP](docs/ROADMAP.md) |
 | macOS package | repository tests, package verification, and the native `arm64` container's execution and desktop gates |
-| Windows x64 package and physical machine | CI package and GUI checks; `868304d` verified on Windows 10 22H2 with Docker Desktop/WSL2 for startup, container replacement, data preservation, ExternalShell approvals and cancellation. Cross-version upgrade remains to be verified when the next program version is released; see [Windows evidence](docs/WINDOWS-DOCKER-PORTABILITY.md). |
+| Windows x64 package and physical machine | CI package and GUI checks; `868304d` verified on Windows 10 22H2 with Docker Desktop/WSL2 for startup, container replacement, data preservation, ExternalShell approvals and cancellation. See [Windows evidence and upgrade validation](docs/WINDOWS-DOCKER-PORTABILITY.md). |
 | Local-admin UI, live | conversation, container files, MCP echo, image attachments and image Read; approval denial prevents execution and Allow once executes once |
 | Computer plane, live | `glm-5.3-flash` opens example.com, reads the heading, moves the pointer, uses keyboard navigation and returns a screenshot; audit counts reflect the actions |
 | Egress ledger | no Cursor/xAI egress recorded during the verified path, in both the Mac and container intercept ledgers |

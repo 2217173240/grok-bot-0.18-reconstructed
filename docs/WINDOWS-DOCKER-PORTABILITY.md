@@ -37,12 +37,12 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。升级仍缺两个都可运行的版本 |
-| 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | `868304d` 的 Mac、Windows、Linux 和仓库 CI 全部通过；Windows 实机记录已补齐，跨程序版本升级留待下一版本。应用与容器已停止，数据卷、镜像和验收文件保留 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。升级版本对已恢复，实际升级需要连接 Windows 宿主执行 |
+| 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | `868304d` 的 Mac、Windows、Linux 和仓库 CI 全部通过；跨程序版本升级纳入本轮。Windows 应用与容器已停止，数据卷、镜像和验收文件保留 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
 
-上表保留已有构建和验收证据。平台路由实现、Mac 真实交互记录和各平台 CI 入口见[环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)。下文记录 `868304d` 的 Windows 实机结果与下一版本的升级验收安排。
+上表保留已有构建和验收证据。平台路由实现、Mac 真实交互记录和各平台 CI 入口见[环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)。下文记录 `868304d` 的 Windows 实机结果与历史版本恢复后的升级验证。
 
 Windows native 构建使用固定 node-gyp 13.0.2，包含 Node 26/MSVC 的官方 LTO 修复；开发 Node 保持 26.5.0，Electron 保持 42.1.0/ABI 146。[node-gyp 修复说明](https://github.com/nodejs/node-gyp/pull/3331)
 
@@ -171,7 +171,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 此次审批通过 `ExternalShell` 的“在用户计算机上执行命令”桥接路径触发，验证 `localToolPermission=ask` 下的拒绝、单次允许与权限范围。容器 Shell 的自动审查路径已有 Mac 验证记录，两条路径分别记录。
 
-本轮仅保留**跨程序版本升级验收**：历史基线 `90db1aa` 在该机器无法启动；可运行的中间版本缺少与其配套的旧执行镜像。保留已验证的 `868304d` 应用、匹配镜像和数据作为起点，下一程序版本发布后验证 `868304d → 新版本`，核对会话、设置、工作文件和数据卷。当前无需更换版本或重启环境。
+**跨程序版本升级纳入本轮，版本对为 `5bfad0b → 868304d`。** `5bfad0b` 与此前实机通过的 `2307264` 运行代码、构建脚本和依赖清单完全相同。旧版 [Windows 构件及 GUI 检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37322980106) 和 [Linux amd64 镜像、工具、生产 host/daemon 与数据保留检查](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37323356508) 均已重新完成，旧镜像 deps pin 为 `69f36880e7b794eed55467eadc663ab2ac5a6705d4c669fbb63d1b7bdb4bd589`。实际升级前备份并核对数据，再检查会话、设置、工作文件与数据卷保留。目前执行会话未连接 Windows 宿主，实机升级结果尚未取得。
 
 本轮清理后应用进程为零，`grok-bot-local-vm` 已停止，1340 已释放，`winnat` 运行中。审批允许测试产生的宿主文件已删除；验收数据目录中的工作文件、数据卷与镜像继续保留。
 
@@ -183,4 +183,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ## 保留的验收与发布边界
 
-Windows 实机证据覆盖上述 Windows 10 22H2 x64 + Docker Desktop/WSL2 环境，跨程序版本升级留待下一版本。Windows 11 与 Windows ARM64 没有本轮实机验收记录。公开签名发行另需发布者证书，当前 portable ZIP 为未签名开发测试包。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。
+Windows 实机证据覆盖上述 Windows 10 22H2 x64 + Docker Desktop/WSL2 环境，升级构件验证与实机升级结果分别记录。Windows 11 与 Windows ARM64 没有本轮实机验收记录。公开签名发行另需发布者证书，当前 portable ZIP 为未签名开发测试包。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。

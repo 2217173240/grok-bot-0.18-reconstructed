@@ -50,4 +50,4 @@ Box Exec 与 Control RPC 显式传递 Context 的取消信号。真实 daemon �
 
 各平台同一提交的自动检查见 [PR #112](https://github.com/2217173240/grok-bot-0.18-reconstructed/pull/112)。合并提交 `868304d` 的 Mac、Windows、Linux 与仓库 CI 全部通过。
 
-2026-10-05 的 Windows 10 22H2 实机报告确认：`868304d` 与匹配 amd64 执行镜像通过启动、容器替换、数据保留、真实回合、ExternalShell 审批拒绝与单次允许、权限范围及回合取消；阻塞写入任务中途停止且无残留进程。文件、图片、Computer、MCP 和重启沿用上一轮功能证据，本轮复核挂载与数据。当前仅保留下一程序版本发布后的 `868304d → 新版本` 升级验收，现有环境保持停止并保留。详细证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。
+2026-10-05 的 Windows 10 22H2 实机报告确认：`868304d` 与匹配 amd64 执行镜像通过启动、容器替换、数据保留、真实回合、ExternalShell 审批拒绝与单次允许、权限范围及回合取消；阻塞写入任务中途停止且无残留进程。文件、图片、Computer、MCP 和重启沿用上一轮功能证据，本轮复核挂载与数据。本轮升级验证使用已重新构建的 `5bfad0b → 868304d`，旧版 Windows 构件和 Linux 镜像检查通过，实机执行需要 Windows 宿主连接。现有 Windows 环境保持停止并保留。详细证据见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。
