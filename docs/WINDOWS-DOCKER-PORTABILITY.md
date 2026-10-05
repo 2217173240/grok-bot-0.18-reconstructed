@@ -37,7 +37,7 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 | 4. Linux amd64 镜像 | 官方二进制校验、真实构建、实际 digest 与平台 pin；保留 arm64 | 镜像仓库 #7、#8、#9 已合入；151 项门禁、17 层扫描及 run 37135069283 的空存储导入通过。[固定 Release](https://github.com/2217173240/grok-bot-box-image/releases/tag/base-d7e8cc1-amd64) 已发布，旧 arm64 构件保留 |
 | 5. Windows 构建 | 固定输入提取，源码覆盖，原生依赖和 ASAR 校验，可运行分发目录 | Windows x64 unsigned portable ZIP 已在 Windows runner 构建成功；完整原版文件清单、131 个 renderer 文件/补丁链、ASAR/unpacked 与 PE 身份通过。实际 Electron 42.1.0/ABI 146 的 SQLite、tree-sitter Bash 和进程扫描通过 |
 | 6. Windows CI | Windows runner 实际编译、原生模块加载与 Electron 启动；Linux runner 验证镜像与工具 | [Windows run 37149058466](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058466) 全部通过：21 项平台/真实进程测试、包构建、原生依赖、完整产品 DOM/preload/IPC 及所属进程清理。进程身份查询使用异步 PowerShell，真实测试验证查询期间事件循环继续运行、取消隔离与退出后重新读取。[Linux run 37149058470](https://github.com/2217173240/grok-bot-0.18-reconstructed/actions/runs/37149058470) 通过固定下载/导入、执行镜像构建、桌面工具、生产 host/daemon 鉴权、Shell/Read 和重建数据保留 |
-| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 的历史 Windows 10 22H2 包通过启动、文本、文件、图片、Computer、MCP、重启和容器替换；审批、取消与升级未完成。当前平台路由分支需要重新执行物理机器端到端验收，历史结果见下文 |
+| 7. 安装与真实回合 | Windows Docker 连接、挂载、UI 文件/MCP/Computer、审批、取消、重启及升级 | 2026-10-05 在同一台 Windows 10 22H2 机器上用提交 `868304d` 的 CI 包与重建镜像完成：启动与容器替换、数据保留、真实回合、审批拒绝与单次允许及其权限范围、回合取消与下一条回复均通过；历史包另通过文本、文件、图片、Computer、MCP、重启与第二盘符。升级仍缺两个都可运行的版本 |
 | 8. 分发收尾 | 文档、匹配版本、未完成边界、秘密扫描、合并与资源清理 | 文档与未签名 portable ZIP 已具备；源码和秘密扫描通过。Mac 全量检查 333 项：319 通过、14 项环境/平台跳过、零失败。已移除临时 renderer 隔离实验并清理本地实验副本；Windows 实机验收继续保留为步骤 7 |
 
 代码检查、Windows 构建检查、Linux 容器检查和 Windows + WSL2 实机验收分别记录。普通托管 Windows CI 是否具备可用 Linux Docker backend 必须现场检查；不能把 runner 上的 Windows Docker 服务当成所需 Linux backend。
@@ -153,12 +153,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 当次宿主 Windows 把 TCP 1324 至 1423 保留给 Hyper-V 与 WSL 动态使用，1340 位于其中，容器端口发布以 `WSAEACCES` 失败，`docker start` 报 `ports are not available`。用户自行处理宿主端口保留、释放 1340 后，重新执行 `start` 显示「应用已经启动，Docker gateway 运行正常」，容器正常建立并发布 1340。遇到同类错误时，检查端口占用和保留区间，由机器管理者处理对应冲突。
 
-### 当前分支的 Windows 端到端验收
+### 当前提交的 Windows 端到端验收（2026-10-05，`868304d`）
 
-1. **完整流程**：在物理 Windows x64 + Docker Desktop/WSL2 上记录当前提交、应用与镜像身份，重复启动、文本、含中文空格及第二盘符的文件、图片、MCP、Computer、重启和数据保留检查。
-2. **审批**：在 Settings 开启自动审查，并配置能够命中测试动作的 `blockInstructions`；验证拒绝阻止执行、Allow once 仅执行一次。`source/host/extensions/auto-review/extension.ts` 为 local admin 提供 `enforce` override；`source/host/runner/sand-auto-review.ts` 仍优先处理 `settingsEnabled=false`，关闭全部审查。仅凭 `sand_auto_review=0` 不能判断最终模式。
-3. **取消与下一条回复**：在回合执行中发送新的用户消息。`source/host/extensions/transcript/send-turn-dispatch.ts` 会调用 `interrupt` 中断当前回合；核对对应任务进程退出、新回合正常回复以及 transcript。当前界面没有独立 Stop 按钮。
-4. **升级**：使用两个都可运行、身份明确的版本，验证会话、设置、工作文件和数据卷保留。历史基线 `90db1aa` 在该机器无法启动，未提供可用的升级起点；同版本重新解压不计作升级。
+同一台 Windows 10 22H2 机器，提交 `868304dbedc3021b34f212a482ac8b78af208a3b`。执行镜像按当前 Dockerfile 重建，deps pin 为 `4277dbdd2e54504445725340b8c8d04dc4f733e366c9968a2d31057947cf9812`；CI 构件 `windows-portable-package` 的 build stamp 记录同一 `sourceRevision` 与同一 deps pin，`upstreamAsarSha256` 与历史包相同。
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| 启动与容器替换 | 通过 | 换成新包后，容器因宿主 hash 变化被替换（标识 `afee8c28…` 变为 `396b0f8a…`），`status` 报「应用已经启动，Docker gateway 运行正常」，1340 正常发布；数据卷未删除 |
+| 数据保留 | 通过 | 替换后转录 68 条记录完整，`winaccept-test.txt`、`cancel-test.txt`、`second-drive.txt` 内容不变；容器挂载仍指向同一含中文与空格的数据目录 |
+| 真实回合 | 通过 | 界面发送后的 Shell 调用返回 `APPROVAL-TEST-A7`，回合与转录正常 |
+| 审批拒绝 | 通过 | `ExternalShell` 写入请求弹出审批卡（`Deny once`、`Allow once`、`Always allow`、`Never`）；选择 `Deny once` 后目标文件在宿主与容器两侧都不存在 |
+| 审批单次允许 | 通过 | 同一动作选择 `Allow once` 后文件真实产生，内容为 `APPROVAL-ALLOW-D9`，18 字节单行；随后该测试文件由本轮清理 |
+| 审批权限范围 | 通过 | `Allow once` 不产生长期授权：下一次同类请求再次弹出审批卡。设置中的 `localToolPermission` 保持默认 `ask`，容器宿主设置同为 `ask` |
+| 取消与下一条回复 | 通过 | 回合执行中发送新的用户消息后，当前回合以 `outcome=cancelled` 结束（provider 阶段 `durationMs` 13 477、清理 435 毫秒），随后新回合正常回复 `INTERRUPT-F2`；界面没有独立 Stop 按钮，中断入口是发送新消息 |
+| 文件、图片、Computer、MCP、重启 | 通过 | 与前一轮相同的代码路径和同一数据目录，本轮换包后挂载、工作文件与数据保留均已复核 |
+
+本轮仍未完成的项目：
+
+1. **升级**：唯一可运行的旧版本需要已被替换掉的旧执行镜像，新的旧旧配对在本机不存在；可运行的旧起点只有历史基线 `90db1aa`，而它在这台机器上根本无法启动。真正的升级验证需要两个都能运行且身份明确的版本。
+2. **含测试文件的取消任务**：本轮验证的是回合级中断（provider 进程被取消并清理，下一条回复正常）。agent 已经返回的 Shell 命令不归回合所有，中断不会终止它；要验证「取消使任务文件停止写入」，需要让回合停在该命令上再中断。
 
 ### 其他观察
 
