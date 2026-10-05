@@ -38,11 +38,11 @@
 
 ## 验证记录
 
-2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。Mac 包 `327784b` 的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败。
+2026-10-05，Mac arm64 隔离 Colima 中实际构建执行镜像，完成 10 项设置初始化检查，以及生产 host/daemon 的 Shell、Read、容器重建与数据保留。当次 Mac 包的完整检查为 358 项：344 通过、14 项平台或环境跳过、零失败；该包含「propagate turn cancellation to container RPC calls」，已并入 `868304d`。
 
-Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用 `f59fbf8` 与 `327784b` 两个构件，沿用隔离数据目录、卷及会话。
+Mac 真实界面已验证第三方模型、文件写入与回读、MCP echo、审批拒绝和 Allow once。审批拒绝后目标文件不存在，允许一次后内容匹配。升级使用两个可识别的 Mac 构件（前一个含「resolve local runtime configuration through platform adapters」，后一个含「propagate turn cancellation to container RPC calls」，两者均已并入 `868304d`），沿用隔离数据目录、卷及会话。
 
-`327784b` 的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
+同一 Mac 构件的真实界面中断验证：前台 Shell 先写入开始标记，再等待 60 秒后写入结果；开始约 11 秒时发送新用户消息，Shell 与 sleep 退出，收到 `INTERRUPT_V2_OK`，超过 60 秒后结果文件仍不存在。
 
 中断后的下一回合再次读取升级前的两个文件，确认拒绝文件与延迟文件均不存在，并调用 MCP 返回 `echo:UPGRADE_AND_CANCEL_OK`。镜像构建入口也使用同一 profile，已用数据目录中的 Docker host 配置完成真实 arm64 构建。
 

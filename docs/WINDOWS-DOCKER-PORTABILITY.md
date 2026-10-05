@@ -100,7 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ## Windows 历史实机验收证据（2026-10-05）
 
-本节记录 `fix/local-docker-seed-script` 分支、提交 `620e2b9` 与 `2307264` 对应包在一台 Windows x64 实机、本机 Docker Desktop Linux 容器中的历史结果。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。当前平台路由分支的完整验收需另行记录。
+本节记录只含两个种子修复、尚未包含平台路由改动的包在一台 Windows x64 实机、本机 Docker Desktop Linux 容器中的历史结果。验收数据目录、工作目录和绑定挂载路径均包含中文与空格。该轮之后的完整验收见下文当前提交的记录。
 
 ### 机器与运行身份
 
@@ -145,7 +145,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 1. `source/electron-main/box/local-docker-host-connector.ts` 把设置写入程序交给 `node -e` 时，模板字面量里的 `\n` 被解释为真实换行，生成的程序无法解析，容器创建以 `SyntaxError` 失败。改为 `\\n`。同一缺陷自 `11f0208`（2026-09-18）起存在。既有测试没有覆盖该程序：`scripts/linux-package-smoke.mjs` 使用自己的一行写入程序。
 2. 同一处的种子步骤把数据卷挂到镜像中并不存在的 `/data`。Docker 会把这个挂载点建为 root 所有，以 `box` 运行的容器无法写入，报 `EACCES`；同一个卷再挂给生产容器时目录同样不可写。改为挂到生产使用的 `SAND_BOX_DATA_ROOT`，使新卷继承镜像中该目录的属主，并在种子步骤中以 root 身份把数据目录与设置文件交还 `box` 用户，让已经存在且属主不对的卷也能恢复。
 
-两项改动位于分支 `fix/local-docker-seed-script`，提交为 `620e2b9` 与 `2307264`。本轮实机验收使用的是以此重建的包；`depsPin` 不包含该文件，因此执行镜像无需重建。
+两项改动已并入 `868304d`，其提交说明逐条列出了「keep the local Docker settings seed script parseable」与「seed the box settings at the data root the container uses」两条。本轮实机验收使用的是以此重建的包；`depsPin` 不包含该文件，因此执行镜像无需重建。
 
 基线包在这台机器上无法启动：用 `90db1aa` 的包配合同一个数据目录执行 `start`，它命中第 1 个缺陷，`start` 报 gateway 启动超时，容器始终没有建立。因此在修复合入之前，未做过任何改动的用户在这台机器上无法完成首次启动。
 
