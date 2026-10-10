@@ -34,7 +34,9 @@ Security updates are grouped for npm; compatibility-sensitive upgrades require
 review and the existing runtime and packaging checks before merging. GitHub
 Actions version updates are proposed monthly.
 
-CodeQL uses the extended query suite to analyze supported repository languages.
+CodeQL is configured with the extended query suite. Its initial analysis is
+pending while GitHub Actions dispatch is blocked; no completed CodeQL scan has
+been verified yet.
 Secret scanning and push protection supplement the CI Git-history scan and the
 publication checks for credential and browser-session paths. A passing scan
 describes the checks performed; runtime credentials remain outside the repository
