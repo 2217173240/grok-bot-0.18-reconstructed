@@ -79,9 +79,9 @@ export const electronMainExternalRuntimePackageSpecs = Object.freeze([
   },
   {
     name: "ws",
-    version: "8.20.0",
+    version: "8.21.3",
     lockPath: "node_modules/ws",
-    integrity: "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
+    integrity: "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
   },
 ]);
 
