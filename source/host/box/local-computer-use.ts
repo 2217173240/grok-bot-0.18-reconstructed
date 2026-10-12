@@ -76,11 +76,10 @@ function runXtest(payload: Record<string, unknown>): Promise<void> {
   });
 }
 
-function captureDesktopPng(): Promise<Buffer> {
+export function captureDesktopPng(): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    // Both ends of the pipe live in the box; the only interpolation is the
-    // display name from the environment.
-    const child = spawn("bash", ["-c", `xwd -root -display ${JSON.stringify(display())} -silent | convert xwd:- png:-`], { stdio: ["ignore", "pipe", "pipe"] });
+    // 固定 shell 脚本，通过位置参数传递 DISPLAY，保留其中的 shell 特殊字符。
+    const child = spawn("bash", ["-c", 'xwd -root -display "$1" -silent | convert xwd:- png:-', "desktop-capture", display()], { stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let stderr = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), SCREENSHOT_TIMEOUT_MS);

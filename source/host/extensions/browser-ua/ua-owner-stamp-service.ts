@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { writeFileAtomic } from "../../../shared/node/atomic-write.js";
 
 import { parseJwtPayload } from "../../../shared/node/cursor-token.js";
 
@@ -18,10 +18,8 @@ export function createUaOwnerStampWriter(options: { readonly path?: string; read
     if (accessToken == null) return;
     const stamp = uaOwnerStampForAccessToken(accessToken);
     if (stamp == null || stamp === lastWritten) return;
-    const tempPath = `${path}.tmp`;
     try {
-      await fs.writeFile(tempPath, `${stamp}\n`, { encoding: "utf8", mode: 0o644 });
-      await fs.rename(tempPath, path);
+      await writeFileAtomic(path, `${stamp}\n`, { mode: 0o644 });
       lastWritten = stamp;
     } catch (error) { options.log(`ua-owner stamp write failed: ${String(error)}`); }
   };

@@ -5,6 +5,7 @@ import path from "node:path";
 import { getSandRootDir } from "../../host/host-paths.js";
 import { createDeadlinePolicy, realClock } from "../../internal/scheduling.js";
 import { isSandThemePreference, type SandThemePreference } from "../../shared/desktop.js";
+import { containWithin } from "../../shared/node/paths.js";
 import { getAttachProdBoxStatus, writeAttachProdBoxPrefs } from "./dev-attach-prod-box.js";
 import { resolveDevControlPort } from "./dev-controls-gate.js";
 import { pokeHostUpgrade } from "./dev-host-upgrade-poke.js";
@@ -24,6 +25,11 @@ export function resolveDevControlsGatewayUrl(env: NodeJS.ProcessEnv = process.en
   const value = env.SAND_HOST_GATEWAY_URL?.trim(); return value != null && value.length > 0 ? value : DEFAULT_GATEWAY_URL;
 }
 export function devBoxRootHost(): string { return path.join(getSandRootDir(), "dev-box"); }
+export async function resolveDevBoxStoreManifestPath(root: string, storeId: string): Promise<string | null> {
+  if (!storeId || storeId === "." || storeId === ".." || storeId.includes("/") || storeId.includes("\\")) return null;
+  const storeRoot = path.join(root, "box-store");
+  return containWithin([storeRoot], path.join(storeRoot, storeId, "manifest.json"));
+}
 export function formatBytes(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"] as const; let value = bytes / 1_024; let unit = 0;
@@ -110,7 +116,9 @@ export function createDevControlsWindowRuntime(options: DevControlsWindowRuntime
       try { storeId = (await readFile(path.join(root, "box-store-id"), "utf8")).trim() || null; } catch {}
       let manifestEntries = 0; let totalBytes = 0; let lastSnapshotMsAgo: number | null = null;
       if (storeId != null) try {
-        const parsed = JSON.parse(await readFile(path.join(root, "box-store", storeId, "manifest.json"), "utf8")) as { entries?: Record<string, { size?: unknown }>; updatedAtMs?: unknown };
+        const manifestPath = await resolveDevBoxStoreManifestPath(root, storeId);
+        if (manifestPath == null) throw new Error("Box store manifest is outside its configured directory");
+        const parsed = JSON.parse(await readFile(manifestPath, "utf8")) as { entries?: Record<string, { size?: unknown }>; updatedAtMs?: unknown };
         const entries = parsed.entries ?? {}; manifestEntries = Object.keys(entries).length;
         for (const entry of Object.values(entries)) if (typeof entry.size === "number" && entry.size > 0) totalBytes += entry.size;
         if (typeof parsed.updatedAtMs === "number" && parsed.updatedAtMs > 0) lastSnapshotMsAgo = Math.max(0, Date.now() - parsed.updatedAtMs);

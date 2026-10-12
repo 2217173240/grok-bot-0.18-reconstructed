@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -13,6 +13,7 @@ import { COMMAND_CODE_BASE_URL, COMMAND_CODE_DEFAULT_MODEL, isCommandCodeModelId
 import { parseBoxSecretsSnapshot } from "../../../shared/node/box-secrets-store.js";
 import { resolveClaudeCodeCliPath } from "../../../shared/node/inference-router-local.js";
 import { readCodexConfiguration } from "../../../shared/node/codex-config.js";
+import { InvalidCodexCredentialsFileError, openCodexCredentialsFile } from "../../../shared/node/codex-credentials-file.js";
 import type { SandLocalToolPermission } from "../../../shared/local-tool-permission.js";
 import { isLocalAdminEnabled } from "../../../shared/node/local-admin.js";
 import { appendLocalIntercept, redactTypedDesktopInput } from "../../../shared/node/local-admin-intercept.js";
@@ -247,13 +248,12 @@ type CodexCredentials = { accessToken: string; refreshToken: string; idToken: st
 
 function codexCredentials(): CodexCredentials {
   const path = join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "auth.json");
-  // The in-box turn reads the box filesystem only, and a bare ENOENT from
-  // lstatSync says which file is missing but not where the search happened or
-  // which plane needed it. Name both so the message is actionable.
-  let stat: Stats;
+  // 错误同时说明凭据路径和执行位置，帮助用户选择登录目录。
+  let fd: number;
   try {
-    stat = lstatSync(path);
+    fd = openCodexCredentialsFile(path);
   } catch (error) {
+    if (error instanceof InvalidCodexCredentialsFileError) throw error;
     throw new Error(
       `Codex is not signed in for this execution plane: no credentials at ${path}`
       + `${process.env.SAND_HOST_IN_BOX === "1" ? " (the turn runs inside the local computer, which reads only the box filesystem)" : ""}. `
@@ -261,8 +261,9 @@ function codexCredentials(): CodexCredentials {
       { cause: error },
     );
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error("Codex login credentials must be a private direct regular file.");
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as Loose;
+  let parsed: Loose;
+  try { parsed = JSON.parse(readFileSync(fd, "utf8")) as Loose; }
+  finally { closeSync(fd); }
   const accessToken = parsed?.tokens?.access_token;
   const refreshToken = parsed?.tokens?.refresh_token;
   const idToken = parsed?.tokens?.id_token;

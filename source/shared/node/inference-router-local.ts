@@ -1,6 +1,7 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { openCodexCredentialsFile } from "./codex-credentials-file.js";
 
 export interface LocalInferenceCliStatus {
   readonly installed: boolean;
@@ -29,9 +30,10 @@ export function resolveClaudeCodeCliPath(): string | null {
 
 function hasUsableCodexLogin(path: string): boolean {
   try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) return false;
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+    const fd = openCodexCredentialsFile(path);
+    let parsed: Record<string, any>;
+    try { parsed = JSON.parse(readFileSync(fd, "utf8")) as Record<string, any>; }
+    finally { closeSync(fd); }
     return parsed.auth_mode === "chatgpt"
       && typeof parsed.tokens?.access_token === "string" && parsed.tokens.access_token.length > 0
       && typeof parsed.tokens?.refresh_token === "string" && parsed.tokens.refresh_token.length > 0
