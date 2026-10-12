@@ -1,5 +1,22 @@
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+  # 上游清单作为原版输入保留，安全更新由项目运行依赖承担。
+  - package-ecosystem: npm
+    directory: /src/app
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: '*'
   - package-ecosystem: github-actions
     directory: /
     schedule:
