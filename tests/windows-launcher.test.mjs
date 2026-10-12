@@ -144,3 +144,63 @@ test('Windows 真实进程在启动脚本退出后存活，并在验证身份后
   assert.equal(inspectProcess(pid), null);
   assert.equal(inspectProcess(childPid), null);
 });
+
+test('Windows 进程树并发退出时验证所有后代结束，保留无关进程', { skip: process.platform !== 'win32', timeout: 60000 }, async t => {
+  const root = temporary(t);
+  const session = randomUUID();
+  const marker = `--grokbot-local-session=${session}`;
+  const signalFile = path.join(root, 'stop-descendants');
+  const childSource = `
+const { existsSync } = require('node:fs');
+const [signalFile, offset] = process.argv.slice(1);
+const timer = setInterval(() => {
+  if (!existsSync(signalFile)) return;
+  clearInterval(timer);
+  setTimeout(() => process.exit(0), Number(offset));
+}, 20);
+process.send(process.pid);
+`;
+  // 无关的真实进程必须在整棵进程树清理后继续存活。
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+  await once(unrelated, 'spawn');
+  const unrelatedIdentity = inspectProcess(unrelated.pid);
+  t.after(async () => {
+    if (unrelated.exitCode === null) {
+      const exited = once(unrelated, 'exit');
+      unrelated.kill();
+      await exited;
+    }
+  });
+  const parentSource = `
+const { spawn } = require('node:child_process');
+const children = Array.from({ length: 12 }, (_, index) => spawn(process.execPath,
+  ['-e', ${JSON.stringify(childSource)}, '--', ${JSON.stringify(signalFile)}, String(index === 11 ? 60000 : 9000 + index * 600), ${JSON.stringify(marker)}],
+  { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }));
+Promise.all(children.map(child => new Promise(resolve => child.once('message', resolve))))
+  .then(pids => process.send(pids));
+setInterval(() => {}, 1000);
+`;
+  const parent = spawn(process.execPath, ['-e', parentSource, '--', marker], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const ready = once(parent, 'message');
+  await once(parent, 'spawn');
+  const parentIdentity = inspectProcess(parent.pid);
+  assert.ok(parentIdentity);
+  const state = { ...parentIdentity, session };
+  t.after(() => { if (sameProcess(state, inspectProcess(state.pid))) stopProcessTree(state); });
+  const [descendantPids] = await ready;
+  const descendants = descendantPids.map(pid => ({ ...inspectProcess(pid), session }));
+  t.after(() => {
+    for (const owned of descendants) {
+      if (sameProcess(owned, inspectProcess(owned.pid))) stopProcessTree(owned);
+    }
+  });
+  assert.equal(descendants.length, 12);
+  assert.ok(descendants.every(owned => sameProcess(owned, owned)));
+  // 自主退出时间分布在正常关闭期限与 taskkill 前后；另有一个持续存活的后代。
+  // 使用真实 Windows 进程句柄验证整个清理过程，不替换进程 API。
+  writeFileSync(signalFile, 'stop');
+  stopProcessTree(state);
+  assert.equal(inspectProcess(parent.pid), null);
+  for (const descendant of descendants) assert.equal(inspectProcess(descendant.pid), null);
+  assert.deepEqual(inspectProcess(unrelated.pid), unrelatedIdentity);
+});

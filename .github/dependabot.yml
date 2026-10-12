@@ -5,6 +5,18 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 0
+    # 这些升级需要同步修改运行接口或固定的 Electron 输入。
+    # 忽略自动 PR 不会关闭 Dependabot 漏洞告警。
+    ignore:
+      - dependency-name: electron
+      - dependency-name: '@ai-sdk/openai'
+        update-types: ['version-update:semver-major']
+      - dependency-name: ai
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@connectrpc/connect-node'
+        update-types: ['version-update:semver-major']
+      - dependency-name: undici
+        update-types: ['version-update:semver-major']
     groups:
       npm-security:
         applies-to: security-updates

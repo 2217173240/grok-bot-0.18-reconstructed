@@ -141,7 +141,16 @@ try {
   do {
     Capture-Children
     $live=@($held.Values | Where-Object { !$_.HasExited })
-    foreach ($item in $live) { if (!$item.HasExited) { $item.Kill() } }
+    foreach ($item in $live) {
+      if (!$item.HasExited) {
+        try { $item.Kill() }
+        catch {
+          # HasExited 与 Kill 并非原子操作，期间可能由 taskkill 或正常关闭完成退出。
+          # 仅通过已持有句柄确认退出，不查询可能已复用的 PID；仍存活则保留原错误。
+          if (!$item.WaitForExit(5000)) { throw }
+        }
+      }
+    }
     foreach ($item in $live) { if (!$item.WaitForExit(5000)) { throw 'Process did not exit' } }
     if ([DateTime]::UtcNow -ge $cleanupDeadline) { throw 'Process tree exit timed out' }
   } while ($live.Count -gt 0)
