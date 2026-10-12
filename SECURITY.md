@@ -13,7 +13,8 @@ base images remain preserved reconstruction inputs.
 
 OpenTelemetry packages use the compatible 2.8.0 / OTLP 0.219.0 release family,
 including nested exporter dependencies. Tiptap core and its exact ProseMirror
-peer use 3.31.4. Direct math rendering uses KaTeX 0.18.2; Mermaid 11.16.1 still
+peer use 3.31.4. Direct math rendering uses KaTeX 0.18.2, including verified
+production CSS and font assets; Mermaid 11.16.1 still
 resolves a separate KaTeX 0.16 dependency. A patched direct dependency does not
 prove that all nested copies are patched.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,6 +12,7 @@ import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { getSchema, mergeAttributes } from "@tiptap/core";
 import { EditorState } from "@tiptap/pm/state";
+import { copyKatexRuntimeAssets } from "../scripts/renderer-production-build.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const execute = promisify(execFile);
@@ -131,4 +132,22 @@ test("production KaTeX loader renders math while leaving HTML commands untrusted
   const invalid = renderKatexMarkup(runtime, String.raw`\frac{<script>alert(1)</script>`, false);
   assert.match(invalid, /class="katex-error"/);
   assert.doesNotMatch(invalid, /<script\b/i);
+});
+
+test("production renderer copies the installed KaTeX styles and verified fonts", async (t) => {
+  await mkdir(path.join(root, ".cache"), { recursive: true });
+  const renderer = await mkdtemp(path.join(root, ".cache", "katex-assets-"));
+  t.after(() => rm(renderer, { recursive: true, force: true }));
+  await writeFile(path.join(renderer, "index.html"), "<!doctype html><html><head></head><body></body></html>");
+  const result = await copyKatexRuntimeAssets(renderer);
+  const installed = JSON.parse(await readFile(path.join(root, "node_modules/katex/package.json"), "utf8"));
+  assert.equal(result.version, installed.version);
+  assert.equal(result.assets.length, 22);
+  for (const asset of result.assets) {
+    const relative = asset.file.slice("katex/".length);
+    const source = await readFile(path.join(root, "node_modules/katex/dist", relative));
+    const output = await readFile(path.join(renderer, "assets", asset.file));
+    assert.deepEqual(output, source);
+  }
+  assert.match(await readFile(path.join(renderer, "index.html"), "utf8"), /href="\.\/assets\/katex\/katex\.css"/);
 });
