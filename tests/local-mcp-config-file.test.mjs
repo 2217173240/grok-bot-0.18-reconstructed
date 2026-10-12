@@ -37,7 +37,7 @@ test("空目录中的旧配置迁移后，界面新增保留已有服务器", as
     config.mcpServers.extra = { command: "python3" };
     await writer.setConfig(config);
     assertConfigData(await api.readLocalMcpServersConfig(directory), config);
-    await assert.rejects(stat(legacy), { code: "ENOENT" });
+    assert.deepEqual(JSON.parse(await readFile(legacy, "utf8")), original);
     assert.equal((await stat(path.join(directory, "mcp-config"))).mode & 0o777, 0o700);
     assert.equal((await stat(path.join(directory, "mcp-config", "shared"))).mode & 0o777, 0o755);
     assert.equal((await stat(api.localMcpServersPath(directory))).mode & 0o777, 0o644);

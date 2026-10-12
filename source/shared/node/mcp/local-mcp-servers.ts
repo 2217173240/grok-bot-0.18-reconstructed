@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -38,15 +38,45 @@ export function prepareLocalMcpPluginsDir(sandRootDir: string): string {
   const initialized = join(privateDir, ".initialized");
   const legacy = join(sandRootDir, LOCAL_MCP_SERVERS_FILENAME);
   const target = join(pluginsDir, LOCAL_MCP_SERVERS_FILENAME);
-  const legacyStat = lstatSync(legacy, { throwIfNoEntry: false });
+  const isInitialized = existsSync(initialized);
+  const legacyStat = isInitialized ? undefined : lstatSync(legacy, { throwIfNoEntry: false });
   if (legacyStat != null && !legacyStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${legacy}`);
   const targetStat = lstatSync(target, { throwIfNoEntry: false });
   if (targetStat != null && !targetStat.isFile()) throw new Error(`MCP configuration must be a regular file: ${target}`);
-  const migrate = !existsSync(initialized) && legacyStat != null && targetStat == null;
-  if (migrate) parseLocalMcpServersConfig(readFileSync(legacy, "utf8"));
+  const migrate = !isInitialized && legacyStat != null && targetStat == null;
+  let migratedBytes: string | undefined;
+  if (migrate) {
+    const descriptor = openSync(legacy, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+    try {
+      if (!fstatSync(descriptor).isFile()) throw new Error(`MCP configuration must be a regular file: ${legacy}`);
+      migratedBytes = readFileSync(descriptor, "utf8");
+      parseLocalMcpServersConfig(migratedBytes);
+    } finally { closeSync(descriptor); }
+  }
   prepareDirectory(pluginsDir, 0o755);
-  if (migrate) renameSync(legacy, target);
-  if (existsSync(target)) chmodSync(target, 0o644);
+  if (migratedBytes !== undefined) {
+    // 只发布句柄读取并验证的内容；保留旧路径，避免删除读取后并发写入的配置。
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    let created = false;
+    try {
+      const descriptor = openSync(temporary, "wx", 0o644);
+      created = true;
+      try { writeFileSync(descriptor, migratedBytes); } finally { closeSync(descriptor); }
+      renameSync(temporary, target);
+    } catch (error) {
+      if (created) { try { unlinkSync(temporary); } catch {} }
+      throw error;
+    }
+  }
+  // 宿主 0700 父目录和 Docker 只读绑定限制 box 用户的写入权限。
+  // 句柄 chmod 不会跟随打开后替换的文件名；不声称阻止同 UID 的祖先目录替换。
+  try {
+    const descriptor = openSync(target, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+    try {
+      if (!fstatSync(descriptor).isFile()) throw new Error(`MCP configuration must be a regular file: ${target}`);
+      fchmodSync(descriptor, 0o644);
+    } finally { closeSync(descriptor); }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   if (!existsSync(initialized)) writeFileSync(initialized, "", { mode: 0o600, flag: "wx" });
   return pluginsDir;
 }

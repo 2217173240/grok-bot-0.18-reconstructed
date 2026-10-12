@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { promises as fs } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { RE2JS } from "re2js";
 
@@ -368,12 +369,48 @@ function buildFrontmatter(params: { readonly pid?: number | undefined; readonly 
   return `${content}---\n`;
 }
 
+// 创建新 inode，发布后保留同一句柄直至 shell 结束；接管已有 shell 日志时
+// 原子替换路径，不截断旧文件，也不跟随其符号链接。祖先目录权限仍由调用方保证。
+async function createTerminalLog(path: string, initial: string) {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  const handle = await fs.open(temporary, "wx+", 0o600);
+  try {
+    await handle.writeFile(initial);
+    await fs.rename(temporary, path);
+  } catch (error) {
+    await handle.close();
+    await fs.unlink(temporary).catch(() => {});
+    throw error;
+  }
+  let position = Buffer.byteLength(initial);
+  let pending = Promise.resolve();
+  return {
+    write(data: string, offset?: number) {
+      const operation = pending.then(async () => {
+        const bytes = Buffer.from(data);
+        const start = offset ?? position;
+        let written = 0;
+        while (written < bytes.length) {
+          const result = await handle.write(bytes, written, bytes.length - written, start + written);
+          if (result.bytesWritten === 0) throw new Error("Terminal log write made no progress");
+          written += result.bytesWritten;
+        }
+        if (offset === undefined) position += written;
+      });
+      pending = operation.catch(() => {});
+      return operation;
+    },
+    async close() { await pending; await handle.close(); },
+  };
+}
+
 export class FileLoggingShellFactory {
   constructor(private readonly innerFactory: BackgroundShellFactory, private readonly projectDir: string) {}
 
   async spawn(executionContext: BackgroundSpawnContext, coreExecutor: unknown): Promise<BackgroundShell> {
     const terminalsDir = join(this.projectDir, "terminals");
-    await mkdir(terminalsDir, { recursive: true });
+    try { await mkdir(terminalsDir, { recursive: true }); }
+    catch { return this.innerFactory.spawn(executionContext, coreExecutor); }
     return this.innerFactory.spawn(executionContext, this.createLoggingExecutor(coreExecutor as CoreExecutor, executionContext as unknown as LoggingExecutionContext, terminalsDir));
   }
 
@@ -382,8 +419,8 @@ export class FileLoggingShellFactory {
     return {
       ...coreExecutor,
       execute: async function* (ctx: unknown, args: ShellArguments): AsyncIterable<ShellEvent> {
-        let frontmatterHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
-        let appendHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+        let frontmatterHandle: Awaited<ReturnType<typeof createTerminalLog>> | undefined;
+        let appendHandle: Awaited<ReturnType<typeof createTerminalLog>> | undefined;
         let stdinPatched = false;
         let headerWritten = false;
         let updateInterval: ReturnType<typeof setInterval> | undefined;
@@ -410,7 +447,7 @@ export class FileLoggingShellFactory {
             startedAt,
             runningForMs: Date.now() - startTime,
           });
-          try { await frontmatterHandle.write(frontmatter, 0, "utf8"); } catch {}
+          try { await frontmatterHandle.write(frontmatter, 0); } catch {}
         };
         const queueFrontmatterUpdate = (): Promise<void> => {
           pendingFrontmatterUpdate = pendingFrontmatterUpdate.then(updateFrontmatter).catch(() => {});
@@ -426,19 +463,17 @@ export class FileLoggingShellFactory {
           if (headerWritten) return;
           headerWritten = true;
           currentPid = pid;
-          await writeFile(terminalPath, buildFrontmatter({ pid, cwd: executionContext.workingDirectory, command: executionContext.command, title: executionContext.description, status: taskStatus, startedAt, runningForMs: Date.now() - startTime }), "utf8");
+          try {
+            frontmatterHandle = await createTerminalLog(terminalPath, buildFrontmatter({ pid, cwd: executionContext.workingDirectory, command: executionContext.command, title: executionContext.description, status: taskStatus, startedAt, runningForMs: Date.now() - startTime }));
+            appendHandle = frontmatterHandle;
+          } catch { return; }
           updateInterval = setInterval(() => { void queueFrontmatterUpdate(); }, RUNNING_TIME_UPDATE_INTERVAL_MS);
-        };
-        const ensureHandlesOpen = async (): Promise<void> => {
-          if (!frontmatterHandle) frontmatterHandle = await fs.open(terminalPath, "r+");
-          if (!appendHandle) appendHandle = await fs.open(terminalPath, "a");
         };
         const finalizeTerminal = async (status: string, firstFooterLine?: string): Promise<void> => {
           if (terminalFinalized) return;
           terminalFinalized = true;
           clearUpdateInterval();
           if (!headerWritten) await writeHeader();
-          await ensureHandlesOpen();
           if (firstFooterLine !== undefined) {
             const footer = `\n---\n${firstFooterLine}\n${args.showElapsedTime ? `elapsed_ms: ${Date.now() - startTime}\n` : ""}ended_at: ${new Date().toISOString()}\n---\n`;
             await safeWrite(footer);
@@ -449,11 +484,11 @@ export class FileLoggingShellFactory {
         try {
           for await (const event of originalExecute(ctx, args)) {
             if (event.type === "stdout" || event.type === "stderr") {
-              if (!headerWritten) { await writeHeader(); await ensureHandlesOpen(); }
+              if (!headerWritten) await writeHeader();
               await safeWrite(event.data ?? "");
             } else if (event.type === "stdin_ready" && !stdinPatched) {
               stdinPatched = true;
-              if (!headerWritten) { await writeHeader(event.pid); await ensureHandlesOpen(); }
+              if (!headerWritten) await writeHeader(event.pid);
               const stdin = event.stdin;
               if (stdin) {
                 const logInputChunk = (chunk: unknown): void => {
@@ -490,7 +525,6 @@ export class FileLoggingShellFactory {
           clearUpdateInterval();
           await pendingFrontmatterUpdate;
           try { await frontmatterHandle?.close(); } catch {}
-          try { await appendHandle?.close(); } catch {}
         }
       },
     };
@@ -499,24 +533,25 @@ export class FileLoggingShellFactory {
   async adopt(state: BackgroundAdoptState): Promise<BackgroundShell> {
     const value = state as unknown as LoggingExecutionContext & { readonly initialOutput?: string; readonly eventIterator: EventIterator; readonly startTime: number; readonly pid?: number; readonly showElapsedTime?: boolean; readonly abortController: AbortController };
     const terminalsDir = join(this.projectDir, "terminals");
-    await mkdir(terminalsDir, { recursive: true });
+    try { await mkdir(terminalsDir, { recursive: true }); }
+    catch { return this.innerFactory.adopt(state); }
     const terminalPath = join(terminalsDir, `${value.shellId}.txt`);
     const startTime = value.startTime;
     let taskStatus = "running";
-    await writeFile(terminalPath, buildFrontmatter({ pid: value.pid, cwd: value.workingDirectory, command: value.command, title: value.description, status: taskStatus, startedAt: new Date(startTime).toISOString(), runningForMs: Date.now() - startTime }) + (value.initialOutput ?? ""), "utf8");
-    const frontmatterHandle = await fs.open(terminalPath, "r+");
-    let appendHandle: Awaited<ReturnType<typeof fs.open>>;
-    try { appendHandle = await fs.open(terminalPath, "a"); } catch (error) { await frontmatterHandle.close(); throw error; }
+    let frontmatterHandle: Awaited<ReturnType<typeof createTerminalLog>>;
+    try { frontmatterHandle = await createTerminalLog(terminalPath, buildFrontmatter({ pid: value.pid, cwd: value.workingDirectory, command: value.command, title: value.description, status: taskStatus, startedAt: new Date(startTime).toISOString(), runningForMs: Date.now() - startTime }) + (value.initialOutput ?? "")); }
+    catch { return this.innerFactory.adopt(state); }
+    const appendHandle = frontmatterHandle;
     let cleanedUp = false;
     let terminalFinalized = false;
     let pendingFrontmatterUpdate: Promise<void> = Promise.resolve();
     const clearUpdateInterval = (): void => clearInterval(updateInterval);
     let updateInterval = setInterval(() => { void queueFrontmatterUpdate(); }, RUNNING_TIME_UPDATE_INTERVAL_MS);
     const updateFrontmatter = async (): Promise<void> => {
-      try { await frontmatterHandle.write(buildFrontmatter({ pid: value.pid, cwd: value.workingDirectory, command: value.command, title: value.description, status: taskStatus, startedAt: new Date(startTime).toISOString(), runningForMs: Date.now() - startTime }), 0, "utf8"); } catch {}
+      try { await frontmatterHandle.write(buildFrontmatter({ pid: value.pid, cwd: value.workingDirectory, command: value.command, title: value.description, status: taskStatus, startedAt: new Date(startTime).toISOString(), runningForMs: Date.now() - startTime }), 0); } catch {}
     };
     const queueFrontmatterUpdate = (): Promise<void> => { pendingFrontmatterUpdate = pendingFrontmatterUpdate.then(updateFrontmatter).catch(() => {}); return pendingFrontmatterUpdate; };
-    const cleanup = async (): Promise<void> => { if (cleanedUp) return; cleanedUp = true; clearUpdateInterval(); await pendingFrontmatterUpdate; try { await frontmatterHandle.close(); } catch {} try { await appendHandle.close(); } catch {} };
+    const cleanup = async (): Promise<void> => { if (cleanedUp) return; cleanedUp = true; clearUpdateInterval(); await pendingFrontmatterUpdate; try { await frontmatterHandle.close(); } catch {} };
     const safeWrite = async (data: string): Promise<void> => { try { await appendHandle.write(data); } catch {} };
     const finalizeTerminal = async (status: string, firstFooterLine?: string): Promise<void> => { if (terminalFinalized) return; terminalFinalized = true; clearUpdateInterval(); if (firstFooterLine !== undefined) await safeWrite(`\n---\n${firstFooterLine}\n${value.showElapsedTime ? `elapsed_ms: ${Date.now() - startTime}\n` : ""}ended_at: ${new Date().toISOString()}\n---\n`); taskStatus = status; await queueFrontmatterUpdate(); };
     const loggingIterator: EventIterator = {

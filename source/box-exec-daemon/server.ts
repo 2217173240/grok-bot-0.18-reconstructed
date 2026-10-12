@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { appendFile, lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { appendFile, lstat, mkdir, open, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -278,14 +279,24 @@ class BoxExecRuntime {
       const target = this.resolvePath(args.path);
       const directInfo = await lstat(target);
       if (directInfo.isSymbolicLink()) throw new PathRejectedError(`Symbolic-link reads are not permitted: ${args.path}`);
+      // Windows 打开目录可能返回 EPERM；保留既有的 invalidFile 分类。
+      // 打开后的 fstat 仍负责最终类型校验，不能仅依赖此预检查。
+      if (!directInfo.isFile()) return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: "Path is not a regular file" }) } });
       const canonical = await realpath(target);
       this.assertRealPathAllowed(canonical, args.path);
-      const info = await stat(canonical);
-      if (!info.isFile()) return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: "Path is not a regular file" }) } });
-      if (args.encodingHint != null && args.encodingHint !== "utf8" && args.encodingHint !== "utf-8" && args.encodingHint !== "latin1") {
-        return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: `Unsupported encoding hint: ${args.encodingHint}` }) } });
-      }
-      const data = await readFile(canonical);
+      // 校验和读取固定同一文件；不能阻止其他 workspace 写入者并发替换祖先目录。
+      const handle = await open(canonical, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+      let data: Buffer;
+      try {
+        const info = await handle.stat();
+        const current = await lstat(canonical);
+        if (current.isSymbolicLink() || current.dev !== info.dev || current.ino !== info.ino || directInfo.dev !== info.dev || directInfo.ino !== info.ino) throw new PathRejectedError(`File changed during open: ${args.path}`);
+        if (!info.isFile()) return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: "Path is not a regular file" }) } });
+        if (args.encodingHint != null && args.encodingHint !== "utf8" && args.encodingHint !== "utf-8" && args.encodingHint !== "latin1") {
+          return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: `Unsupported encoding hint: ${args.encodingHint}` }) } });
+        }
+        data = await handle.readFile();
+      } finally { await handle.close(); }
       if (isPdfBinary(data, args.path) || detectImageMimeType(data, args.path) !== undefined) {
         return new ReadResult({ result: { case: "success", value: new ReadSuccess({
           path: args.path,
@@ -309,6 +320,7 @@ class BoxExecRuntime {
     } catch (error) {
       if (error instanceof PathRejectedError) return new ReadResult({ result: { case: "rejected", value: new ReadRejected({ path: args.path, reason: error.message }) } });
       const code = typeof error === "object" && error != null && "code" in error ? String(error.code) : undefined;
+      if (code === "ELOOP" || code === "EMLINK") return new ReadResult({ result: { case: "rejected", value: new ReadRejected({ path: args.path, reason: "Symbolic-link reads are not permitted" }) } });
       if (code === "ENOENT" || code === "ENOTDIR") return new ReadResult({ result: { case: "fileNotFound", value: new ReadFileNotFound({ path: args.path }) } });
       if (code === "EACCES" || code === "EPERM") return new ReadResult({ result: { case: "permissionDenied", value: new ReadPermissionDenied({ path: args.path }) } });
       if (code === "EISDIR" || code === "EINVAL" || code === "ENAMETOOLONG") return new ReadResult({ result: { case: "invalidFile", value: new ReadInvalidFile({ path: args.path, reason: errorText(error) }) } });

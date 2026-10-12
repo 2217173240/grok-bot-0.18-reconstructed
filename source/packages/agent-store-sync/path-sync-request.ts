@@ -115,6 +115,21 @@ function parseRequest(raw: string): PathSyncRequest | undefined {
   };
 }
 
+// 校验和读取使用同一 FD；POSIX 的 O_NOFOLLOW 拒绝末级链接。
+// Windows 仅拒绝身份检查观察到的替换；无法固定祖先目录，具备目录改名
+// 权限的进程（包括同用户进程）并发替换祖先目录仍超出此保证。
+function readRequestFile(full: string, expected: fs.Stats): string {
+  const fd = fs.openSync(full, fs.constants.O_RDONLY | (process.platform === "win32" ? 0 : fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK));
+  try {
+    const info = fs.fstatSync(fd);
+    const current = fs.lstatSync(full);
+    if (!info.isFile() || current.isSymbolicLink() || info.dev !== expected.dev || info.ino !== expected.ino || current.dev !== info.dev || current.ino !== info.ino) {
+      throw new Error("Path sync request changed during open");
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally { fs.closeSync(fd); }
+}
+
 export function listPathSyncRequests(args: PathSyncRequestArgs): PathSyncRequest[] {
   const dir = pathSyncRequestsDirForFilesDir(args.filesDir);
   let names: string[];
@@ -146,7 +161,7 @@ export function listPathSyncRequests(args: PathSyncRequestArgs): PathSyncRequest
     }
     let raw: string;
     try {
-      raw = fs.readFileSync(full, "utf8");
+      raw = readRequestFile(full, stat);
     } catch {
       continue;
     }
@@ -193,7 +208,7 @@ function inspectPathSyncRequest(args: PathSyncRequestArgs & { readonly requestId
   }
   let raw: string;
   try {
-    raw = fs.readFileSync(full, "utf8");
+    raw = readRequestFile(full, stat);
   } catch {
     return "pending";
   }
