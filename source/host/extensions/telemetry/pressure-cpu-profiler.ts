@@ -1,4 +1,5 @@
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { Session } from "node:inspector/promises";
 import { join } from "node:path";
 export class SandProfilerCaptureError extends Error {}
@@ -115,11 +116,20 @@ export function createPressureCpuProfiler(
       const profileJson = await backend.stop();
       if (disposed) return;
       mkdirSync(directory, { recursive: true });
+      const entry = lstatSync(directory);
+      if (entry.isSymbolicLink() || !entry.isDirectory()) throw new SandProfilerCaptureError(`Profile directory must be a real directory: ${directory}`);
       const path = join(
         directory,
-        `${PRESSURE_CPU_PROFILE_PREFIX}${now()}.cpuprofile`,
+        `${PRESSURE_CPU_PROFILE_PREFIX}${now()}-${randomBytes(8).toString("hex")}.cpuprofile`,
       );
-      writeFileSync(path, profileJson);
+      const descriptor = openSync(path, "wx", 0o600);
+      try {
+        try { writeFileSync(descriptor, profileJson); }
+        finally { closeSync(descriptor); }
+      } catch (error) {
+        rmSync(path, { force: true });
+        throw error;
+      }
       pruneOldProfiles(knobs().maxRetainedProfiles);
       console.warn(`[sand-host] pressure CPU profile written: ${path}`);
       options.onCaptured?.(path);

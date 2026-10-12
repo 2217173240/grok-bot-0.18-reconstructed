@@ -687,7 +687,8 @@ test("local mcp-servers.json parses the standard mcpServers shape", async () => 
     assert.deepEqual(wrapped.mcpServers.demo, { command: "node", args: ["server.cjs"], env: { KEY: "value" } });
 
     const flat = parseLocalMcpServersConfig(JSON.stringify({ echo: { command: "/usr/local/bin/echo-mcp" } }));
-    assert.deepEqual(flat.mcpServers, { echo: { command: "/usr/local/bin/echo-mcp" } });
+    assert.equal(Object.getPrototypeOf(flat.mcpServers), null);
+    assert.deepEqual({ ...flat.mcpServers }, { echo: { command: "/usr/local/bin/echo-mcp" } });
 
     assert.throws(() => parseLocalMcpServersConfig("{not json"), /not valid JSON/);
     assert.throws(() => parseLocalMcpServersConfig("[1,2]"), /must contain an object/);
@@ -709,7 +710,9 @@ test("local admin swaps MCP provider sources; the file writer round-trips config
 
     const swapped = loaded.module.applyLocalAdminMcpSources({ accountServersProvider: dashboardProvider });
     assert.equal(swapped.accountServersProvider, undefined);
-    assert.deepEqual(await swapped.accountConfigProvider(), { mcpServers: { demo: { command: "node" } } });
+    const localConfig = await swapped.accountConfigProvider();
+    assert.equal(Object.getPrototypeOf(localConfig.mcpServers), null);
+    assert.deepEqual(JSON.parse(JSON.stringify(localConfig)), { mcpServers: { demo: { command: "node" } } });
 
     delete process.env.SAND_LOCAL_ADMIN;
     const untouched = loaded.module.applyLocalAdminMcpSources({ accountServersProvider: dashboardProvider });
@@ -717,7 +720,8 @@ test("local admin swaps MCP provider sources; the file writer round-trips config
 
     const writer = loaded.module.createLocalMcpServersFileWriter(root);
     const edited = await writer.getConfigForEdit();
-    assert.deepEqual(edited.config.mcpServers, { demo: { command: "node" } });
+    assert.equal(Object.getPrototypeOf(edited.config.mcpServers), null);
+    assert.deepEqual({ ...edited.config.mcpServers }, { demo: { command: "node" } });
     await writer.setConfig({ mcpServers: { demo: { command: "node" }, extra: { command: "/bin/extra", args: ["-v"] } } });
     const reread = await writer.getConfigForEdit();
     assert.deepEqual(Object.keys(reread.config.mcpServers), ["demo", "extra"]);

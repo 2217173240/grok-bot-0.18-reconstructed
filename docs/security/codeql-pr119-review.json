@@ -1,0 +1,157 @@
+{
+  "repository": "2217173240/grok-bot-0.18-reconstructed",
+  "reviewedCommit": "ef7ac0c4c896260ffa0c2cb440d3cb4263381d8d",
+  "analysisId": 1935070587,
+  "ref": "refs/pull/119/head",
+  "counts": {
+    "dismiss": 13,
+    "repair": 3
+  },
+  "groups": [
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "The manifest path is accepted only after the store ID rejects empty/dot/separator forms and containWithin verifies lexical and real-root containment. A null result is rejected before reading; real filesystem tests cover traversal and pre-existing links. This is a validated store lookup, not an unconstrained path input.",
+      "findings": [
+        {
+          "id": 281,
+          "rule": "js/path-injection",
+          "path": "source/electron-main/dev/dev-controls-window.ts",
+          "line": 121
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "The taint source is the owner's SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup configuration. Local execution intentionally uses that configured root and confines request paths before the atomic writer. The mkdir operand is not an unvalidated remote path.",
+      "findings": [
+        {
+          "id": 282,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "CODEX_HOME is an explicit owner-selected credentials directory. The reader opens a direct regular private file, checks that same descriptor, and reads through it. This path-injection trace originates in startup configuration; it does not bypass a confined remote path boundary.",
+      "findings": [
+        {
+          "id": 283,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/codex-credentials-file.ts",
+          "line": 12
+        },
+        {
+          "id": 284,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/codex-credentials-file.ts",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "DISPLAY is passed as an independent argv parameter to a fixed Bash script and used only through quoted $1. It is not interpolated into shell source. Real Bash tests with $(), backticks, quotes and whitespace verify literal argument transfer and no extra command execution.",
+      "findings": [
+        {
+          "id": 285,
+          "rule": "js/command-line-injection",
+          "path": "source/host/box/local-computer-use.ts",
+          "line": 82
+        },
+        {
+          "id": 296,
+          "rule": "js/indirect-command-line-injection",
+          "path": "source/host/box/local-computer-use.ts",
+          "line": 82
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "same-handle bounded attachment reads",
+      "comment": "Retain until correction and a fresh analysis: existing real-path checks prevent pre-existing link escape, but stat/path reads must use the same opened descriptor with bounded reads. No dismissal is authorized for these race findings.",
+      "findings": [
+        {
+          "id": 286,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/box-staging.ts",
+          "line": 30
+        },
+        {
+          "id": 287,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 211
+        },
+        {
+          "id": 288,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 223
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "comment": "These regression tests intentionally inspect and change real files in their private mkdtemp fixture to verify credential descriptor identity, safe marker publication, and WAL replacement rejection. The stat/read pairs are test assertions, not production authorization decisions.",
+      "findings": [
+        {
+          "id": 289,
+          "rule": "js/file-system-race",
+          "path": "tests/codex-credential-file-boundary.test.mjs",
+          "line": 31
+        },
+        {
+          "id": 290,
+          "rule": "js/file-system-race",
+          "path": "tests/codex-credential-file-boundary.test.mjs",
+          "line": 46
+        },
+        {
+          "id": 291,
+          "rule": "js/file-system-race",
+          "path": "tests/runtime-marker-file-boundaries.test.mjs",
+          "line": 49
+        },
+        {
+          "id": 292,
+          "rule": "js/file-system-race",
+          "path": "tests/runtime-marker-file-boundaries.test.mjs",
+          "line": 63
+        },
+        {
+          "id": 293,
+          "rule": "js/file-system-race",
+          "path": "tests/transcript-journal-file-identity.test.mjs",
+          "line": 71
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "The frontmatter destinations are null-prototype dictionaries at every nested level. Dynamic keys are intentional input data and cannot invoke Object.prototype setters. Production-parser tests verify __proto__/constructor remain own data and cannot inject inherited workflow name/trigger fields.",
+      "findings": [
+        {
+          "id": 294,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/workflow-model.ts",
+          "line": 12
+        },
+        {
+          "id": 295,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/workflow-model.ts",
+          "line": 12
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3136 @@
+{
+  "repository": "2217173240/grok-bot-0.18-reconstructed",
+  "reviewedCommit": "615d63a5cbc19dc8fe70219c273f3f89a26a2c27",
+  "reviewedAt": "2026-10-12",
+  "analysisIds": {
+    "javascriptTypescript": 1934877935,
+    "python": 1934853236,
+    "actions": 1934852200
+  },
+  "configuration": {
+    "querySuite": "extended",
+    "threatModel": "remote_and_local"
+  },
+  "counts": {
+    "dismiss": 241,
+    "repair": 26,
+    "retain": 13
+  },
+  "meaning": "repair identifies an implemented correction motivated by the finding; it does not assert that GitHub has closed that alert or that all concurrent filesystem replacement attacks are eliminated. Only dismiss groups authorize dismissal, with exact rule/path verification.",
+  "groups": [
+    {
+      "reason": "used in tests",
+      "evidence": "xtest-key-chords.py:27 resolves its own sys.argv[0] location to sibling repository helper; :28-53 starts isolated Xvfb; :94/106 executes that helper with synthetic chord input. sys.argv[0] is the test entry script selected by the local Python invoker, not a network/input path.",
+      "comment": "The XTest regression suite locates its repository helper relative to its own test entry script and runs synthetic key chords against isolated Xvfb. There is no external path input or privileged traversal boundary.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 1,
+          "rule": "py/path-injection",
+          "path": "tests/xtest-key-chords.py",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": "macos-source-e2e-smoke.mjs:5-6 and ui-sandbox-smoke.mjs:5-6 take the operator's CDP endpoint, defaulting to loopback.",
+      "comment": "The local acceptance operator deliberately selects the browser CDP endpoint. There is no server or remote client choosing an outbound URL through these test entry points.",
+      "findings": [
+        {
+          "id": 2,
+          "rule": "js/request-forgery",
+          "path": "scripts/macos-source-e2e-smoke.mjs",
+          "line": 6
+        },
+        {
+          "id": 3,
+          "rule": "js/request-forgery",
+          "path": "scripts/ui-sandbox-smoke.mjs",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "SAND_HOST_GATEWAY_URL is read from developer startup configuration by dev-controls-window.ts:23-24,65-68; it selects health/snapshot/upgrade destination and is not assigned from renderer/network data.",
+      "comment": "This developer maintenance capability intentionally contacts its configured gateway, including authentication when required. The reported URL source is developer startup configuration; no lower-trust request can set that destination in this flow. Reopen if the configuration boundary changes.",
+      "findings": [
+        {
+          "id": 4,
+          "rule": "js/request-forgery",
+          "path": "source/electron-main/dev/dev-host-upgrade-poke.ts",
+          "line": 43
+        },
+        {
+          "id": 7,
+          "rule": "js/request-forgery",
+          "path": "source/electron-main/dev/dev-controls-window.ts",
+          "line": 82
+        },
+        {
+          "id": 8,
+          "rule": "js/request-forgery",
+          "path": "source/electron-main/dev/dev-controls-window.ts",
+          "line": 124
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "dev-box-recreate-plane.ts:43-49 rejects packaged mode, requires an explicit development URL and accepts only localhost/127.0.0.1 before requests at175/184.",
+      "comment": "The development recreation entry point validates the configured destination to loopback hosts and refuses packaged mode before these requests. The reported source is not a remotely supplied URL.",
+      "findings": [
+        {
+          "id": 5,
+          "rule": "js/request-forgery",
+          "path": "source/electron-main/dev/dev-box-recreate-plane.ts",
+          "line": 175
+        },
+        {
+          "id": 6,
+          "rule": "js/request-forgery",
+          "path": "source/electron-main/dev/dev-box-recreate-plane.ts",
+          "line": 184
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "host-bundle-source.ts:11,15 accepts an operator-configured base override; the remote version component is checked by SHORT_GIT_SHA_REGEX.",
+      "comment": "The bundle base URL is an explicit owner configuration capability. The remote version string is constrained to a short commit identifier and cannot change the URL host in this flow.",
+      "findings": [
+        {
+          "id": 9,
+          "rule": "js/request-forgery",
+          "path": "source/host/extensions/host-upgrade/host-bundle-source.ts",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "scripts/audit-runtime-composition.mjs:938-941 explicitly accepts an outputRoot CLI argument; the flagged operations enumerate/hash/read that chosen build output. SARIF starts at process.argv:939, never file contents or network input. Relative output names derive from trusted runtime composition/allowlist or filesystem directory entries, not a remote caller.",
+      "comment": "This local build-audit CLI intentionally reads the operator-selected output directory (argv[2]). The finding does not cross a trust boundary; no remote/client path input reaches these sinks.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 10,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 170
+        },
+        {
+          "id": 11,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 552
+        },
+        {
+          "id": 12,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 579
+        },
+        {
+          "id": 13,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 632
+        },
+        {
+          "id": 14,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 636
+        },
+        {
+          "id": 15,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 666
+        },
+        {
+          "id": 16,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 681
+        },
+        {
+          "id": 18,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 735
+        },
+        {
+          "id": 19,
+          "rule": "js/path-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 878
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "build-box-exec-daemon.mjs:8-9 selects outfile from argv[2]; check-publication-inputs.mjs:4-5 selects git cwd from argv[2] and reads tracked path names only; local-runtime-cli.mjs:10-12 requires a CLI build-stamp file. These paths are their documented operation operands.",
+      "comment": "The local operator intentionally selects the build output, repository directory, or build-stamp input through CLI arguments. These tools run with that same user authority and have no remote request boundary.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 17,
+          "rule": "js/path-injection",
+          "path": "scripts/build-box-exec-daemon.mjs",
+          "line": 9
+        },
+        {
+          "id": 20,
+          "rule": "js/path-injection",
+          "path": "scripts/check-publication-inputs.mjs",
+          "line": 5
+        },
+        {
+          "id": 36,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-runtime-cli.mjs",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "scripts/fixtures/packaged-native-smoke.cjs:7 receives archive/reportPath from package smoke parent; :8-11 verifies platform/Electron; :19/20/27 load native deps deliberately from that package and :31 writes the requested smoke report. windows-package-smoke.mjs:101 uses mkdtemp for smoke artifacts.",
+      "comment": "Package acceptance fixture deliberately loads native modules from the package selected for testing and writes its test report. Its argv values are supplied by the smoke-test harness, not application or network users.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 21,
+          "rule": "js/path-injection",
+          "path": "scripts/fixtures/packaged-native-smoke.cjs",
+          "line": 19
+        },
+        {
+          "id": 22,
+          "rule": "js/path-injection",
+          "path": "scripts/fixtures/packaged-native-smoke.cjs",
+          "line": 20
+        },
+        {
+          "id": 23,
+          "rule": "js/path-injection",
+          "path": "scripts/fixtures/packaged-native-smoke.cjs",
+          "line": 27
+        },
+        {
+          "id": 24,
+          "rule": "js/path-injection",
+          "path": "scripts/fixtures/packaged-native-smoke.cjs",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "SARIF sources GROK_BOT_018_APP at scripts/lib/runtime.mjs:33 (and bootstrap-runtime.mjs:85), and GROK_BOT_RENDERER_SOURCE at lib/build-asar.mjs:174. lib/build-asar.mjs:157-183 copies the selected reference/override; runtime.mjs:18-29 checks runtime metadata; macos-package-verification.mjs:153-162 pins shell/ASAR hashes; renderer-package-verification.mjs:50-51 pins official ASAR hash. Selecting local build input is intentional.",
+      "comment": "The build operator explicitly selects a local reference app or renderer override via environment configuration. These are intentional build input paths, not paths supplied across an application trust boundary; package verification additionally pins official reference hashes.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 25,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/build-asar.mjs",
+          "line": 161
+        },
+        {
+          "id": 26,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/build-asar.mjs",
+          "line": 177
+        },
+        {
+          "id": 27,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/build-asar.mjs",
+          "line": 180
+        },
+        {
+          "id": 43,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/macos-package-verification.mjs",
+          "line": 157
+        },
+        {
+          "id": 44,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/macos-package-verification.mjs",
+          "line": 157
+        },
+        {
+          "id": 45,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/macos-package-verification.mjs",
+          "line": 218
+        },
+        {
+          "id": 46,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/macos-package-verification.mjs",
+          "line": 220
+        },
+        {
+          "id": 47,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/runtime.mjs",
+          "line": 26
+        },
+        {
+          "id": 48,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/runtime.mjs",
+          "line": 26
+        },
+        {
+          "id": 49,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/renderer-package-verification.mjs",
+          "line": 51
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "SARIF sources clean-build.mjs:219-255 GROK_BOT_HOST_BINDINGS_MANIFEST/GROK_BOT_ELECTRON_MAIN_BINDINGS_MANIFEST. Manifest files are explicit developer build inputs. host-production-activation.mjs:119-137 normalizes relative modules, rejects repository escapes/forbidden inputs, and requires reviewed source/. electron-main-production-activation.mjs:153-162 rejects repository escapes and forbidden inputs; :164-173 constrains built-ins to source/. Read/stat sinks are manifest validation.",
+      "comment": "Production binding manifests are explicit local build inputs selected by the developer. Resolved generated modules are checked against the repository boundary before the reported reads/stats; no network or lower-trust application input supplies these paths.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 28,
+          "rule": "js/path-injection",
+          "path": "scripts/electron-main-production-activation.mjs",
+          "line": 177
+        },
+        {
+          "id": 29,
+          "rule": "js/path-injection",
+          "path": "scripts/electron-main-production-activation.mjs",
+          "line": 257
+        },
+        {
+          "id": 30,
+          "rule": "js/path-injection",
+          "path": "scripts/electron-main-production-activation.mjs",
+          "line": 328
+        },
+        {
+          "id": 40,
+          "rule": "js/path-injection",
+          "path": "scripts/host-production-activation.mjs",
+          "line": 212
+        },
+        {
+          "id": 41,
+          "rule": "js/path-injection",
+          "path": "scripts/host-production-activation.mjs",
+          "line": 275
+        },
+        {
+          "id": 42,
+          "rule": "js/path-injection",
+          "path": "scripts/host-production-activation.mjs",
+          "line": 469
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "SARIF sources are process.env/local-launch-config defaultDataRoot, local-package-bootstrap env, windows-local-launch resolveOptions, and runtime-profile env. windows-local-launch.mjs:15-30 deliberately supports --app-path/--data-root and GROKBOT_DATA_ROOT; it operates local user-selected app data. lib/local-launch-config.mjs:67-74 reads a fixed anthropic-token child only to check presence/nonempty, then exports literal local-file rather than contents. bootstrap and Windows settings writes use wx. This is a desktop/CLI owner configuration, not a path requested by model/network tool inputs.",
+      "comment": "These desktop launch paths are intentionally selected by the local owner through data-root/app-path options or environment. Reported paths are fixed children of that selected directory; no remote input crosses a filesystem authorization boundary. Token validation does not return the token contents.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 31,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 22
+        },
+        {
+          "id": 32,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-package-bootstrap.mjs",
+          "line": 10
+        },
+        {
+          "id": 33,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-package-bootstrap.mjs",
+          "line": 12
+        },
+        {
+          "id": 34,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-package-bootstrap.mjs",
+          "line": 12
+        },
+        {
+          "id": 35,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 39
+        },
+        {
+          "id": 37,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 69
+        },
+        {
+          "id": 38,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 70
+        },
+        {
+          "id": 39,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 70
+        },
+        {
+          "id": 76,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 62
+        },
+        {
+          "id": 77,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 67
+        },
+        {
+          "id": 78,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 67
+        },
+        {
+          "id": 79,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 72
+        },
+        {
+          "id": 80,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 79
+        },
+        {
+          "id": 81,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 186
+        },
+        {
+          "id": 82,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 221
+        },
+        {
+          "id": 83,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 221
+        },
+        {
+          "id": 84,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 222
+        },
+        {
+          "id": 85,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 244
+        },
+        {
+          "id": 86,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 254
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "lib/source-only-package.mjs:32 selects the standard Electron archive cache root through electron_config_cache; :40-49 accesses/hashes selected archive and checks pinned official SHA-256.",
+      "comment": "The build operator may configure Electron cache location. The selected archive is only accessed and verified against a pinned official checksum; this is intentional local configuration, not untrusted remote path traversal.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 50,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/source-only-package.mjs",
+          "line": 16
+        },
+        {
+          "id": 51,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/source-only-package.mjs",
+          "line": 44
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "lib/windows-runtime.mjs:77 GROK_BOT_WINDOWS_INSTALLER explicitly chooses installer. :78-80 refuses downloads when a nondefault configured installer is missing; :43-45 pins bytes/hash; default download writes randomUUID partial with wx/0600 then verifies and renames. Thus taint through download target exists in analysis but custom target cannot reach download branch.",
+      "comment": "The environment value selects a local installer input. A missing nondefault path is rejected before downloading; downloads only target the fixed repository cache and use exclusive random temporary files plus pinned checksum verification.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 52,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 18
+        },
+        {
+          "id": 53,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 24
+        },
+        {
+          "id": 54,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 44
+        },
+        {
+          "id": 55,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 50
+        },
+        {
+          "id": 56,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 55
+        },
+        {
+          "id": 57,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 57
+        },
+        {
+          "id": 58,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 57
+        },
+        {
+          "id": 59,
+          "rule": "js/path-injection",
+          "path": "scripts/lib/windows-runtime.mjs",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "manual-local-docker-desktop-health.mjs:1-2 documents manual isolated-container acceptance, :19-22 takes explicit staged runtime directory and checks two fixed runtime entry files, then mounts those selected paths readonly (:61-62).",
+      "comment": "Manual container acceptance intentionally accepts a staged runtime directory from its local operator. It stats fixed runtime entry files and mounts the selected runtime read-only into an isolated test container.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 60,
+          "rule": "js/path-injection",
+          "path": "scripts/manual-local-docker-desktop-health.mjs",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "provider-sandbox-smoke.mjs:9 requires Linux container; :10 selects operator-provided workspace; :13-14 only checks explicitly provided token location exists; :11-12 marker filename random UUID; :39 reads that fixed marker. Provider tool input does not decide the reported filesystem paths. This test uses real configured credentials but the alerts do not identify credential exfiltration.",
+      "comment": "Container-only provider acceptance uses operator-configured workspace/token-file locations. The reported read is a generated UUID marker; model/tool input does not select that path. The token sink only checks availability.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 61,
+          "rule": "js/path-injection",
+          "path": "scripts/provider-sandbox-smoke.mjs",
+          "line": 14
+        },
+        {
+          "id": 62,
+          "rule": "js/path-injection",
+          "path": "scripts/provider-sandbox-smoke.mjs",
+          "line": 15
+        },
+        {
+          "id": 63,
+          "rule": "js/path-injection",
+          "path": "scripts/provider-sandbox-smoke.mjs",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "secrets-keychain-check.cjs:66 child argv is produced by its own parent :72-83; parent creates mkdtemp .cache/secrets-keychain-, disposable randomUUID values, independent userData/sessionData, and generated store module. chmod/write/remove operate that temporary directory; :69-70 explicit SAND_TEST_ELECTRON_PATH selects test executable. No existing user secret store is selected by the ordinary entry point.",
+      "comment": "This Keychain regression harness creates a fresh mkdtemp directory, random disposable secrets and isolated Electron user/session data, then passes that directory to its own child process. All flagged reads/writes/chmod calls target that test fixture, not the user secret store.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 64,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 19
+        },
+        {
+          "id": 65,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 21
+        },
+        {
+          "id": 66,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 26
+        },
+        {
+          "id": 67,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 28
+        },
+        {
+          "id": 68,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 33
+        },
+        {
+          "id": 69,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 37
+        },
+        {
+          "id": 70,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 40
+        },
+        {
+          "id": 71,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 47
+        },
+        {
+          "id": 72,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 51
+        },
+        {
+          "id": 73,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 54
+        },
+        {
+          "id": 74,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 59
+        },
+        {
+          "id": 75,
+          "rule": "js/path-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "windows-package-smoke.mjs:93-101 requires exactly --app-path <exe>; stats executable and fixed sibling resources/app.asar, then makes isolated mkdtemp profile.",
+      "comment": "Windows package acceptance intentionally takes the package executable path via --app-path. The flagged stat calls inspect that selected executable and its fixed sibling archive; test profile data is separately created in mkdtemp.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 87,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-package-smoke.mjs",
+          "line": 97
+        },
+        {
+          "id": 88,
+          "rule": "js/path-injection",
+          "path": "scripts/windows-package-smoke.mjs",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/box-exec-daemon/server.ts:487`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 89,
+          "rule": "js/path-injection",
+          "path": "source/box-exec-daemon/server.ts",
+          "line": 487
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/box-exec-daemon/server.ts:490`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 90,
+          "rule": "js/path-injection",
+          "path": "source/box-exec-daemon/server.ts",
+          "line": 490
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "implemented boundary or correctness fix",
+      "evidence": "`js/path-injection` `source/electron-main/dev/dev-controls-window.ts:113`; box-store-id 本地文件内容未限制单段 ID，即可以 ../ 越过 box-store 子目录读取 manifest.json。入口 collectBoxStoreStatus；无网络可控证据，输出只是汇总，建议复用安全 ID 校验。",
+      "comment": "Require a single store ID and real-path containment before reading the development manifest.",
+      "findings": [
+        {
+          "id": 91,
+          "rule": "js/path-injection",
+          "path": "source/electron-main/dev/dev-controls-window.ts",
+          "line": 113
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/awaiting-human.ts:93`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 92,
+          "rule": "js/path-injection",
+          "path": "source/host/box/awaiting-human.ts",
+          "line": 93
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/awaiting-human.ts:99`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 93,
+          "rule": "js/path-injection",
+          "path": "source/host/box/awaiting-human.ts",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/awaiting-human.ts:159`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 94,
+          "rule": "js/path-injection",
+          "path": "source/host/box/awaiting-human.ts",
+          "line": 159
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/local-desktop-url.ts:10`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 95,
+          "rule": "js/path-injection",
+          "path": "source/host/box/local-desktop-url.ts",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/exec-daemon-process.ts:74`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 96,
+          "rule": "js/path-injection",
+          "path": "source/host/box/exec-daemon-process.ts",
+          "line": 74
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/exec-daemon-process.ts:75`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 97,
+          "rule": "js/path-injection",
+          "path": "source/host/box/exec-daemon-process.ts",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/exec-daemon-process.ts:78`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 98,
+          "rule": "js/path-injection",
+          "path": "source/host/box/exec-daemon-process.ts",
+          "line": 78
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:40`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 99,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 40
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:43`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 100,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:44`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 101,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 44
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:45`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 102,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:45`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 103,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/box/session-sync-activity.ts:48`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 104,
+          "rule": "js/path-injection",
+          "path": "source/host/box/session-sync-activity.ts",
+          "line": 48
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/codebase-telemetry/csnaps-capability.ts:20`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 105,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/codebase-telemetry/csnaps-capability.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/codebase-telemetry/csnaps-capability.ts:27`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 106,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/codebase-telemetry/csnaps-capability.ts",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:255`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 107,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 255
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:265`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 108,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 265
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:306`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 109,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 306
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:307`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 110,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 307
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:307`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 111,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 307
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/extensions/inference/provider-session.ts:479`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 112,
+          "rule": "js/path-injection",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 479
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/gateway-config.ts:37`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 113,
+          "rule": "js/path-injection",
+          "path": "source/host/gateway-config.ts",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/gateway-config.ts:37`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 114,
+          "rule": "js/path-injection",
+          "path": "source/host/gateway-config.ts",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/host-lock.ts:28`; Reads process cmdline from /proc, requires expected executable, absolute entry basename host-main.cjs, and only stat checks regular file. This is process identity detection, not arbitrary content disclosure/write.",
+      "comment": "Reads process cmdline from /proc, requires expected executable, absolute entry basename host-main.cjs, and only stat checks regular file. This is process identity detection, not arbitrary content disclosure/write.",
+      "findings": [
+        {
+          "id": 115,
+          "rule": "js/path-injection",
+          "path": "source/host/host-lock.ts",
+          "line": 28
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/local-exec/local-exec-machine.ts:10`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 116,
+          "rule": "js/path-injection",
+          "path": "source/host/local-exec/local-exec-machine.ts",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/host/local-exec/local-exec-provider.ts:134`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 117,
+          "rule": "js/path-injection",
+          "path": "source/host/local-exec/local-exec-provider.ts",
+          "line": 134
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/node-agent-coordinator/webauthn/signer.ts:57`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 118,
+          "rule": "js/path-injection",
+          "path": "source/node-agent-coordinator/webauthn/signer.ts",
+          "line": 57
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/agent/tools/core/worker-script-location.ts:22`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 119,
+          "rule": "js/path-injection",
+          "path": "source/packages/agent/tools/core/worker-script-location.ts",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/cursor-config/permissions-file-provider.ts:46`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 120,
+          "rule": "js/path-injection",
+          "path": "source/packages/cursor-config/permissions-file-provider.ts",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/cursor-config/permissions-file-provider.ts:50`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 121,
+          "rule": "js/path-injection",
+          "path": "source/packages/cursor-config/permissions-file-provider.ts",
+          "line": 50
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/cursor-plugins/cursor-marketplace.ts:103`; SARIF source is SAND_DATA_ROOT cache root, while marketplaceSlug/pluginId are separately sanitized before join. listCachedVersions only readdir under selected cache root.",
+      "comment": "SARIF source is SAND_DATA_ROOT cache root, while marketplaceSlug/pluginId are separately sanitized before join. listCachedVersions only readdir under selected cache root.",
+      "findings": [
+        {
+          "id": 122,
+          "rule": "js/path-injection",
+          "path": "source/packages/cursor-plugins/cursor-marketplace.ts",
+          "line": 103
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/shell-exec/platform-shell.ts:39`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 123,
+          "rule": "js/path-injection",
+          "path": "source/packages/shell-exec/platform-shell.ts",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/packages/shell-exec/shell-parser.ts:86`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 124,
+          "rule": "js/path-injection",
+          "path": "source/packages/shell-exec/shell-parser.ts",
+          "line": 86
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:7`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 125,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:9`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 126,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:15`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 127,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:19`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 128,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:19`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 129,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/atomic-write.ts:20`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 130,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/atomic-write.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/codex-config.ts:12`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 131,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/codex-config.ts",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/inference-router-local.ts:12`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 132,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/inference-router-local.ts",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/inference-router-local.ts:32`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 133,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/inference-router-local.ts",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/inference-router-local.ts:34`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 134,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/inference-router-local.ts",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/inference-router-local.ts:48`; CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "comment": "CODEX_HOME startup configuration intentionally locates auth.json; refresh uses random temporary wx0600+rename. Path injection trace is noise; distinct lstat/read race remains #230/#239 and should be fixed.",
+      "findings": [
+        {
+          "id": 135,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/inference-router-local.ts",
+          "line": 48
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:23`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 136,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:26`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 137,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:32`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 138,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:33`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 139,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:33`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 140,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:54`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 141,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:55`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 142,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 55
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:66`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 143,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 66
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-admin-intercept.ts:67`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 144,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 67
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/local-runtime-profile.mjs:37`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 145,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/local-runtime-profile.mjs",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/mcp/builtin-mcp.ts:82`; SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "comment": "SARIF taint origin is startup process.env/argv; operation intentionally uses operator-selected runtime/config/binary path, not an untrusted ID joined to a confined store. Preserve configuration support; dismiss this specific source trace as false positive.",
+      "findings": [
+        {
+          "id": 146,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/mcp/builtin-mcp.ts",
+          "line": 82
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/paths.ts:43`; SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "comment": "SARIF source SAND_LOCAL_EXEC_ROOT/SAND_AGENT_PROJECT_DIR startup config. Local exec upload/download calls containPath: relative(root,target) + realpathNearestExisting enforce real-root containment. Atomic write uses random wx file. This specific env trace is noise; potential concurrent symlink swaps are separate from absent path validation.",
+      "findings": [
+        {
+          "id": 147,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/paths.ts",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/path-injection` `source/shared/node/zero-remote-cli.ts:20`; zero-remote-check CLI explicitly accepts ledger.jsonl pathname in process.argv[2] and reads that file. This is its intended user-authorized operation; no server entry.",
+      "comment": "zero-remote-check CLI explicitly accepts ledger.jsonl pathname in process.argv[2] and reads that file. This is its intended user-authorized operation; no server entry.",
+      "findings": [
+        {
+          "id": 148,
+          "rule": "js/path-injection",
+          "path": "source/shared/node/zero-remote-cli.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "tests/claude-provider-performance.test.mjs:12-14 creates mkdtemp and passes it as argv; fixture :7-10 uses that directory, :42-50 forces localhost endpoint/fake auth and private config; :52-65 uses fixed sentinel and intercept file, no server-supplied path.",
+      "comment": "Parent test supplies a fresh mkdtemp directory. The fixture uses a loopback mock provider and dummy credentials; reads/writes target fixed sentinel/log children, not remote-supplied paths.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 149,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-provider-performance.mjs",
+          "line": 53
+        },
+        {
+          "id": 150,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-provider-performance.mjs",
+          "line": 60
+        },
+        {
+          "id": 151,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-provider-performance.mjs",
+          "line": 65
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "tests/claude-sdk-control-cancel.test.mjs:11-13 creates mkdtemp and passes it; fixture :12-27 writes .bash_profile from tracked fixture and watches a fixed snapshot-shell.pid; watcher rejects any name other than that literal.",
+      "comment": "Cancellation regression fixture receives its own mkdtemp directory from the parent test. It copies a tracked shell profile and reads only the literal snapshot-shell.pid emitted by that fixture; no untrusted path is accepted.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 152,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-sdk-control-cancel.mjs",
+          "line": 23
+        },
+        {
+          "id": 153,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-sdk-control-cancel.mjs",
+          "line": 25
+        },
+        {
+          "id": 154,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/claude-sdk-control-cancel.mjs",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "tests/local-exec-windows.test.mjs:11 and :34 create mkdtemp; :38 passes LOCAL_EXEC_PROCESS_REPORT chosen inside it to native spawn test. Fixture writes pid/generation report at that chosen location.",
+      "comment": "The Windows process-lifecycle test supplies LOCAL_EXEC_PROCESS_REPORT inside its fresh mkdtemp fixture directory. The helper writes only its process report there; production callers do not provide this environment path.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 155,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/local-exec-windows-process.cjs",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "tests/mcp-server-queues.test.mjs:31-46 creates mkdtemp and fixed control/events child paths then passes them to controlled-server fixture. fixture :12-16 and :62-65 only uses these argv paths, while incoming MCP args are event data/markers, never filesystem paths.",
+      "comment": "The MCP queue regression harness creates control/events files in mkdtemp and passes their paths to this child server. MCP requests cannot change those paths; request data is only recorded as JSON or used as a gate marker.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 156,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/mcp-controlled-server.mjs",
+          "line": 13
+        },
+        {
+          "id": 157,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/mcp-controlled-server.mjs",
+          "line": 16
+        },
+        {
+          "id": 158,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/mcp-controlled-server.mjs",
+          "line": 62
+        },
+        {
+          "id": 159,
+          "rule": "js/path-injection",
+          "path": "tests/fixtures/mcp-controlled-server.mjs",
+          "line": 65
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "provider-live-* entries require Linux container and explicit SAND_AGENT_WORKSPACE. host-tool-parity.mjs:11-14 checks isolated prefix and token existence; :25-26 preselects random UUID marker; :38-42 requires args.marker equal nonce and appends to closed-over marker path; :61 reads it. Other flagged sinks only mkdir that operator-selected workspace. These are real provider acceptance tests, not dummy-auth unit tests.",
+      "comment": "These container-only live acceptance entries use a workspace selected by the test operator. Model/tool responses cannot select the reported filesystem paths; the host parity tool only writes a closed-over UUID marker after exact nonce validation. Token availability checks do not disclose token contents.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 160,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-host-tool-parity.mjs",
+          "line": 13
+        },
+        {
+          "id": 161,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-host-tool-parity.mjs",
+          "line": 14
+        },
+        {
+          "id": 162,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-host-tool-parity.mjs",
+          "line": 42
+        },
+        {
+          "id": 163,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-stream.mjs",
+          "line": 11
+        },
+        {
+          "id": 164,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-mcp-transcript.mjs",
+          "line": 12
+        },
+        {
+          "id": 165,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-host-tool-parity.mjs",
+          "line": 61
+        },
+        {
+          "id": 166,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-tool-cancel.mjs",
+          "line": 13
+        },
+        {
+          "id": 167,
+          "rule": "js/path-injection",
+          "path": "tests/provider-live-tool-transcript.mjs",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "audit-ui-provenance.mjs decodeEntities and anchorVariants normalize visible strings and generate text.includes search candidates against archived source. Results are audit matching data, never executed or rendered as HTML.",
+      "comment": "These transforms are textual provenance-search helpers, not escaping or sanitization before execution/HTML rendering. Their outputs are only compared with source strings, so the reported incomplete/double escaping does not cross an injection boundary.",
+      "findings": [
+        {
+          "id": 168,
+          "rule": "js/double-escaping",
+          "path": "scripts/audit-ui-provenance.mjs",
+          "line": 46
+        },
+        {
+          "id": 169,
+          "rule": "js/incomplete-sanitization",
+          "path": "scripts/audit-ui-provenance.mjs",
+          "line": 173
+        },
+        {
+          "id": 170,
+          "rule": "js/incomplete-sanitization",
+          "path": "scripts/audit-ui-provenance.mjs",
+          "line": 173
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "gateway-server.ts:36 catches/rethrows command errors; startGatewayServer uses shared/errors.ts errorMessage, which reads Error.message only. respondError serializes that value as JSON after gateway origin/host/auth checks.",
+      "comment": "The response path uses Error.message through errorMessage(), not Error.stack, and serializes it as JSON. The CodeQL flow starts at the caught Error object but no stack trace property is exposed by this path.",
+      "findings": [
+        {
+          "id": 171,
+          "rule": "js/stack-trace-exposure",
+          "path": "source/host/gateway-server.ts",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "avatar-images.ts:17 constructs a data URL from a fixed MIME lookup and Buffer.toString(base64), then JSON.stringify inserts it as a JavaScript string literal into executeJavaScript, not an HTML script element.",
+      "comment": "The interpolated value is a fixed-MIME, base64 data URL serialized as a JavaScript string literal and evaluated directly. It is not inserted into HTML markup, and image bytes cannot break out into JavaScript syntax.",
+      "findings": [
+        {
+          "id": 172,
+          "rule": "js/bad-code-sanitization",
+          "path": "source/electron-main/media/avatar-images.ts",
+          "line": 17
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": "local-network-policy.test.mjs:64-74 generates a Node module using JSON.stringify of file URLs and paths produced by the test's own mkdtemp directory.",
+      "comment": "This isolated test generates a JavaScript module from its own temporary file URLs and path literals. JSON serialization is used in JavaScript literal context, with no HTML embedding or remotely supplied code fragment.",
+      "findings": [
+        {
+          "id": 173,
+          "rule": "js/bad-code-sanitization",
+          "path": "tests/local-network-policy.test.mjs",
+          "line": 69
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "audit-runtime-composition.mjs:311-322 captures symbol names with a fixed ASCII identifier regex, or substitutes literal BrowserWindow, before interpolating the symbol into an audit regex.",
+      "comment": "The inserted symbol is constrained to ASCII identifier characters by the preceding fixed capture pattern (or is the constant BrowserWindow). Arbitrary regex metacharacters cannot reach this interpolation.",
+      "findings": [
+        {
+          "id": 174,
+          "rule": "js/regex-injection",
+          "path": "scripts/audit-runtime-composition.mjs",
+          "line": 322
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "bounded glob matching",
+      "evidence": "Workspace .sandignore glob conversion escapes syntax but repeated stars can make native RegExp backtrack exponentially. Real production ignores/canPruneDir with30 *a segments exceeded2s in bounded child processes.",
+      "comment": "Use the existing RE2JS engine and test common glob/negation/prune behavior plus adversarial matching and explicit Unicode/character-class boundaries.",
+      "findings": [
+        {
+          "id": 175,
+          "rule": "js/regex-injection",
+          "path": "source/host/extensions/box-store-sync/workspace-ignore.ts",
+          "line": 11
+        },
+        {
+          "id": 176,
+          "rule": "js/regex-injection",
+          "path": "source/host/extensions/box-store-sync/workspace-ignore.ts",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "forced-egress.ts:60-68 intentionally compiles operator-specified regex policy overrides; cached dependency/source lookup patterns are not sourced from tool requests or workspace file contents.",
+      "comment": "Regex syntax is the documented input type of this administrator policy override. Treating it as literal text would remove the configuration capability. The reported dataflow originates in process startup configuration, not an untrusted per-request pattern.",
+      "findings": [
+        {
+          "id": 177,
+          "rule": "js/regex-injection",
+          "path": "source/packages/local-exec/forced-egress.ts",
+          "line": 64
+        },
+        {
+          "id": 178,
+          "rule": "js/regex-injection",
+          "path": "source/packages/local-exec/forced-egress.ts",
+          "line": 118
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": "claude-sdk-control-cancel.mjs:15-16 asserts an integer delay between0 and1000ms before the flagged timer at93. Parent supplies the cancellation test fixture argument.",
+      "comment": "The isolated cancellation fixture validates its delay as an integer from0 through1000ms before creating the timer. This bounded test input cannot create an unbounded timer duration.",
+      "findings": [
+        {
+          "id": 179,
+          "rule": "js/resource-exhaustion",
+          "path": "tests/fixtures/claude-sdk-control-cancel.mjs",
+          "line": 93
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": "secrets-keychain-check.cjs:82, native-e2e-check.mjs:574, windows-package-smoke.mjs:60, desktop-probe-shell-result.test.mjs:36 accept the executable under test from the operator and call spawn/execFile with separate arguments.",
+      "comment": "The acceptance harness intentionally executes the operator-selected Electron, package, or Chromium binary. The selected executable is a test operand, not ordinary untrusted data interpolated into shell syntax.",
+      "findings": [
+        {
+          "id": 180,
+          "rule": "js/command-line-injection",
+          "path": "scripts/secrets-keychain-check.cjs",
+          "line": 82
+        },
+        {
+          "id": 181,
+          "rule": "js/command-line-injection",
+          "path": "scripts/native-e2e-check.mjs",
+          "line": 574
+        },
+        {
+          "id": 183,
+          "rule": "js/command-line-injection",
+          "path": "scripts/windows-package-smoke.mjs",
+          "line": 60
+        },
+        {
+          "id": 190,
+          "rule": "js/command-line-injection",
+          "path": "tests/desktop-probe-shell-result.test.mjs",
+          "line": 36
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "windows-local-launch.mjs:81 uses explicit --app-path; webauthn/signer.ts:56-57,99 uses SAND_WEBAUTHN_SIGNER_PATH. Ceremony payload is passed via stdin, never in the program pathname.",
+      "comment": "The local owner explicitly configures the application or signer executable. It is launched with separate argv; remote ceremony data goes through stdin and cannot select the executable in the reported flow.",
+      "findings": [
+        {
+          "id": 182,
+          "rule": "js/command-line-injection",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 81
+        },
+        {
+          "id": 186,
+          "rule": "js/command-line-injection",
+          "path": "source/node-agent-coordinator/webauthn/signer.ts",
+          "line": 99
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "sand-update-service.ts:81-82 verifies the downloaded installer before recording its staged path; win32-installer.ts:12-19 requires Authenticode Valid and signer allowlist; launch uses spawn without a shell.",
+      "comment": "The reported installer execution is gated by Authenticode validity and the allowed signer check before staging. Launch uses argv without shell interpretation. This triage covers the reported command-injection flow, not a general approval of every updater behavior.",
+      "findings": [
+        {
+          "id": 184,
+          "rule": "js/command-line-injection",
+          "path": "source/electron-main/update/win32-installer.ts",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "shell parameter boundary",
+      "evidence": "local-computer-use.ts:32,83 interpolates JSON.stringify(DISPLAY) into bash double quotes; a harmless printf substitution executes. Container defaults pin DISPLAY and secret injection excludes it, so remote control is not established.",
+      "comment": "Pass DISPLAY as a positional parameter to a fixed script; test real Bash with substitution, quotes and whitespace.",
+      "findings": [
+        {
+          "id": 185,
+          "rule": "js/command-line-injection",
+          "path": "source/host/box/local-computer-use.ts",
+          "line": 83
+        },
+        {
+          "id": 272,
+          "rule": "js/indirect-command-line-injection",
+          "path": "source/host/box/local-computer-use.ts",
+          "line": 83
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "SARIF origins are SHELL/SYSTEMROOT/PATH in platform-shell.ts. helper-support requires explicit insecure_none for the unsandboxed path; spawn-promise's reviewed caller invokes fixed git rev-parse with workspace as cwd.",
+      "comment": "This trace models owner-controlled shell/program lookup configuration as an injection. The helper intentionally executes commands under the selected sandbox policy; the reported flow does not let ordinary workspace text or a remote parameter alter the parent process environment.",
+      "findings": [
+        {
+          "id": 187,
+          "rule": "js/command-line-injection",
+          "path": "source/packages/shell-exec/sandbox/helper-support.ts",
+          "line": 224
+        },
+        {
+          "id": 188,
+          "rule": "js/command-line-injection",
+          "path": "source/packages/shell-exec/sandbox/unsafe-spawn.ts",
+          "line": 9
+        },
+        {
+          "id": 189,
+          "rule": "js/command-line-injection",
+          "path": "source/packages/utils/spawn-promise.ts",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "local-runtime-diagnostics.test.mjs:50, local-runtime-profile.test.mjs:119/121, mac-launcher.test.mjs:20/37/49/54/62 use fixed bash scripts and source \"$1\" with independent argv.",
+      "comment": "The shell program text is fixed. The filesystem path is passed as an independent positional argument and expanded through quoted $1; substitutions or quotes in the path are not reparsed as shell syntax.",
+      "findings": [
+        {
+          "id": 191,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/local-runtime-diagnostics.test.mjs",
+          "line": 50
+        },
+        {
+          "id": 192,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/local-runtime-profile.test.mjs",
+          "line": 119
+        },
+        {
+          "id": 193,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/local-runtime-profile.test.mjs",
+          "line": 121
+        },
+        {
+          "id": 194,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/mac-launcher.test.mjs",
+          "line": 20
+        },
+        {
+          "id": 195,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/mac-launcher.test.mjs",
+          "line": 37
+        },
+        {
+          "id": 196,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/mac-launcher.test.mjs",
+          "line": 49
+        },
+        {
+          "id": 197,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/mac-launcher.test.mjs",
+          "line": 54
+        },
+        {
+          "id": 198,
+          "rule": "js/shell-command-injection-from-environment",
+          "path": "tests/mac-launcher.test.mjs",
+          "line": 62
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "team-repo-filters.ts:5-6 classifies path patterns versus repo-like text. No production consumer, network request, credential decision or host authorization uses this predicate.",
+      "comment": "This helper only classifies a repository string as a path pattern. It is not a trusted-host validator and does not grant access or perform a request; the reported host-substring check is not a security boundary.",
+      "findings": [
+        {
+          "id": 199,
+          "rule": "js/incomplete-url-substring-sanitization",
+          "path": "source/packages/local-exec/team-repo-filters.ts",
+          "line": 6
+        },
+        {
+          "id": 200,
+          "rule": "js/incomplete-url-substring-sanitization",
+          "path": "source/packages/local-exec/team-repo-filters.ts",
+          "line": 6
+        },
+        {
+          "id": 201,
+          "rule": "js/incomplete-url-substring-sanitization",
+          "path": "source/packages/local-exec/team-repo-filters.ts",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/attachments/attachments-service.ts:210`; SARIF sink 是 attachments-service 的 fs.open(resolved,\"r\")，实际只读不是创建。源自 video-playback-rendition /tmp/pid cache；该 cache 的 predictable directory 独立可用 mkdtemp 改善，但不要把只读 open 当不安全创建。",
+      "comment": "This finding flags a read-only file open, not temporary-file creation. Any separate cache-directory hardening is tracked independently.",
+      "findings": [
+        {
+          "id": 202,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 210
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/box-store-sync/box-copy-in.ts:195`; 固定 /tmp/sand-copy-in-status.json.tmp 直写默认 w，预置 symlink 可使目标被截断；用随机 wx + rename 保留最终路径。",
+      "comment": "Do not dismiss: 固定 /tmp/sand-copy-in-status.json.tmp 直写默认 w，预置 symlink 可使目标被截断；用随机 wx + rename 保留最终路径。",
+      "findings": [
+        {
+          "id": 203,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/box-store-sync/box-copy-in.ts",
+          "line": 195
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/box-store-sync/box-store-pack.ts:29`; extractPackMembers open(args.packPath,\"r\") 仅只读；还校验 gzip 内容长度和 SHA。临时 pack 目录创建应独立核查，但此 sink 并非 insecure creation。",
+      "comment": "This finding flags a read-only file open, not temporary-file creation. Any separate cache-directory hardening is tracked independently.",
+      "findings": [
+        {
+          "id": 204,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/box-store-sync/box-store-pack.ts",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/browser-ua/ua-token-kill-switch-service.ts:13`; 固定 /tmp/sand-ua-token-disabled 直写 w；使用随机 wx 原子替换，保留外部 marker 路径。",
+      "comment": "Do not dismiss: 固定 /tmp/sand-ua-token-disabled 直写 w；使用随机 wx 原子替换，保留外部 marker 路径。",
+      "findings": [
+        {
+          "id": 205,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/browser-ua/ua-token-kill-switch-service.ts",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/browser-ua/ua-owner-stamp-service.ts:23`; 固定 /tmp/sand-ua-user.tmp 直写 w；使用随机 wx 原子替换。",
+      "comment": "Do not dismiss: 固定 /tmp/sand-ua-user.tmp 直写 w；使用随机 wx 原子替换。",
+      "findings": [
+        {
+          "id": 206,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/browser-ua/ua-owner-stamp-service.ts",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/host-upgrade/host-bundle-upgrade.ts:23`; host upgrade 固定 /tmp/sand-supervisor/*.part 直写 w；随机 wx 临时文件+rename，且验证 supervisor 目录不是 symlink/权限。需保持 supervisor 读取最终命名契约。",
+      "comment": "Do not dismiss: host upgrade 固定 /tmp/sand-supervisor/*.part 直写 w；随机 wx 临时文件+rename，且验证 supervisor 目录不是 symlink/权限。需保持 supervisor 读取最终命名契约。",
+      "findings": [
+        {
+          "id": 207,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/host-upgrade/host-bundle-upgrade.ts",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/host-upgrade/host-bundle-upgrade.ts:23`; 同 #207，bundle 与 command 两个 sink；验证 supervisor 所有者/目录权限后原子替换。",
+      "comment": "Do not dismiss: 同 #207，bundle 与 command 两个 sink；验证 supervisor 所有者/目录权限后原子替换。",
+      "findings": [
+        {
+          "id": 208,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/host-upgrade/host-bundle-upgrade.ts",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/extensions/telemetry/pressure-cpu-profiler.ts:122`; pressure profiler 固定 /tmp/sand-host-profiles，目录递归 mkdir 不拒绝预置 symlink，时间戳文件默认 w；使用私有不可预测目录或校验现有受控目录+exclusive创建。",
+      "comment": "Do not dismiss: pressure profiler 固定 /tmp/sand-host-profiles，目录递归 mkdir 不拒绝预置 symlink，时间戳文件默认 w；使用私有不可预测目录或校验现有受控目录+exclusive创建。",
+      "findings": [
+        {
+          "id": 209,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/extensions/telemetry/pressure-cpu-profiler.ts",
+          "line": 122
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/insecure-temporary-file` `source/host/sand-host.ts:776`; 固定 /tmp/sand-box-ready-stage 直写 w；随机 wx 原子替换保持 ready marker 契约。",
+      "comment": "Do not dismiss: 固定 /tmp/sand-box-ready-stage 直写 w；随机 wx 原子替换保持 ready marker 契约。",
+      "findings": [
+        {
+          "id": 210,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/host/sand-host.ts",
+          "line": 776
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "implemented boundary or correctness fix",
+      "evidence": "`js/insecure-temporary-file` `source/packages/shell-exec/powershell.ts:48`; PowerShell scriptFile 已 randomUUID 难以提前猜测，但 mode 默认受 umask 影响可能允许其他用户读取命令敏感内容。建议 mkdtemp 0700 + script wx0600；不应宣称可预测名称漏洞。",
+      "comment": "Create private per-execution PowerShell files, exclusive script writes and owned-directory cleanup.",
+      "findings": [
+        {
+          "id": 211,
+          "rule": "js/insecure-temporary-file",
+          "path": "source/packages/shell-exec/powershell.ts",
+          "line": 48
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "scripts/clean-build.mjs:71-73 stat/read records byte count and hash for a trusted build output. There is no ownership/permission authorization predicate, and no mutation of the target between the two operations. A concurrent build could make its manifest inconsistent, but that is not an attacker privilege transition.",
+      "comment": "This build manifest helper obtains size and hash of an operator-owned build output. The stat result is metadata, not an access-control decision; the reported sequence introduces no security boundary bypass.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 212,
+          "rule": "js/file-system-race",
+          "path": "scripts/clean-build.mjs",
+          "line": 73
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "scripts/fixtures/docker-settings-seed-check.cjs:24-35/63-70 intentionally snapshots/asserts content and stat fields. Parent docker-settings-seed-smoke.mjs:8-10 uses UUID session volume, :31-34 network none and that volume only, :82-84 creates and verifies ownership label. Fake marker is random.",
+      "comment": "These stat/read sequences intentionally verify seed invariants in a fresh UUID-named Docker volume owned by the smoke harness. They are assertions against synthetic settings and do not authorize production filesystem operations.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 213,
+          "rule": "js/file-system-race",
+          "path": "scripts/fixtures/docker-settings-seed-check.cjs",
+          "line": 27
+        },
+        {
+          "id": 214,
+          "rule": "js/file-system-race",
+          "path": "scripts/fixtures/docker-settings-seed-check.cjs",
+          "line": 34
+        },
+        {
+          "id": 215,
+          "rule": "js/file-system-race",
+          "path": "scripts/fixtures/docker-settings-seed-check.cjs",
+          "line": 69
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "local-package-bootstrap.mjs:12 and windows-local-launch.mjs:221 check existence before writeFileSync but write uses flag wx (O_CREAT|O_EXCL). A concurrent creator makes write fail EEXIST and cannot cause overwrite; existence check is only an optimization.",
+      "comment": "The final write uses flag wx, which atomically refuses an existing path. A race after existsSync fails closed with EEXIST instead of overwriting a file, so the reported check/use pattern is not exploitable.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 216,
+          "rule": "js/file-system-race",
+          "path": "scripts/lib/local-package-bootstrap.mjs",
+          "line": 12
+        },
+        {
+          "id": 218,
+          "rule": "js/file-system-race",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 221
+        }
+      ]
+    },
+    {
+      "reason": "false positive",
+      "evidence": "local-launch-config.mjs:67-74: stat(tokenFile).isFile() then readFile().trim() validates a fixed child of the user-selected local data directory. Contents are not returned/logged or installed as auth; env receives literal local-file. This check does not assert ownership/permission or grant authority. A same-user replacement can disrupt launch but same owner already controls app configuration.",
+      "comment": "The stat/read pair validates availability of the local owner-configured credential file. No ownership authorization is based on stat and no token bytes are returned; only the literal local-file marker is exported. This is not an attacker-controlled privileged file access boundary.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 217,
+          "rule": "js/file-system-race",
+          "path": "scripts/lib/local-launch-config.mjs",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/box-exec-daemon/server.ts:288`; read 使用 lstat 拒绝末级符号链接、realpath 和 assertRealPathAllowed，随后 stat/readFile；检查确有安全意图，但需并发替换才绕过。既有静态 symlink 被拒绝，不应归为无校验路径注入。建议 open 后 fstat/稳定句柄读；父目录 race 需独立保证。",
+      "comment": "Do not dismiss: read 使用 lstat 拒绝末级符号链接、realpath 和 assertRealPathAllowed，随后 stat/readFile；检查确有安全意图，但需并发替换才绕过。既有静态 symlink 被拒绝，不应归为无校验路径注入。建议 open 后 fstat/稳定句柄读；父目录 race 需独立保证。",
+      "findings": [
+        {
+          "id": 219,
+          "rule": "js/file-system-race",
+          "path": "source/box-exec-daemon/server.ts",
+          "line": 288
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/electron-main/telemetry/desktop-structured-log-spill.ts:69`; 应用私有日志 spill 中 stat 大小再 read；主要为并发超大文件读/可用性风险，无低权限写者证据。建议按打开句柄限制读取字节；不要称远程泄露。",
+      "comment": "Do not dismiss: 应用私有日志 spill 中 stat 大小再 read；主要为并发超大文件读/可用性风险，无低权限写者证据。建议按打开句柄限制读取字节；不要称远程泄露。",
+      "findings": [
+        {
+          "id": 220,
+          "rule": "js/file-system-race",
+          "path": "source/electron-main/telemetry/desktop-structured-log-spill.ts",
+          "line": 69
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/agents/agent-avatar.ts:42`; resolveAvatarPathWithinDir 已验证 lexical+realpath containment；随后 stat/read 有替换窗口。copyFileSync 用 COPYFILE_EXCL。静态 symlink 越界被拒，需并发目录写权。",
+      "comment": "Do not dismiss: resolveAvatarPathWithinDir 已验证 lexical+realpath containment；随后 stat/read 有替换窗口。copyFileSync 用 COPYFILE_EXCL。静态 symlink 越界被拒，需并发目录写权。",
+      "findings": [
+        {
+          "id": 221,
+          "rule": "js/file-system-race",
+          "path": "source/host/agents/agent-avatar.ts",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/cloud-agents/cloud-agent-images.ts:4`; cloud-agent-images 先 containWithin（realpath）再 stat/read。静态路径越界拒绝；并发替换依赖 media store 写权；建议句柄上大小校验并复核实际路径。",
+      "comment": "Do not dismiss: cloud-agent-images 先 containWithin（realpath）再 stat/read。静态路径越界拒绝；并发替换依赖 media store 写权；建议句柄上大小校验并复核实际路径。",
+      "findings": [
+        {
+          "id": 222,
+          "rule": "js/file-system-race",
+          "path": "source/host/cloud-agents/cloud-agent-images.ts",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/connectors/channel-attachment.ts:8`; resolveChannelAttachment 明确支持 agent 输出 file:// 本地文件作为频道附件，没有限定某个存储目录的承诺。stat 用于 50MB 限制但 read 后不复核；应修复大小一致性，不能仅因任意路径判注入。",
+      "comment": "Do not dismiss: resolveChannelAttachment 明确支持 agent 输出 file:// 本地文件作为频道附件，没有限定某个存储目录的承诺。stat 用于 50MB 限制但 read 后不复核；应修复大小一致性，不能仅因任意路径判注入。",
+      "findings": [
+        {
+          "id": 223,
+          "rule": "js/file-system-race",
+          "path": "source/host/connectors/channel-attachment.ts",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/attachments/box-staging.ts:24`; stageAttachmentsIntoBox 使用 resolveOwnerDir 的 lexical agents/<safe-id>/(attachments|assets) 归属检查，随后 stat/read。预置目录内 symlink 可读取边界外文件；无须竞态。入口 stageIntoBox。修复为 containWithin 所属 media roots + 句柄校验。是否可被低信任 agent 写入宿主目录仍需运行时证据。",
+      "comment": "Do not dismiss: stageAttachmentsIntoBox 使用 resolveOwnerDir 的 lexical agents/<safe-id>/(attachments|assets) 归属检查，随后 stat/read。预置目录内 symlink 可读取边界外文件；无须竞态。入口 stageIntoBox。修复为 containWithin 所属 media roots + 句柄校验。是否可被低信任 agent 写入宿主目录仍需运行时证据。",
+      "residual": "Real-path validation rejects pre-existing symlinks. Concurrent replacement between validation and use remains outside this fix; do not dismiss a continuing race finding solely because static containment is fixed.",
+      "findings": [
+        {
+          "id": 224,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/box-staging.ts",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/extensions/attachments/attachments-service.ts:194`; ingestAttachment 设计就是导入用户指定绝对路径；stat→read 后 ingestAttachmentBytes 再校验 byteLength，避免绕过最终内容大小限制。无证据需限定来源 root；该条可作为设计允许文件访问降噪，但大文件预分配风险仍在。",
+      "comment": "Do not dismiss: ingestAttachment 设计就是导入用户指定绝对路径；stat→read 后 ingestAttachmentBytes 再校验 byteLength，避免绕过最终内容大小限制。无证据需限定来源 root；该条可作为设计允许文件访问降噪，但大文件预分配风险仍在。",
+      "findings": [
+        {
+          "id": 225,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 194
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/attachments/attachments-service.ts:205`; readHostAttachmentVideoBytes 仅 lexical getSandRootDir 边界，已存在 symlink 即能返回外部文件（伪装 .mp4）。不要与用户明确导入任意文件的 ingest 混淆。",
+      "comment": "Do not dismiss: readHostAttachmentVideoBytes 仅 lexical getSandRootDir 边界，已存在 symlink 即能返回外部文件（伪装 .mp4）。不要与用户明确导入任意文件的 ingest 混淆。",
+      "residual": "Real-path validation rejects pre-existing symlinks. Concurrent replacement between validation and use remains outside this fix; do not dismiss a continuing race finding solely because static containment is fixed.",
+      "findings": [
+        {
+          "id": 226,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 205
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/attachments/attachments-service.ts:210`; readHostAttachmentChunk lexical attachments/assets 检查后 stat/open，静态 symlink 绕过存储边界。建议 containWithin + open/fstat + bounded handle read。",
+      "comment": "Do not dismiss: readHostAttachmentChunk lexical attachments/assets 检查后 stat/open，静态 symlink 绕过存储边界。建议 containWithin + open/fstat + bounded handle read。",
+      "residual": "Real-path validation rejects pre-existing symlinks. Concurrent replacement between validation and use remains outside this fix; do not dismiss a continuing race finding solely because static containment is fixed.",
+      "findings": [
+        {
+          "id": 227,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 210
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/attachments/attachments-service.ts:217`; readAttachmentText lexical attachments 检查后 stat/open，link.txt 指向外部文本即可返回外部内容。建议 containWithin + open/fstat。",
+      "comment": "Do not dismiss: readAttachmentText lexical attachments 检查后 stat/open，link.txt 指向外部文本即可返回外部内容。建议 containWithin + open/fstat。",
+      "residual": "Real-path validation rejects pre-existing symlinks. Concurrent replacement between validation and use remains outside this fix; do not dismiss a continuing race finding solely because static containment is fixed.",
+      "findings": [
+        {
+          "id": 228,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/attachments/attachments-service.ts",
+          "line": 217
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/extensions/box-store-sync/store-db-snapshot-upload.ts:94`; snapshot uploader 对已捕获 snapshotPath stat 计大小再 read/hash；需 snapshot 可被并发写者替换才产生差异。需核实 snapshot 私有目录所有者，不以理论 race 直接宣称跨权限攻击。",
+      "comment": "Do not dismiss: snapshot uploader 对已捕获 snapshotPath stat 计大小再 read/hash；需 snapshot 可被并发写者替换才产生差异。需核实 snapshot 私有目录所有者，不以理论 race 直接宣称跨权限攻击。",
+      "findings": [
+        {
+          "id": 229,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/box-store-sync/store-db-snapshot-upload.ts",
+          "line": 94
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/inference/provider-session.ts:265`; codexCredentials 明确要求 private direct regular file，但 lstat(path) 后 readFile(path) 重新寻址，可被并发替换绕过这一声明。CODEX_HOME 是启动配置，不是远程路径；建议 open O_NOFOLLOW + fstat 模式/文件类型后从同一 fd 读取，Windows 需兼容处理。",
+      "comment": "Do not dismiss: codexCredentials 明确要求 private direct regular file，但 lstat(path) 后 readFile(path) 重新寻址，可被并发替换绕过这一声明。CODEX_HOME 是启动配置，不是远程路径；建议 open O_NOFOLLOW + fstat 模式/文件类型后从同一 fd 读取，Windows 需兼容处理。",
+      "findings": [
+        {
+          "id": 230,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 265
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/host/extensions/transcript/inline-image-materialization.ts:27`; inline image 哈希命名，existsSync 后 write；并发 materialize 同内容主要是重复写。目录可被攻击者写时，悬空符号链接会令 exists 返回 false 后写向链接目标。建议 exclusive wx 创建并将 EEXIST 视为已存在；需保留低信任写权限待证限制。",
+      "comment": "Do not dismiss: inline image 哈希命名，existsSync 后 write；并发 materialize 同内容主要是重复写。目录可被攻击者写时，悬空符号链接会令 exists 返回 false 后写向链接目标。建议 exclusive wx 创建并将 EEXIST 视为已存在；需保留低信任写权限待证限制。",
+      "findings": [
+        {
+          "id": 231,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/transcript/inline-image-materialization.ts",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/extensions/webauthn-proxy/webauthn-proxy-marker.ts:16`; /tmp webauthn marker exists→write/unlink，固定路径直写可跟随预置 symlink；建议安全原子替换 marker，保持外部读取契约。容器同 UID 可写并不自动构成提权。",
+      "comment": "Do not dismiss: /tmp webauthn marker exists→write/unlink，固定路径直写可跟随预置 symlink；建议安全原子替换 marker，保持外部读取契约。容器同 UID 可写并不自动构成提权。",
+      "findings": [
+        {
+          "id": 232,
+          "rule": "js/file-system-race",
+          "path": "source/host/extensions/webauthn-proxy/webauthn-proxy-marker.ts",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "implemented boundary or correctness fix",
+      "evidence": "`js/file-system-race` `source/host/transcript-mirror/transcript-mirror.ts:36`; transcript initialize stat 后 open，文件写 lane 只保护进程内操作；外部并发写可能改变文件。建议同 fd fstat/read，使日志完整性一致；无部署权限攻击证据。",
+      "comment": "Read the transcript size and tail through the same opened handle.",
+      "findings": [
+        {
+          "id": 233,
+          "rule": "js/file-system-race",
+          "path": "source/host/transcript-mirror/transcript-mirror.ts",
+          "line": 36
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/host/transcript-mirror/transcript-mirror.ts:37`; appendPending 验证 path 的 dev/ino/size 后重新 open r+，导致 WAL 保护可在外部替换后作用于另一个文件。应 open 后先 fstat 匹配 pending identity 再 truncate/write。该修复是日志正确性，不需宣称远程漏洞。",
+      "comment": "Do not dismiss: appendPending 验证 path 的 dev/ino/size 后重新 open r+，导致 WAL 保护可在外部替换后作用于另一个文件。应 open 后先 fstat 匹配 pending identity 再 truncate/write。该修复是日志正确性，不需宣称远程漏洞。",
+      "findings": [
+        {
+          "id": 234,
+          "rule": "js/file-system-race",
+          "path": "source/host/transcript-mirror/transcript-mirror.ts",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/packages/agent-store-sync/path-sync-request.ts:149`; path-sync-request lstat 拒绝 symlink 后 readFile；既有安全意图，但检查与读取分离。需 requests 目录并发写权限；建议 same-fd nofollow regular read。",
+      "comment": "Do not dismiss: path-sync-request lstat 拒绝 symlink 后 readFile；既有安全意图，但检查与读取分离。需 requests 目录并发写权限；建议 same-fd nofollow regular read。",
+      "findings": [
+        {
+          "id": 235,
+          "rule": "js/file-system-race",
+          "path": "source/packages/agent-store-sync/path-sync-request.ts",
+          "line": 149
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/packages/agent-store-sync/path-sync-request.ts:196`; inspectPathSyncRequest 同上；requestPath 应继续校验 requestId。避免把同步请求本身的可写性当成整个主机已可信。",
+      "comment": "Do not dismiss: inspectPathSyncRequest 同上；requestPath 应继续校验 requestId。避免把同步请求本身的可写性当成整个主机已可信。",
+      "findings": [
+        {
+          "id": 236,
+          "rule": "js/file-system-race",
+          "path": "source/packages/agent-store-sync/path-sync-request.ts",
+          "line": 196
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/packages/cursor-plugins/loader.ts:93`; plugin hooks 显式 isPathSafe、isSymlink、stat、checkFileSize 后 read；静态末级 symlink 拒绝但祖先 symlink 和 TOCTOU 需保留。第三方插件安装目录可写性/安装验证尚待确认；建议统一 safe plugin reader。",
+      "comment": "Do not dismiss: plugin hooks 显式 isPathSafe、isSymlink、stat、checkFileSize 后 read；静态末级 symlink 拒绝但祖先 symlink 和 TOCTOU 需保留。第三方插件安装目录可写性/安装验证尚待确认；建议统一 safe plugin reader。",
+      "findings": [
+        {
+          "id": 237,
+          "rule": "js/file-system-race",
+          "path": "source/packages/cursor-plugins/loader.ts",
+          "line": 93
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/packages/local-exec/background-shell-observability.ts:509`; background terminal 文件两次 open（r+ 与 a）可能指向不同 inode，影响前端内容/追加一致性；shellId 从调用者来但本条非 path taint。需外部目录写者；建议共享 fd/核对 identity。",
+      "comment": "Do not dismiss: background terminal 文件两次 open（r+ 与 a）可能指向不同 inode，影响前端内容/追加一致性；shellId 从调用者来但本条非 path taint。需外部目录写者；建议共享 fd/核对 identity。",
+      "findings": [
+        {
+          "id": 238,
+          "rule": "js/file-system-race",
+          "path": "source/packages/local-exec/background-shell-observability.ts",
+          "line": 509
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": "necessary correctness or boundary fix",
+      "evidence": "`js/file-system-race` `source/shared/node/inference-router-local.ts:34`; hasUsableCodexLogin 与 #230 一样用 lstat 检查权限再重开读取，应统一安全凭据读取 helper；仅返回状态，但不要将失效权限检查当误报。",
+      "comment": "Do not dismiss: hasUsableCodexLogin 与 #230 一样用 lstat 检查权限再重开读取，应统一安全凭据读取 helper；仅返回状态，但不要将失效权限检查当误报。",
+      "findings": [
+        {
+          "id": 239,
+          "rule": "js/file-system-race",
+          "path": "source/shared/node/inference-router-local.ts",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/file-system-race` `source/shared/node/local-admin-intercept.ts:26`; local-intercept rotate stat 仅检查是否达到截断阈值，read 不是由该检查授予权限；没有低信任路径来源（SAND_DATA_ROOT 启动配置）。可按非安全相关 size check 降噪；固定 pid 临时写独立值得改 wx/random。",
+      "comment": "The stat is a log-rotation size threshold, not a security authorization check. Both operations use the operator-configured local log path.",
+      "findings": [
+        {
+          "id": 240,
+          "rule": "js/file-system-race",
+          "path": "source/shared/node/local-admin-intercept.ts",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "disposition": "retain",
+      "reason": "insufficient trust-boundary evidence or optional hardening",
+      "evidence": "`js/file-system-race` `source/shared/node/mcp/local-mcp-servers.ts:46`; MCP migration 从 legacy config lstat regular→read→rename，privateDir 已 0700，shared 0755，容器只读映射契约；需本地主目录写权。可优先不改但不将 lstat 识别为绝对防护。",
+      "comment": "Do not dismiss: MCP migration 从 legacy config lstat regular→read→rename，privateDir 已 0700，shared 0755，容器只读映射契约；需本地主目录写权。可优先不改但不将 lstat 识别为绝对防护。",
+      "findings": [
+        {
+          "id": 241,
+          "rule": "js/file-system-race",
+          "path": "source/shared/node/mcp/local-mcp-servers.ts",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": "`js/file-system-race` `source/shared/node/mcp/local-mcp-servers.ts:50`; initialized 文件在 privateDir 0700 中，writeFileSync 使用 flag wx；存在性检查不是唯一保护，底层 O_EXCL 已避免覆盖。误报可 dismiss。",
+      "comment": "The marker is in a private directory and the write uses exclusive wx creation; the exists check cannot permit overwriting an existing file.",
+      "findings": [
+        {
+          "id": 242,
+          "rule": "js/file-system-race",
+          "path": "source/shared/node/mcp/local-mcp-servers.ts",
+          "line": 50
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "action-audit-outbox.test.mjs:23-38 mkdtemp fixture and synthetic echo records; :108-120 intentionally fails a flush, confirms received absent, removes own blocker directory, retries, then reads result.",
+      "comment": "The alert is in a regression test that deliberately changes filesystem state between assertions while exercising outbox recovery. Both paths belong to its private mkdtemp fixture and contain synthetic records.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 243,
+          "rule": "js/file-system-race",
+          "path": "tests/action-audit-outbox.test.mjs",
+          "line": 120
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "local-docker-seed-script.test.mjs:12/17 private mkdtemp fixtures; :41-46 compares bytes/inode for no-op update; :53-58 compares original bytes after rejected malformed settings; :123-129 tests directory-write failure retention. Stat results are asserted metadata, not access decisions.",
+      "comment": "The test intentionally compares file bytes and stat metadata before/after seed operations in fresh mkdtemp fixtures. These are preservation assertions using synthetic settings, not production authorization checks.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 244,
+          "rule": "js/file-system-race",
+          "path": "tests/local-docker-seed-script.test.mjs",
+          "line": 42
+        },
+        {
+          "id": 245,
+          "rule": "js/file-system-race",
+          "path": "tests/local-docker-seed-script.test.mjs",
+          "line": 44
+        },
+        {
+          "id": 246,
+          "rule": "js/file-system-race",
+          "path": "tests/local-docker-seed-script.test.mjs",
+          "line": 55
+        },
+        {
+          "id": 247,
+          "rule": "js/file-system-race",
+          "path": "tests/local-docker-seed-script.test.mjs",
+          "line": 127
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "research-archives.test.mjs:24-52 fixed tracked archive manifest; :37 restricts artifact path; :42 checks prefix; :43-47 checks regular non-symlink then parses Git LFS pointer, or :51-52 hashes complete artifact. This is a read-only test of repository-owned artifacts.",
+      "comment": "This read-only archival integrity test checks repository-owned files/LFS pointers and verifies pinned metadata. The stat/read sequence is a test assertion, not a privileged filesystem authorization boundary.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 248,
+          "rule": "js/file-system-race",
+          "path": "tests/research-archives.test.mjs",
+          "line": 47
+        }
+      ]
+    },
+    {
+      "reason": "used in tests",
+      "evidence": "session-sync-activity.test.mjs:13 private mkdtemp; :21-40 fixed activity file. After asserting 0600/0700, it opens prior inode deliberately to verify atomic replacement retains old content while new path updates.",
+      "comment": "The test deliberately opens the old inode after permission assertions to verify atomic file replacement behavior. It runs in a fresh mkdtemp fixture and does not authorize any external file access.",
+      "disposition": "dismiss",
+      "findings": [
+        {
+          "id": 249,
+          "rule": "js/file-system-race",
+          "path": "tests/session-sync-activity.test.mjs",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/box-exec-daemon/server.ts:183-194",
+        "source/box-exec-daemon/server.ts:525"
+      ],
+      "comment": "The reported sink deletes an existing environment key obtained through Object.keys(this.#environment). Deletion does not invoke a prototype setter or create attacker-controlled properties. This operation belongs to the daemon's explicit environment-update API, behind its bearer-token check. The reported data flow does not establish an authorization bypass.",
+      "findings": [
+        {
+          "id": 250,
+          "rule": "js/remote-property-injection",
+          "path": "source/box-exec-daemon/server.ts",
+          "line": 188
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/electron-main/onepassword/onepassword-provisioning-bridge.ts:25",
+        "SARIF source: process.env"
+      ],
+      "comment": "The analyzed source is process.env. Its string values are copied into a subprocess environment after OP_* keys are removed, and the required OP_* settings are then explicitly assigned. A string assigned to __proto__ does not replace an object's prototype. No object-valued input reaches the reported setter through this flow.",
+      "findings": [
+        {
+          "id": 251,
+          "rule": "js/remote-property-injection",
+          "path": "source/electron-main/onepassword/onepassword-provisioning-bridge.ts",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/electron-main/secrets/secret-store.ts:170-179"
+      ],
+      "comment": "The persisted JSON is filtered before assignment: only entries whose values have typeof value === 'string' are copied into the secret-name dictionary. Object-valued input is discarded, so the reported __proto__ assignment cannot replace the dictionary prototype. This conclusion relies on the value check, not on assuming that local files are trusted.",
+      "findings": [
+        {
+          "id": 252,
+          "rule": "js/remote-property-injection",
+          "path": "source/electron-main/secrets/secret-store.ts",
+          "line": 177
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/electron-main/telemetry/desktop-structured-log-spill.ts:34-42"
+      ],
+      "comment": "The spill parser rejects metadata containing any non-string value before copying it. This blocks object-valued prototype replacement at the reported assignment. The surrounding parser also validates record shape, event fields and counters. The dismissal concerns this property-injection flow only.",
+      "findings": [
+        {
+          "id": 253,
+          "rule": "js/remote-property-injection",
+          "path": "source/electron-main/telemetry/desktop-structured-log-spill.ts",
+          "line": 41
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": null,
+      "evidence": [
+        "source/host/extensions/source-map/source-map-service.ts:12-50",
+        "tests/codeql-dictionary-boundaries.test.mjs",
+        "Read-only production-parser reproduction: __proto__ became the result dictionary prototype"
+      ],
+      "comment": "Confirmed local dictionary prototype replacement and inherited-property lookup through persisted source-map keys. Repair uses dictionaries without a prototype for parsed entries and missing/invalid-file recovery, preserving subsequent getOrCreate/setMode mutations. Integration tests cover __proto__, constructor, ordinary IDs and persistence. Cross-privilege exploitation and global Object.prototype pollution were not demonstrated.",
+      "findings": [
+        {
+          "id": 254,
+          "rule": "js/remote-property-injection",
+          "path": "source/host/extensions/source-map/source-map-service.ts",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/packages/cursor-plugins/loader.ts:87-95",
+        "source/packages/hooks/validators/hooksConfig.ts:18-24",
+        "Production validator rejects hooks.__proto__ as Unknown hook type"
+      ],
+      "comment": "Hook configuration is passed through validateHooksConfig before expandHooksConfigVariables. Every hook name must be included in Object.values(HookStep); __proto__ and other unknown names cause validation failure and do not reach the reported write. This allowlist was verified using the production validator.",
+      "findings": [
+        {
+          "id": 255,
+          "rule": "js/remote-property-injection",
+          "path": "source/packages/cursor-plugins/loader.ts",
+          "line": 87
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/packages/shell-exec/ripgrep.ts:3-11",
+        "source/packages/shell-exec/ripgrep.ts:19-29"
+      ],
+      "comment": "The reported sink deletes duplicate PATH case variants. Its condition requires key.toLowerCase() === 'path', and the selected replacement key is derived from the same restriction. The flow cannot target a prototype-special key or create an arbitrary property.",
+      "findings": [
+        {
+          "id": 256,
+          "rule": "js/remote-property-injection",
+          "path": "source/packages/shell-exec/ripgrep.ts",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/packages/shell-exec/sandbox/policy-file.ts:10-16",
+        "source/packages/shell-exec/sandbox/policy-readonly.ts:3-11",
+        "source/packages/shell-exec/sandbox/hardcoded-policy.ts:58-85",
+        "Both SARIF flows originate at CURSOR_SANDBOX_POLICY_DIR"
+      ],
+      "comment": "Both reported flows start at CURSOR_SANDBOX_POLICY_DIR and pass through path.resolve before the policy directory is added to the read-only mapping. The resulting key, or its directory portion, is an absolute filesystem path and cannot equal __proto__ or constructor. This judgment covers the reported normalized-directory flows, not every possible direct invocation of convertPathsToIgnoreMapping.",
+      "findings": [
+        {
+          "id": 257,
+          "rule": "js/remote-property-injection",
+          "path": "source/packages/shell-exec/sandbox/hardcoded-policy.ts",
+          "line": 69
+        },
+        {
+          "id": 258,
+          "rule": "js/remote-property-injection",
+          "path": "source/packages/shell-exec/sandbox/hardcoded-policy.ts",
+          "line": 77
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/shared/node/box-secrets-store.ts:21-31"
+      ],
+      "comment": "parseBoxSecretsSnapshot validates the persisted version and secrets object, then returns null if any value is not a string. Only strings can reach the dictionary assignment, so object-valued prototype replacement is blocked. The conclusion is based on the parser's value restriction, regardless of where the JSON file originated.",
+      "findings": [
+        {
+          "id": 259,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/node/box-secrets-store.ts",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/shared/node/mcp/builtin-mcp.ts:58-75"
+      ],
+      "comment": "buildBoxComputerEnv copies a value only when typeof value === 'string', then applies the explicit runtime environment settings. An object value cannot reach the reported __proto__ setter through this loop. Dynamic environment names are the intended dictionary data.",
+      "findings": [
+        {
+          "id": 260,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/node/mcp/builtin-mcp.ts",
+          "line": 64
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": null,
+      "evidence": [
+        "source/shared/node/mcp/local-mcp-servers.ts:76-89",
+        "source/shared/node/mcp/local-mcp-servers.ts:133-148",
+        "source/shared/node/mcp/mcp-definition-source.ts",
+        "tests/codeql-dictionary-boundaries.test.mjs",
+        "tests/local-mcp-config-file.test.mjs"
+      ],
+      "comment": "Confirmed that a valid server named __proto__ replaced the parsed dictionary prototype and disappeared from enumeration. Repair covers parsed and empty editable dictionaries plus downstream runtime-definition copies and own-property queries. Production-function tests verify file persistence, subsequent updates, stdio definitions and HTTP definitions for special names. The configuration already authorizes MCP commands/endpoints; an additional privilege escalation was not demonstrated.",
+      "findings": [
+        {
+          "id": 261,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/node/mcp/local-mcp-servers.ts",
+          "line": 87
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/shared/node/settings/sand-settings-store.ts:39-43",
+        "source/shared/node/settings/sand-settings-store.ts:46-60"
+      ],
+      "comment": "stringMap copies only string-valued entries before custom-instruction normalization. Object values cannot reach this assignment, and a string __proto__ value does not change the result prototype. The reported flow writes instruction-map data rather than overriding fixed authorization options.",
+      "findings": [
+        {
+          "id": 262,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/node/settings/sand-settings-store.ts",
+          "line": 39
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/shared/node/settings/sand-settings-store.ts:69",
+        "source/shared/node/settings/sand-settings-store.ts:166-176",
+        "source/shared/inference-router.ts:1-19"
+      ],
+      "comment": "The persisted provider value is accepted only through isSandInferenceProvider's five-value allowlist. The reported sink also uses a computed property in an object literal, which creates an own data property instead of invoking the legacy __proto__ setter. The analyzed flow does not support arbitrary prototype injection.",
+      "findings": [
+        {
+          "id": 263,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/node/settings/sand-settings-store.ts",
+          "line": 176
+        }
+      ]
+    },
+    {
+      "disposition": "repair",
+      "reason": null,
+      "evidence": [
+        "source/shared/workflow-model.ts:12-18",
+        "tests/codeql-dictionary-boundaries.test.mjs",
+        "Read-only production-parser reproduction: name and trigger inherited from __proto__ frontmatter while Object.hasOwn(data, 'name') was false"
+      ],
+      "comment": "The frontmatter parser's nested dictionary assignment allowed __proto__ to replace a dictionary prototype, after which workflow name/trigger/source reads could consume inherited fields. Repair uses dictionaries without a prototype throughout root, nested and fallback parsing. Production tests preserve legitimate __proto__/constructor metadata through serialization while rejecting inherited workflow scheduling fields. The confirmed effect is local dictionary corruption; global Object.prototype pollution or cross-privilege execution was not demonstrated.",
+      "findings": [
+        {
+          "id": 264,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/workflow-model.ts",
+          "line": 12
+        },
+        {
+          "id": 265,
+          "rule": "js/remote-property-injection",
+          "path": "source/shared/workflow-model.ts",
+          "line": 12
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "scripts/windows-local-launch.mjs:183-190"
+      ],
+      "comment": "This is the intended local Docker gateway health-authentication request. The launcher reads the token from the selected dataRoot/local-docker-vm.json, requires a string of at least 32 characters, and sends only a Bearer header to the code-defined http://127.0.0.1:1340/health endpoint with a two-second timeout. The file does not supply the request destination or arbitrary upload content.",
+      "findings": [
+        {
+          "id": 266,
+          "rule": "js/file-access-to-http",
+          "path": "scripts/windows-local-launch.mjs",
+          "line": 189
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/electron-main/box/local-docker-host-connector.ts:292-313"
+      ],
+      "comment": "readOrCreateToken reads the gateway credential or generates it using randomBytes and persists it with mode 0600. gatewayReady uses that credential only as a Bearer header for the constant LOCAL_DOCKER_GATEWAY_URL health endpoint. This is the designed credential-authentication flow, with no response-controlled or file-controlled destination in the reported path.",
+      "findings": [
+        {
+          "id": 267,
+          "rule": "js/file-access-to-http",
+          "path": "source/electron-main/box/local-docker-host-connector.ts",
+          "line": 308
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/electron-main/dev/dev-controls-window.ts:23-25",
+        "source/electron-main/dev/dev-controls-window.ts:71-76",
+        "source/electron-main/dev/dev-host-upgrade-poke.ts:27-49",
+        "source/electron-dev-controls/main.ts:113"
+      ],
+      "comment": "The developer-control application intentionally reads its configured gateway token and authorizes an updateHostNow request to the selected gateway. SAND_HOST_GATEWAY_URL is process-startup configuration and may designate a remote gateway; the reviewed flow does not expose destination selection to a lower-trust network request. This dismissal records the intended maintenance function and does not assume every local-file-to-network transfer is safe.",
+      "findings": [
+        {
+          "id": 268,
+          "rule": "js/file-access-to-http",
+          "path": "source/electron-main/dev/dev-host-upgrade-poke.ts",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/electron-main/dev/dev-box-recreate-plane.ts:39-58",
+        "source/electron-main/dev/dev-box-recreate-plane.ts:168-186",
+        "source/electron-main/dev/dev-controls-gate.ts:2"
+      ],
+      "comment": "This request authenticates the snapshot operation before a developer box is recreated. The configuration factory rejects packaged mode, requires the control-plane settings, and restricts the gateway hostname to 127.0.0.1 or localhost. The credential is intentionally read from the corresponding gateway configuration and placed in Authorization for snapshotBoxStoreNow.",
+      "findings": [
+        {
+          "id": 269,
+          "rule": "js/file-access-to-http",
+          "path": "source/electron-main/dev/dev-box-recreate-plane.ts",
+          "line": 184
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/electron-main/dev/dev-controls-window.ts:23-25",
+        "source/electron-main/dev/dev-controls-window.ts:71-76",
+        "source/electron-main/dev/dev-controls-window.ts:120-129",
+        "source/electron-dev-controls/main.ts:113"
+      ],
+      "comment": "The developer-control snapshot action uses the configured gateway's token as an Authorization header. The destination is selected by startup SAND_HOST_GATEWAY_URL configuration; it is not claimed to be universally loopback-only. The reviewed flow intentionally authenticates the selected gateway and does not upload unrelated file contents or accept a request-supplied destination.",
+      "findings": [
+        {
+          "id": 270,
+          "rule": "js/file-access-to-http",
+          "path": "source/electron-main/dev/dev-controls-window.ts",
+          "line": 124
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/host/local-exec/local-exec-daemon.ts:23-33",
+        "source/node-agent-coordinator/local-exec/supervisor.ts:145-152",
+        "source/node-agent-coordinator/local-exec/daemon-files.ts:75-84",
+        "source/electron-main/coordinator/coordinator-executors.ts:476-478"
+      ],
+      "comment": "The coordinator obtains a dedicated local-exec daemon credential from the connector and persists the handoff through the private credential-file writer. The daemon intentionally exchanges that credential at the paired backendUrl's fixed /sand-box/local-exec-connection endpoint; the request body contains the credential only. This is a purpose-specific credential exchange, not arbitrary file upload. Backend identity and URL policy require separate review if another flow reports them.",
+      "findings": [
+        {
+          "id": 271,
+          "rule": "js/file-access-to-http",
+          "path": "source/host/local-exec/local-exec-daemon.ts",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": [
+        "source/box-exec-daemon/smoke.ts:14-25",
+        "source/box-exec-daemon/smoke.ts:37-53",
+        "source/box-exec-daemon/smoke.ts:99-114"
+      ],
+      "comment": "This is the command-line smoke program's empty-command usage check. Its purpose is to execute the supplied diagnostic command over the real daemon protocol. A non-empty command still requires the Bearer token and uses the fixed in-box 127.0.0.1:1337 endpoint; missing credentials throw. The usage branch is not an authentication decision.",
+      "findings": [
+        {
+          "id": 273,
+          "rule": "js/user-controlled-bypass",
+          "path": "source/box-exec-daemon/smoke.ts",
+          "line": 101
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/electron-main/account/cursor-auth.ts:213-227",
+        "source/electron-main/account/cursor-auth.ts:319-327",
+        "source/shared/node/local-admin.ts:5-7",
+        "source/shared/node/local-admin.ts:43-51"
+      ],
+      "comment": "SAND_LOCAL_ADMIN=1 deliberately selects the application's local-account mode through process startup configuration. The login branch creates local status using an alg:none token with a .local marker, while credential-revocation and operation-epoch handling remain active. This branch does not demonstrate that a production backend accepts the local token, and no HTTP request parameter controls the mode in the reported flow.",
+      "findings": [
+        {
+          "id": 274,
+          "rule": "js/user-controlled-bypass",
+          "path": "source/electron-main/account/cursor-auth.ts",
+          "line": 320
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "evidence": [
+        "source/node-agent-coordinator/webauthn/signer.ts:55-66",
+        "source/node-agent-coordinator/main.ts:184-207",
+        "source/node-agent-coordinator/webauthn/provider.ts:75-90"
+      ],
+      "comment": "The condition tests availability of the optional WebAuthn signer executable. When absent, the provider is not started. When present, the constructed provider still requests desktop consent, rejects declined requests and only then invokes signer.sign. Selecting the executable through startup configuration does not bypass the consent check identified as the sensitive action.",
+      "findings": [
+        {
+          "id": 275,
+          "rule": "js/user-controlled-bypass",
+          "path": "source/node-agent-coordinator/main.ts",
+          "line": 186
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": [
+        "scripts/windows-package-smoke.mjs:122-139",
+        "scripts/windows-package-smoke.mjs:205-212"
+      ],
+      "comment": "The Windows package smoke test queries the loopback CDP endpoint advertised by the Electron process it launched, then JSON-serializes the observed targets to the test directory's fixed targets.json file. The network response affects diagnostic content only; it does not choose the output path or execute the saved data.",
+      "findings": [
+        {
+          "id": 276,
+          "rule": "js/http-to-file-access",
+          "path": "scripts/windows-package-smoke.mjs",
+          "line": 209
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/host/extensions/inference/provider-session.ts:283-309"
+      ],
+      "comment": "Credential refresh intentionally persists token strings returned by the fixed https://auth.openai.com/oauth/token endpoint. access_token is validated, optional refresh/id tokens are restricted to strings, and the existing credential path is replaced through a random temporary file created with wx and mode 0600. The response cannot determine the filesystem destination.",
+      "findings": [
+        {
+          "id": 277,
+          "rule": "js/http-to-file-access",
+          "path": "source/host/extensions/inference/provider-session.ts",
+          "line": 306
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/host/local-exec/local-exec-daemon.ts:23-33",
+        "source/host/local-exec/local-exec-daemon.ts:55-61",
+        "source/host/local-exec/local-exec-daemon-protocol.ts:50-65"
+      ],
+      "comment": "The daemon intentionally persists the backend's parsed connection descriptor for later reconnects. The response supplies connection data, while connectionPath is selected locally and writeLocalExecDaemonConnection applies mode 0600. Local tool permission, approval and supervisor-heartbeat checks remain in the execution path. The reported flow does not show a response-controlled write pathname.",
+      "findings": [
+        {
+          "id": 278,
+          "rule": "js/http-to-file-access",
+          "path": "source/host/local-exec/local-exec-daemon-protocol.ts",
+          "line": 54
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "won't fix",
+      "evidence": [
+        "source/packages/cursor-plugins/backend-marketplace-client.ts:160-190"
+      ],
+      "comment": "The plugin installer intentionally downloads a release asset to the fixed asset.tar.gz name inside a newly created temporary directory. The flow checks HTTPS/download hosts, enforces asset and extraction limits, and supports an expected SHA256 before installation. The reported sink saves download content; it does not use response data as the output filename. Archive traversal, symlink handling and redirect-policy findings remain separate review subjects.",
+      "findings": [
+        {
+          "id": 279,
+          "rule": "js/http-to-file-access",
+          "path": "source/packages/cursor-plugins/backend-marketplace-client.ts",
+          "line": 183
+        }
+      ]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "evidence": "publication-packaging.test.mjs:107 applies assert.match to JavaScript source text to require a literal upstream endpoint; it does not authorize a URL host.",
+      "comment": "This regex is a source-shape assertion in a packaging test, not a URL allowlist or request authorization check. Anchoring it to a hostname would break its intended source-text search.",
+      "findings": [
+        {
+          "id": 280,
+          "rule": "js/regex/missing-regexp-anchor",
+          "path": "tests/publication-packaging.test.mjs",
+          "line": 107
+        }
+      ]
+    }
+  ]
+}

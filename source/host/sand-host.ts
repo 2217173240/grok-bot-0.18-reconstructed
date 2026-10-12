@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { writeFileAtomic } from "../shared/node/atomic-write.js";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   commandErrorReportToTelemetry,
@@ -42,6 +43,9 @@ import {
 } from "./host-roster-bookkeeping.js";
 
 export const BOX_READY_STAGE_MARKER_PATH = "/tmp/sand-box-ready-stage";
+export async function writeBoxReadyStageMarker(id: string, path = BOX_READY_STAGE_MARKER_PATH): Promise<void> {
+  await writeFileAtomic(path, id);
+}
 export const BOX_READY_REPORT_ATTEMPTS = 3;
 export const BOX_READY_REPORT_RETRY_MS = 30_000;
 
@@ -772,9 +776,7 @@ export class SandHost {
       : optionalMethod(logs, "reportBoxBootStageConfirmed");
     if (reportConfirmed == null) return;
 
-    const writeMarker = this.runtime.writeReadyMarker ?? (async id => {
-      await writeFile(BOX_READY_STAGE_MARKER_PATH, id);
-    });
+    const writeMarker = this.runtime.writeReadyMarker ?? writeBoxReadyStageMarker;
     const wait = this.runtime.readyRetryDelay ?? (async milliseconds => {
       await delay(milliseconds);
     });

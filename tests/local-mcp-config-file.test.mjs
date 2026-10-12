@@ -6,6 +6,11 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
 
+function assertConfigData(actual, expected) {
+  assert.equal(Object.getPrototypeOf(actual.mcpServers), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(actual)), JSON.parse(JSON.stringify(expected)));
+}
+
 async function withConfig(callback) {
   const root = path.resolve(import.meta.dirname, "..");
   await mkdir(path.join(root, ".cache"), { recursive: true });
@@ -28,10 +33,10 @@ test("空目录中的旧配置迁移后，界面新增保留已有服务器", as
     assert.equal(await api.readLocalMcpServersConfig(directory), null);
     const writer = api.createLocalMcpServersFileWriter(directory);
     const { config } = await writer.getConfigForEdit();
-    assert.deepEqual(config, original);
+    assertConfigData(config, original);
     config.mcpServers.extra = { command: "python3" };
     await writer.setConfig(config);
-    assert.deepEqual(await api.readLocalMcpServersConfig(directory), config);
+    assertConfigData(await api.readLocalMcpServersConfig(directory), config);
     await assert.rejects(stat(legacy), { code: "ENOENT" });
     assert.equal((await stat(path.join(directory, "mcp-config"))).mode & 0o777, 0o700);
     assert.equal((await stat(path.join(directory, "mcp-config", "shared"))).mode & 0o777, 0o755);
@@ -48,7 +53,7 @@ test("初始化后的配置删除保持为空，旧文件保持原内容", async
     await writeFile(legacy, old);
     await rm(api.localMcpServersPath(directory));
     assert.equal(await api.readLocalMcpServersConfig(directory), null);
-    assert.deepEqual((await writer.getConfigForEdit()).config, { mcpServers: {} });
+    assertConfigData((await writer.getConfigForEdit()).config, { mcpServers: {} });
     assert.equal(await readFile(legacy, "utf8"), old);
     api.prepareLocalMcpPluginsDir(directory);
     assert.equal(await api.readLocalMcpServersConfig(directory), null);
@@ -149,8 +154,8 @@ test("真实 MCP 配置文件保留 HTTP headers，损坏内容禁止作为空�
     const configuration = { mcpServers: { endpoint: { url: "http://127.0.0.1:1234/mcp", headers: { "X-Workspace": "test" }, type: "http" } } };
     const writer = api.createLocalMcpServersFileWriter(directory);
     await writer.setConfig(configuration);
-    assert.deepEqual(await api.readLocalMcpServersConfig(directory), configuration);
-    assert.deepEqual((await writer.getConfigForEdit()).config, configuration);
+    assertConfigData(await api.readLocalMcpServersConfig(directory), configuration);
+    assertConfigData((await writer.getConfigForEdit()).config, configuration);
     const target = path.join(directory, "mcp-config", "shared", "mcp-servers.json");
     await writeFile(target, "{broken");
     await assert.rejects(api.readLocalMcpServersConfig(directory), /not valid JSON/);

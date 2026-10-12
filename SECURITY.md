@@ -63,6 +63,10 @@ require the existing runtime and packaging checks before merging.
 CodeQL is configured with the extended query suite and the remote-and-local
 threat model. Review completed analyses and findings in the repository's
 Security tab.
+The [CodeQL triage record](docs/security/CODEQL-TRIAGE.md) documents individual
+trust-boundary reviews, implemented corrections, and remaining concurrency
+findings. Dismissals apply to reviewed flows; production and test directories
+remain covered by the configured queries.
 Secret scanning and push protection supplement the CI Git-history scan and the
 publication checks for credential and browser-session paths. A passing scan
 describes the checks performed; runtime credentials remain outside the repository

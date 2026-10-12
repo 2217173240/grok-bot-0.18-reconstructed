@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { writeFileAtomic } from "../../../shared/node/atomic-write.js";
 
 export const UA_TOKEN_DISABLED_MARKER_PATH = "/tmp/sand-ua-token-disabled";
 
@@ -10,7 +11,7 @@ export function createUaTokenKillSwitchReconciler(options: { readonly path?: str
     const disabled = options.isKillSwitchEnabled();
     if (disabled === lastApplied) return;
     try {
-      if (disabled) await fs.writeFile(path, "1\n", { encoding: "utf8", mode: 0o644 });
+      if (disabled) await writeFileAtomic(path, "1\n", { mode: 0o644 });
       else await fs.rm(path, { force: true });
       lastApplied = disabled;
     } catch (error) { options.log(`ua-token kill-switch marker update failed: ${String(error)}`); }

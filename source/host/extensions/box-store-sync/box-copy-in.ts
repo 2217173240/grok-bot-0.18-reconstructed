@@ -1,4 +1,5 @@
-import { existsSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { writeFileAtomicSync } from "../../../shared/node/atomic-write.js";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -191,9 +192,7 @@ export function makeCopyInStatusWriter(
       return;
     lastWriteMs = timestamp;
     try {
-      const tempPath = `${path}.tmp`;
-      writeFileSync(tempPath, JSON.stringify(status));
-      renameSync(tempPath, path);
+      writeFileAtomicSync(path, JSON.stringify(status));
     } catch {}
   };
 }

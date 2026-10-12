@@ -80,7 +80,7 @@ export function parseLocalMcpServersConfig(raw: string): LocalMcpRuntimeConfig {
   if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed)) throw new Error(`${LOCAL_MCP_SERVERS_FILENAME} must contain an object.`);
   const source = Object.hasOwn(parsed as object, "mcpServers") ? (parsed as { mcpServers: unknown }).mcpServers : parsed;
   if (typeof source !== "object" || source == null || Array.isArray(source)) throw new Error(`${LOCAL_MCP_SERVERS_FILENAME} must map server names to configs.`);
-  const mcpServers: Record<string, LocalMcpServerConfig> = {};
+  const mcpServers: Record<string, LocalMcpServerConfig> = Object.create(null);
   for (const [name, value] of Object.entries(source as Record<string, unknown>)) {
     if (name.trim().length === 0) continue;
     const config = parseServerEntry(value);
@@ -134,14 +134,14 @@ export function createLocalMcpServersFileWriter(sandRootDir: string, deps: Local
   const readConfig = (): LocalMcpRuntimeConfig => {
     prepareLocalMcpPluginsDir(sandRootDir);
     try { return parseLocalMcpServersConfig(readFileImpl(localMcpServersPath(sandRootDir), "utf8")); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { mcpServers: {} };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { mcpServers: Object.create(null) };
       throw error;
     }
   };
   return {
     async getConfigForEdit() { return { config: readConfig(), serverIdsByName: {} as Readonly<Record<string, bigint>> }; },
     async setConfig(config: { mcpServers?: unknown }) {
-      const servers = typeof config.mcpServers === "object" && config.mcpServers != null ? config.mcpServers as Record<string, LocalMcpServerConfig> : {};
+      const servers = typeof config.mcpServers === "object" && config.mcpServers != null ? config.mcpServers as Record<string, LocalMcpServerConfig> : Object.create(null);
       const target = join(prepareLocalMcpPluginsDir(sandRootDir), LOCAL_MCP_SERVERS_FILENAME);
       const temporary = `${target}.${randomUUID()}.tmp`;
       writeFileImpl(temporary, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);

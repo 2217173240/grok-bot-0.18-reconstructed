@@ -10,8 +10,8 @@ export const BOX_STORE_SOURCE_KEY = "box-store";
 export function getSourceMapPath(): string { return join(getSandRootDir(), "source-map.json"); }
 
 function parseSourceMap(value: unknown): Record<string, SandSourceEntry> {
-  if (typeof value !== "object" || value == null || Array.isArray(value)) return {};
-  const result: Record<string, SandSourceEntry> = {};
+  if (typeof value !== "object" || value == null || Array.isArray(value)) return Object.create(null);
+  const result: Record<string, SandSourceEntry> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry !== "object" || entry == null) continue;
     const record = entry as Record<string, unknown>;
@@ -46,7 +46,7 @@ export class SandSourceMap {
   private async load(): Promise<Record<string, SandSourceEntry>> {
     if (this.cache != null) return this.cache;
     try { this.cache = parseSourceMap(JSON.parse(await fs.readFile(this.path, "utf8")) as unknown); }
-    catch { this.cache = {}; }
+    catch { this.cache = parseSourceMap(null); }
     return this.cache;
   }
   private async save(map: Record<string, SandSourceEntry>): Promise<void> {

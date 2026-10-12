@@ -1,5 +1,6 @@
-import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, lstat, mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { writeFileAtomic } from "../../../shared/node/atomic-write.js";
 import type { HostBundleSource } from "./host-bundle-source.js";
 import type { HostUpgradeMarker } from "./host-upgrade-marker.js";
 
@@ -20,7 +21,22 @@ export function buildSandSupervisorCommand(args: { id: string; kind: "upgrade"; 
 export function serializeSandSupervisorCommand(command: SandSupervisorUpgradeCommand): string { return JSON.stringify(command); }
 export function isSandHostUpgradeAvailable(current: string | null, target: string | null | undefined): boolean { return target != null && target.length > 0 && current !== target; }
 export async function readLocalHostVersion(versionPath = SAND_BOX_HOST_VERSION_PATH): Promise<string | null> { try { const raw = (await readFile(versionPath, "utf8")).trim(); return raw.length > 0 ? raw : null; } catch { return null; } }
-export async function stageHostBundleUpgrade(args: { version: string; bytes: Uint8Array; reason?: string; forceNow?: boolean; nowMs?: number; dir?: string; stagedBundlePath?: string; stagedBundlePartPath?: string; commandPath?: string; commandPartPath?: string }): Promise<SandSupervisorUpgradeCommand> { const dir = args.dir ?? SAND_SUPERVISOR_DIR, bundle = args.stagedBundlePath ?? SAND_SUPERVISOR_STAGED_BUNDLE_PATH, bundlePart = args.stagedBundlePartPath ?? SAND_SUPERVISOR_STAGED_BUNDLE_PART_PATH, commandPath = args.commandPath ?? SAND_SUPERVISOR_COMMAND_PATH, commandPart = args.commandPartPath ?? SAND_SUPERVISOR_COMMAND_PART_PATH, command = buildSandSupervisorCommand({ id: `upgrade-${args.version}`, kind: "upgrade", nowMs: args.nowMs ?? Date.now(), mode: "bundle", version: args.version, bundlePath: bundle, ...(args.reason === undefined ? {} : { reason: args.reason }), ...(args.forceNow === undefined ? {} : { forceNow: args.forceNow }) }); await mkdir(dir, { recursive: true }); await writeFile(bundlePart, args.bytes); await rename(bundlePart, bundle); await writeFile(commandPart, serializeSandSupervisorCommand(command)); await rename(commandPart, commandPath); return command; }
+export async function stageHostBundleUpgrade(args: { version: string; bytes: Uint8Array; reason?: string; forceNow?: boolean; nowMs?: number; dir?: string; stagedBundlePath?: string; stagedBundlePartPath?: string; commandPath?: string; commandPartPath?: string }): Promise<SandSupervisorUpgradeCommand> {
+  const dir = args.dir ?? SAND_SUPERVISOR_DIR,
+    bundle = args.stagedBundlePath ?? SAND_SUPERVISOR_STAGED_BUNDLE_PATH,
+    bundlePart = args.stagedBundlePartPath ?? SAND_SUPERVISOR_STAGED_BUNDLE_PART_PATH,
+    commandPath = args.commandPath ?? SAND_SUPERVISOR_COMMAND_PATH,
+    commandPart = args.commandPartPath ?? SAND_SUPERVISOR_COMMAND_PART_PATH;
+  for (const directory of new Set([dir, dirname(bundle), dirname(bundlePart), dirname(commandPath), dirname(commandPart)])) {
+    await mkdir(directory, { recursive: true });
+    const entry = await lstat(directory);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`Host upgrade directory must be a real directory: ${directory}`);
+  }
+  const command = buildSandSupervisorCommand({ id: `upgrade-${args.version}`, kind: "upgrade", nowMs: args.nowMs ?? Date.now(), mode: "bundle", version: args.version, bundlePath: bundle, ...(args.reason === undefined ? {} : { reason: args.reason }), ...(args.forceNow === undefined ? {} : { forceNow: args.forceNow }) });
+  await writeFileAtomic(bundle, args.bytes, { temporaryPathPrefix: bundlePart });
+  await writeFileAtomic(commandPath, serializeSandSupervisorCommand(command), { temporaryPathPrefix: commandPart });
+  return command;
+}
 export async function fetchStageAndReportHostBundle(deps: { source: HostBundleSource; fromVersion: string | null; trigger: string; state: HostBundleUpdateState; stage(bytes: Uint8Array): Promise<void>; reportUpgrade(metadata: Record<string, string | undefined>): void; log?(level: "info" | "warn", message: string): void }): Promise<{ ok: true } | { ok: false; error: unknown; phase: "fetch" | "stage" }> { let phase: "fetch" | "stage" = "fetch"; try { const bytes = await deps.source.loadBundleBytes(); phase = "stage"; await deps.stage(bytes); deps.state.stagedVersion = deps.source.version; deps.state.lastFailedVersion = undefined; deps.log?.("info", `host bundle update (${deps.trigger}): staged ${deps.source.version}; supervisor swaps when idle`); return { ok: true }; } catch (error) { deps.log?.("warn", `host bundle update (${deps.trigger}): ${phase} failed (box unchanged): ${String(error)}`); if (deps.state.lastFailedVersion !== deps.source.version) { deps.state.lastFailedVersion = deps.source.version; deps.reportUpgrade({ outcome: "failed", phase, mode: "bundle", trigger: deps.trigger, from_version: deps.fromVersion ?? undefined, to_version: deps.source.version, error_class: error instanceof Error ? error.constructor.name : "unknown" }); } return { ok: false, error, phase }; } }
 export async function isHostVersionSwapVetoed(args: { version: string; localVersion: string | null; acksDir?: string }): Promise<boolean> { if (!args.version || args.localVersion === args.version) return false; const ackName = `upgrade-${args.version}`.replace(/[^a-zA-Z0-9_.-]/g, "_"); try { await access(join(args.acksDir ?? SAND_SUPERVISOR_ACKS_DIR, ackName)); return true; } catch { return false; } }
 export function noteFailedSwapMarkerForRetry(state: HostBundleUpdateState, marker: HostUpgradeMarker, maxRetries = MAX_FAILED_SWAP_RESTAGE_RETRIES): boolean { if (marker.outcome !== "failed" || marker.mode !== "bundle" || !marker.toVersion || marker.swapError === POST_SWAP_CRASH_LOOP_ERROR_CLASS || state.stagedVersion !== marker.toVersion) return false; const attempts = state.swapRetryAttempts.get(marker.toVersion) ?? 0; if (attempts >= maxRetries) return false; state.swapRetryAttempts.set(marker.toVersion, attempts + 1); state.stagedVersion = null; return true; }
