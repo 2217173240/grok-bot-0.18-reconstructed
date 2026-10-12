@@ -20,6 +20,8 @@ Windows 使用原生 Electron 界面和本机 Docker CLI；Docker Desktop/WSL2 �
 
 不需要给容器 host-lock 或 Claude Linux 进程组添加 Windows 实现。宿主 local-exec 的原生服务仍需核对 Windows 进程管理；不得把它变成 Windows agent 回合入口。官方远端、更新与遥测保护保持有效。
 
+Windows 所属进程关闭始终保留已验证的进程句柄。若 `HasExited` 检查与 `Kill()` 之间发生退出，清理逻辑仅在同一句柄于 5 秒内确认退出后继续；进程仍存活或无法确认退出时保留失败。Windows CI 覆盖真实后代进程并发退出、全部所属进程结束及无关进程继续存活。
+
 ## 官方实践与项目应用
 
 - Electron 支持共用 JavaScript 界面与业务模块，但原生 `.node`/DLL 需要匹配操作系统、CPU 和 Electron ABI。复用平台适配后的源码构建，分别验证 Windows 和 Mac 原生依赖加载。[Electron 原生模块](https://www.electronjs.org/docs/latest/tutorial/using-native-node-modules)
