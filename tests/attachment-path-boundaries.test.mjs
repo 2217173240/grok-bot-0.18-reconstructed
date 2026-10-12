@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -35,7 +35,7 @@ test("attachment storage boundaries reject pre-existing symlink escapes", async 
     const outfile = path.join(dir, "attachments.mjs");
     await build({
       stdin: {
-        contents: 'export * from "./source/host/extensions/attachments/attachments-service.ts"; export * from "./source/host/extensions/attachments/box-staging.ts";',
+        contents: 'export * from "./source/host/extensions/attachments/attachments-service.ts"; export * from "./source/host/extensions/attachments/box-staging.ts"; export * from "./source/host/extensions/attachments/attachment-file.ts";',
         resolveDir: root,
       },
       bundle: true, platform: "node", format: "esm", packages: "external", outfile, logLevel: "silent",
@@ -84,6 +84,54 @@ test("attachment storage boundaries reject pre-existing symlink escapes", async 
       assert.ok(await service.readHostAttachmentChunk(agentDir, path.join(assets, "notes.txt"), 0, 10));
     });
 
+    await t.test("open descriptor binds metadata and bytes despite pathname replacement or growth", async () => {
+      const changing = path.join(attachments, "changing.txt");
+      await writeFile(changing, "original");
+      const data = await service.withAttachmentFile(changing, [attachments], async (handle, info) => {
+        await rename(changing, `${changing}.old`);
+        await writeFile(changing, "replacement");
+        await appendFile(`${changing}.old`, "-appended-after-stat");
+        return service.readAttachmentBytes(handle, info.size, 8);
+      });
+      assert.equal(data.toString(), "original");
+      assert.equal(await readFile(changing, "utf8"), "replacement");
+      assert.equal(await service.withAttachmentFile(changing, [attachments], (handle, info) => service.readAttachmentBytes(handle, info.size, 8)), null);
+    });
+
+    await t.test("POSIX open refuses a final symlink inserted after canonical resolution", { skip: process.platform === "win32" }, async () => {
+      const target = path.join(attachments, "replace-before-open.txt");
+      await writeFile(target, "inside");
+      const canonical = await service.resolveAttachmentFile(target, [attachments]);
+      await rm(target);
+      await symlink(path.join(outside, "notes.txt"), target, "file");
+      await assert.rejects(service.openCanonicalAttachmentFile(canonical), { code: "ELOOP" });
+    });
+
+    await t.test("canonical configured roots and a missing optional assets root remain supported", async () => {
+      const aliasRoot = path.join(dir, "aliased-agent");
+      await symlink(agentDir, aliasRoot, "junction");
+      assert.ok(await service.readHostAttachmentChunk(aliasRoot, path.join(aliasRoot, "attachments", "notes.txt"), 0, 10));
+      await rename(assets, `${assets}-absent`);
+      try { assert.ok(await service.readHostAttachmentChunk(agentDir, path.join(attachments, "notes.txt"), 0, 10)); }
+      finally { await rename(`${assets}-absent`, assets); }
+    });
+
+    await t.test("size limits reject oversized files and cap text/chunk reads", async () => {
+      const oversizedVideo = path.join(attachments, "oversized.mp4");
+      await writeFile(oversizedVideo, "");
+      await truncate(oversizedVideo, 200 * 1024 * 1024 + 1);
+      assert.equal(await service.readHostAttachmentVideoBytes(oversizedVideo), null);
+      const largeText = path.join(attachments, "large.txt");
+      await writeFile(largeText, Buffer.alloc(service.ATTACHMENT_TEXT_PREVIEW_BYTE_CAP + 1, 65));
+      const preview = await service.readAttachmentText(agentDir, largeText);
+      assert.equal(preview.text.length, service.ATTACHMENT_TEXT_PREVIEW_BYTE_CAP);
+      assert.equal(preview.truncated, true);
+      await truncate(largeText, service.ATTACHMENT_CHUNK_MAX_BYTES + 1);
+      const chunk = await service.readHostAttachmentChunk(agentDir, largeText, 0, Number.MAX_SAFE_INTEGER);
+      assert.equal(Buffer.from(chunk.bytesBase64, "base64").length, service.ATTACHMENT_CHUNK_MAX_BYTES);
+      assert.equal(await service.readAttachmentText(agentDir, attachments), null);
+    });
+
     await t.test("explicit ingestion still copies external sources into storage", async () => {
       const result = await service.ingestAttachment(agentDir, path.join(outside, "notes.txt"));
       assert.equal(path.dirname(result.absolutePath), attachments);
@@ -101,6 +149,9 @@ test("attachment storage boundaries reject pre-existing symlink escapes", async 
       const escaped = path.join(attachments, "escape.png");
       const escapedDirectory = path.join(attachments, "escape", "notes.txt");
       const external = path.join(outside, "notes.txt");
+      const oversized = path.join(attachments, "oversized-stage.bin");
+      await writeFile(oversized, "");
+      await truncate(oversized, service.SAND_BOX_STAGE_MAX_BYTES + 1);
       // Transfer through a filesystem-backed adapter so accepted bytes are checked
       // at the receiving side; the storage reads themselves run unmodified.
       const staged = await service.stageAttachmentsIntoBox({
@@ -110,7 +161,7 @@ test("attachment storage boundaries reject pre-existing symlink escapes", async 
         async upload(destination, _box, _agentId, files) {
           for (const file of files) await writeFile(path.join(destination, path.basename(file.boxPath)), file.data);
         },
-      }, "test-agent", [direct, alias, escaped, escapedDirectory, external]);
+      }, "test-agent", [direct, alias, escaped, escapedDirectory, external, oversized]);
       assert.deepEqual([...staged.keys()], [direct, alias]);
       assert.deepEqual(await readFile(path.join(uploadedDir, "image.png")), png);
       assert.deepEqual(await readFile(path.join(uploadedDir, "alias.png")), png);

@@ -48,6 +48,21 @@ if (realPowerShell) {
   assert.match(probe.stdout, /powershell-runtime-ready/);
 }
 const realPowerShellOptions = { skip: realPowerShell ? false : "No PowerShell executable is installed", timeout: 30_000 };
+const privateDirectoryMarker = "grok-private-directory:";
+const reportPrivateDirectory = `Write-Output ('${privateDirectoryMarker}' + $PSScriptRoot)`;
+
+async function assertPrivateFilesRemoved(stdout) {
+  assert.deepEqual((await readdir(tempRoot)).filter(name => name.startsWith("grok-powershell-")), []);
+  if (stdout !== undefined) {
+    const line = stdout.split(/\r?\n/).find(value => value.startsWith(privateDirectoryMarker));
+    assert.ok(line, "the executed script must report its private directory");
+    const directory = line.slice(privateDirectoryMarker.length);
+    assert.equal(dirname(directory), tempRoot);
+    for (const path of [directory, join(directory, "script.ps1"), join(directory, "state.txt")]) {
+      await assert.rejects(stat(path), { code: "ENOENT" });
+    }
+  }
+}
 
 async function collectExecution(state, command, options, onEvent = () => {}) {
   const events = [];
@@ -122,7 +137,7 @@ test("failure to locate PowerShell cleans up prepared files", { skip: process.pl
     await assert.rejects(async () => {
       for await (const _event of state.execute(createContext(), "Write-Output 'never started'")) {}
     }, /Neither 'pwsh'.*found in PATH/);
-    assert.deepEqual(await readdir(tempRoot), []);
+    await assertPrivateFilesRemoved();
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
@@ -136,16 +151,16 @@ test("real PowerShell succeeds, captures state, and removes its private director
   const workingDirectory = join(root, "working");
   await mkdir(workingDirectory);
   const options = { workingDirectory, sandboxPolicy: { perUser: { type: "insecure_none" } } };
-  const first = await collectExecution(state, "$env:GROK_PRIVATE_FILE_TEST = 'state-persisted'; Write-Output 'normal-execution-marker'; Write-Output $PSScriptRoot; $global:LASTEXITCODE = 0", options);
+  const first = await collectExecution(state, `$env:GROK_PRIVATE_FILE_TEST = 'state-persisted'; Write-Output 'normal-execution-marker'; ${reportPrivateDirectory}; $global:LASTEXITCODE = 0`, options);
   assert.match(first.stdout, /normal-execution-marker/);
   assert.ok(first.stdout.includes(tempRoot), "the executed script must reside under the private temporary root");
   assert.deepEqual(first.events.filter(event => event.type === "exit"), [{ type: "exit", code: 0, data: "", aborted: false }], first.stderr);
   assert.equal(await state.getCwd(), workingDirectory);
-  assert.deepEqual(await readdir(tempRoot), []);
-  const second = await collectExecution(state, "Write-Output $env:GROK_PRIVATE_FILE_TEST; $global:LASTEXITCODE = 0", options);
+  await assertPrivateFilesRemoved(first.stdout);
+  const second = await collectExecution(state, `Write-Output $env:GROK_PRIVATE_FILE_TEST; ${reportPrivateDirectory}; $global:LASTEXITCODE = 0`, options);
   assert.match(second.stdout, /state-persisted/);
   assert.deepEqual(second.events.filter(event => event.type === "exit"), [{ type: "exit", code: 0, data: "", aborted: false }], second.stderr);
-  assert.deepEqual(await readdir(tempRoot), []);
+  await assertPrivateFilesRemoved(second.stdout);
 });
 
 test("real PowerShell cancellation stops the command and removes its private directory", realPowerShellOptions, async () => {
@@ -157,7 +172,7 @@ test("real PowerShell cancellation stops the command and removes its private dir
   const deadline = setTimeout(() => controller.abort(), 15_000);
   try {
     const result = await collectExecution(state,
-      `[Console]::Out.WriteLine('cancellation-ready-marker'); [Console]::Out.Flush(); Start-Sleep -Seconds 30; [System.IO.File]::WriteAllText('${sentinel.replaceAll("'", "''")}', 'unexpected')`,
+      `${reportPrivateDirectory}; [Console]::Out.WriteLine('cancellation-ready-marker'); [Console]::Out.Flush(); Start-Sleep -Seconds 30; [System.IO.File]::WriteAllText('${sentinel.replaceAll("'", "''")}', 'unexpected')`,
       { signal: controller.signal, workingDirectory: root, sandboxPolicy: { perUser: { type: "insecure_none" } } },
       event => {
         if (event.type === "stdout") {
@@ -172,7 +187,11 @@ test("real PowerShell cancellation stops the command and removes its private dir
     const exits = result.events.filter(event => event.type === "exit");
     assert.equal(exits.length, 1);
     assert.equal(exits[0].aborted, true);
-    assert.deepEqual(await readdir(tempRoot), []);
+    const started = result.events.filter(event => event.type === "stdin_ready");
+    assert.equal(started.length, 1);
+    assert.ok(Number.isInteger(started[0].pid) && started[0].pid > 0);
+    assert.throws(() => process.kill(started[0].pid, 0), { code: "ESRCH" });
+    await assertPrivateFilesRemoved(result.stdout);
     await assert.rejects(stat(sentinel), { code: "ENOENT" });
   } finally {
     clearTimeout(deadline);

@@ -11,7 +11,8 @@ import { isSafeFolderId } from "../../storage/folder-id.js";
 import { AttachmentTooLargeError, VIDEO_BYTE_LIMIT, attachmentByteLimitForName } from "../../../shared/media/attachment-limits.js";
 import { audioMimeFromPath, extensionFromImageMime, imageMimeFromPath, servableImageMimeFromPath, videoMimeFromPath } from "../../../shared/media/image-mime.js";
 import { Mp4Dimensions } from "../../../shared/media/video-dimensions.js";
-import { containWithin, isPathWithin } from "../../../shared/node/paths.js";
+import { isPathWithin } from "../../../shared/node/paths.js";
+import { readAttachmentBytes, readAttachmentRange, resolveAttachmentFile, withAttachmentFile } from "./attachment-file.js";
 import { createSandGenerateImageResourceAccessor } from "./generate-image-resource-accessor.js";
 import { createSandGenerateImageService, type GenerateImageAuth } from "./generate-image-service.js";
 import { stageAttachmentsIntoBox, type BoxStagingDependencies } from "./box-staging.js";
@@ -188,10 +189,15 @@ export async function ingestAttachment(agentDir: string, sourcePath: string): Pr
   if (typeof sourcePath !== "string" || sourcePath.trim().length === 0) throw new SandAttachmentError("Attachment file path is empty.");
   if (!isAbsolute(sourcePath)) throw new SandAttachmentError(`Attachment path must be absolute: ${sourcePath}`);
   const attachmentsDir = getAgentAttachmentsDir(agentDir);
-  if (await containWithin([attachmentsDir], sourcePath) != null) { const info = await fs.stat(sourcePath); return { absolutePath: sourcePath, hash: "preserved", bytes: info.size }; }
-  const info = await fs.stat(sourcePath); if (!info.isFile()) throw new SandAttachmentError(`Attachment source is not a file: ${sourcePath}`);
-  const byteLimit = attachmentByteLimitForName(sourcePath); if (info.size > byteLimit) throw new AttachmentTooLargeError(byteLimit);
-  return await ingestAttachmentBytes(agentDir, sourcePath, await fs.readFile(sourcePath));
+  const result = await withAttachmentFile(sourcePath, null, async (handle, info) => {
+    if (await resolveAttachmentFile(sourcePath, [attachmentsDir]) != null) return { absolutePath: sourcePath, hash: "preserved", bytes: info.size };
+    const byteLimit = attachmentByteLimitForName(sourcePath);
+    const data = await readAttachmentBytes(handle, info.size, byteLimit);
+    if (data == null) throw new AttachmentTooLargeError(byteLimit);
+    return await ingestAttachmentBytes(agentDir, sourcePath, data);
+  });
+  if (result == null) throw new SandAttachmentError(`Attachment source is not a file: ${sourcePath}`);
+  return result;
 }
 export async function ingestAttachmentBytes(agentDir: string, filename: string, data: Uint8Array): Promise<IngestedAttachment> {
   if (typeof filename !== "string" || filename.trim().length === 0) throw new SandAttachmentError("Attachment filename is empty.");
@@ -200,32 +206,93 @@ export async function ingestAttachmentBytes(agentDir: string, filename: string, 
   const buffer = Buffer.from(data), hash = sha256(buffer), sourceExt = extname(filename).toLowerCase(), targetPath = join(getAgentAttachmentsDir(agentDir), `${hash}${sourceExt.length > 0 ? sourceExt : ".bin"}`);
   await writeContentAddressedFile(getAgentAttachmentsDir(agentDir), targetPath, buffer); return { absolutePath: targetPath, hash, bytes: buffer.byteLength };
 }
-// 同时检查目录结构与实际路径，拒绝预置符号链接越过存储目录。
-// 该检查不保证目录在并发替换时保持不变。
-async function resolveStoredAttachmentPath(roots: readonly string[], filePath: string): Promise<string | null> {
-  if (!filePath) return null;
-  try { return await containWithin(roots, reanchorSandPath(filePath)); } catch { return null; }
-}
 function imageSize(buffer: Buffer, mime: string): ImageSize | null { return readEncodedImageSize(`data:${mime};base64,${buffer.toString("base64")}`); }
-export async function readHostAttachmentImage(filePath: string) { const resolved = await resolveStoredAttachmentPath([getSandRootDir()], filePath); if (resolved == null) return null; const mime = servableImageMimeFromPath(resolved); if (mime == null) return null; try { const data = await fs.readFile(resolved), size = imageSize(data, mime); return { dataUrl: `data:${mime};base64,${data.toString("base64")}`, width: size?.width ?? null, height: size?.height ?? null }; } catch { return null; } }
-export async function readHostAttachmentVideoBytes(filePath: string): Promise<Uint8Array | null> { const resolved = await resolveStoredAttachmentPath([getSandRootDir()], filePath); if (resolved == null || videoMimeFromPath(resolved) === undefined) return null; try { const info = await fs.stat(resolved); return !info.isFile() || info.size > VIDEO_BYTE_LIMIT ? null : new Uint8Array(await fs.readFile(resolved)); } catch { return null; } }
+export async function readHostAttachmentImage(filePath: string) {
+  const resolved = reanchorSandPath(filePath), mime = servableImageMimeFromPath(resolved);
+  if (mime == null) return null;
+  try {
+    return await withAttachmentFile(resolved, [getSandRootDir()], async (handle, info) => {
+      const data = await readAttachmentBytes(handle, info.size, attachmentByteLimitForName(resolved));
+      if (data == null) return null;
+      const size = imageSize(data, mime);
+      return { dataUrl: `data:${mime};base64,${data.toString("base64")}`, width: size?.width ?? null, height: size?.height ?? null };
+    });
+  } catch { return null; }
+}
+export async function readHostAttachmentVideoBytes(filePath: string): Promise<Uint8Array | null> {
+  const resolved = reanchorSandPath(filePath);
+  if (videoMimeFromPath(resolved) === undefined) return null;
+  try {
+    const data = await withAttachmentFile(resolved, [getSandRootDir()], (handle, info) => readAttachmentBytes(handle, info.size, VIDEO_BYTE_LIMIT));
+    return data == null ? null : new Uint8Array(data);
+  } catch { return null; }
+}
 export async function readHostAttachmentChunk(agentDir: string, filePath: string, offset: number, length: number, videoPlayback = false) {
-  const source = await resolveStoredAttachmentPath([getAgentAttachmentsDir(agentDir), getAgentAssetsDir(agentDir)], filePath);
-  if (source == null) return null;
-  if (videoPlayback && videoMimeFromPath(source) == null) return null;
-  const read = async (resolved: string) => { const info = await fs.stat(resolved); if (!info.isFile()) return null; const totalSize = info.size, mime = imageMimeFromPath(resolved) ?? videoMimeFromPath(resolved) ?? audioMimeFromPath(resolved) ?? null, start = Math.min(Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0, totalSize), safeLength = Number.isFinite(length) ? Math.max(0, Math.floor(length)) : 0, len = Math.min(safeLength, ATTACHMENT_CHUNK_MAX_BYTES, totalSize - start); if (len <= 0) return { bytesBase64: "", totalSize, mime }; const handle = await fs.open(resolved, "r"); try { const buffer = Buffer.alloc(len), { bytesRead } = await handle.read(buffer, 0, len, start); return { bytesBase64: buffer.subarray(0, bytesRead).toString("base64"), totalSize, mime }; } finally { await handle.close(); } };
-  try { return videoPlayback ? await withVideoPlaybackSource(source, read) : await read(source); } catch { return null; }
+  const requested = reanchorSandPath(filePath);
+  if (videoPlayback && videoMimeFromPath(requested) == null) return null;
+  const roots = [getAgentAttachmentsDir(agentDir), getAgentAssetsDir(agentDir)];
+  try {
+    const source = await resolveAttachmentFile(requested, roots);
+    if (source == null) return null;
+    const read = (resolved: string) => withAttachmentFile(resolved === source ? requested : resolved, resolved === source ? roots : null, async (handle, info) => {
+      const totalSize = info.size;
+      const mimePath = resolved === source ? requested : resolved;
+      const mime = imageMimeFromPath(mimePath) ?? videoMimeFromPath(mimePath) ?? audioMimeFromPath(mimePath) ?? null;
+      const start = Math.min(Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0, totalSize);
+      const safeLength = Number.isFinite(length) ? Math.max(0, Math.floor(length)) : 0;
+      const len = Math.min(safeLength, ATTACHMENT_CHUNK_MAX_BYTES, totalSize - start);
+      const data = await readAttachmentRange(handle, start, len);
+      return { bytesBase64: data.toString("base64"), totalSize, mime };
+    });
+    return videoPlayback ? await withVideoPlaybackSource(source, read) : await read(source);
+  } catch { return null; }
 }
 export function resolveAttachmentOwnerDir(filePath: string): string | null { if (!filePath) return null; const resolved = reanchorSandPath(filePath), agentsRoot = join(getSandRootDir(), "agents"); if (!isPathWithin(agentsRoot, resolved)) return null; const segments = relative(agentsRoot, resolved).split(sep), agentId = segments[0], bucket = segments[1]; return segments.length >= 3 && isSafeFolderId(agentId) && (bucket === ATTACHMENTS_DIRNAME || bucket === ASSETS_DIRNAME) ? join(agentsRoot, agentId) : null; }
 const TEXT_PREVIEWABLE_EXTENSIONS = new Set(["txt","text","log","md","markdown","mdx","rst","adoc","tex","json","jsonc","json5","ndjson","csv","tsv","xml","yaml","yml","toml","ini","cfg","conf","env","properties","plist","gradle","html","htm","css","scss","sass","less","svg","js","jsx","mjs","cjs","ts","tsx","mts","cts","py","pyi","rb","go","rs","java","kt","kts","c","h","cc","cpp","cxx","hpp","hh","cs","php","swift","scala","dart","lua","pl","pm","r","sql","graphql","gql","proto","vue","svelte","astro","sh","bash","zsh","fish","bat","ps1","tf","tfvars","dockerfile","diff","patch"]);
 function isTextPreviewableName(path: string): boolean { const extension = extname(path).slice(1).toLowerCase(); return extension.length > 0 && TEXT_PREVIEWABLE_EXTENSIONS.has(extension); }
 function looksLikeBinary(bytes: Uint8Array): boolean { const sample = bytes.subarray(0, 8 * 1024); if (sample.byteLength === 0) return false; let controls = 0; for (const byte of sample) { if (byte === 0) return true; if (byte < 32 && !(byte >= 9 && byte <= 13)) controls += 1; } return controls / sample.byteLength > 0.3; }
-export async function readAttachmentText(agentDir: string, filePath: string) { const resolved = await resolveStoredAttachmentPath([getAgentAttachmentsDir(agentDir)], filePath); if (resolved == null) return null; try { const info = await fs.stat(resolved); if (!info.isFile()) return null; if (!isTextPreviewableName(resolved)) return { kind: "binary" as const, bytes: info.size }; const handle = await fs.open(resolved, "r"); let head: Buffer; try { head = Buffer.alloc(ATTACHMENT_TEXT_PREVIEW_BYTE_CAP); const result = await handle.read(head, 0, head.length, 0); head = head.subarray(0, result.bytesRead); } finally { await handle.close(); } return looksLikeBinary(head) ? { kind: "binary" as const, bytes: info.size } : { kind: "text" as const, text: head.toString("utf8"), truncated: info.size > ATTACHMENT_TEXT_PREVIEW_BYTE_CAP, bytes: info.size }; } catch { return null; } }
-export async function readImageDimensions(filePath: string): Promise<ImageSize | null> { const resolved = reanchorSandPath(filePath), mime = servableImageMimeFromPath(resolved); if (mime == null) return null; try { return imageSize(await fs.readFile(resolved), mime); } catch { return null; } }
+export async function readAttachmentText(agentDir: string, filePath: string) {
+  const resolved = reanchorSandPath(filePath);
+  try {
+    return await withAttachmentFile(resolved, [getAgentAttachmentsDir(agentDir)], async (handle, info) => {
+      if (!isTextPreviewableName(resolved)) return { kind: "binary" as const, bytes: info.size };
+      const head = await readAttachmentRange(handle, 0, Math.min(info.size, ATTACHMENT_TEXT_PREVIEW_BYTE_CAP));
+      return looksLikeBinary(head) ? { kind: "binary" as const, bytes: info.size } : { kind: "text" as const, text: head.toString("utf8"), truncated: info.size > ATTACHMENT_TEXT_PREVIEW_BYTE_CAP, bytes: info.size };
+    });
+  } catch { return null; }
+}
+async function readImageFileDimensions(filePath: string, roots: readonly string[] | null): Promise<ImageSize | null> {
+  const resolved = reanchorSandPath(filePath), mime = servableImageMimeFromPath(resolved);
+  if (mime == null) return null;
+  try {
+    return await withAttachmentFile(resolved, roots, async (handle, info) => {
+      const data = await readAttachmentBytes(handle, info.size, attachmentByteLimitForName(resolved));
+      return data == null ? null : imageSize(data, mime);
+    });
+  } catch { return null; }
+}
+export async function readImageDimensions(filePath: string): Promise<ImageSize | null> { return await readImageFileDimensions(filePath, null); }
 export { Mp4Dimensions };
 export const VIDEO_DIMENSIONS_HEAD_BYTES = 1024 * 1024, VIDEO_DIMENSIONS_TAIL_BYTES = 8 * 1024 * 1024;
-export async function readVideoDimensions(filePath: string): Promise<ImageSize | null> { const resolved = await resolveStoredAttachmentPath([getSandRootDir()], filePath); if (resolved == null || videoMimeFromPath(resolved) === undefined) return null; try { const handle = await fs.open(resolved, "r"); try { const { size } = await handle.stat(), headLength = Math.min(size, VIDEO_DIMENSIONS_HEAD_BYTES), head = Buffer.alloc(headLength); await handle.read(head, 0, headLength, 0); const fromHead = Mp4Dimensions.read(head); if (fromHead != null || size <= headLength) return fromHead; const tailLength = Math.min(size, VIDEO_DIMENSIONS_TAIL_BYTES), tail = Buffer.alloc(tailLength); await handle.read(tail, 0, tailLength, size - tailLength); return Mp4Dimensions.read(tail); } finally { await handle.close(); } } catch { return null; } }
-export async function readMediaDimensions(filePath: string): Promise<ImageSize | null> { const resolved = await resolveStoredAttachmentPath([getSandRootDir()], filePath); if (resolved == null) return null; if (servableImageMimeFromPath(resolved) != null) return readImageDimensions(resolved); if (videoMimeFromPath(resolved) !== undefined) return readVideoDimensions(resolved); return null; }
+export async function readVideoDimensions(filePath: string): Promise<ImageSize | null> {
+  const resolved = reanchorSandPath(filePath);
+  if (videoMimeFromPath(resolved) === undefined) return null;
+  try {
+    return await withAttachmentFile(resolved, [getSandRootDir()], async (handle, info) => {
+      const headLength = Math.min(info.size, VIDEO_DIMENSIONS_HEAD_BYTES);
+      const fromHead = Mp4Dimensions.read(await readAttachmentRange(handle, 0, headLength));
+      if (fromHead != null || info.size <= headLength) return fromHead;
+      const tailLength = Math.min(info.size, VIDEO_DIMENSIONS_TAIL_BYTES);
+      return Mp4Dimensions.read(await readAttachmentRange(handle, info.size - tailLength, tailLength));
+    });
+  } catch { return null; }
+}
+export async function readMediaDimensions(filePath: string): Promise<ImageSize | null> {
+  const resolved = reanchorSandPath(filePath);
+  if (servableImageMimeFromPath(resolved) != null) return await readImageFileDimensions(resolved, [getSandRootDir()]);
+  if (videoMimeFromPath(resolved) !== undefined) return await readVideoDimensions(resolved);
+  return null;
+}
 export async function persistImageBytes(targetDir: string, data: Uint8Array, mimeType: string) { const buffer = Buffer.from(data), hash = sha256(buffer), targetPath = join(targetDir, `${hash}${extensionFromImageMime(mimeType) ?? ".png"}`); await writeContentAddressedFile(targetDir, targetPath, buffer); const size = imageSize(buffer, mimeType); return { absolutePath: targetPath, fileUrl: pathToFileURL(targetPath).href, bytes: buffer.byteLength, width: size?.width ?? null, height: size?.height ?? null }; }
 
 export interface AttachmentsServiceDependencies<Context> { readonly auth: GenerateImageAuth; readonly ctx: Context; readonly box: BoxStagingDependencies<Context>["box"]; readonly report?: (diagnostic: Record<string, unknown>) => void }
