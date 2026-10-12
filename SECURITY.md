@@ -53,8 +53,10 @@ GitHub Dependabot alerts and security updates monitor dependency advisories.
 Security updates are grouped for npm. Automatic PRs exclude the fixed Electron
 input and major upgrades of AI SDK, the OpenAI provider, Connect-node, and
 Undici; these require the compatibility work above. This policy does not dismiss
-their vulnerability alerts. The preserved upstream manifest has no scheduled
-update job. GitHub Actions version updates are proposed monthly. All changes
+their vulnerability alerts. Updates to the preserved upstream manifest remain
+ignored; Dependabot may report `all_versions_ignored` for that manifest while
+its dependency-graph alerts remain open. GitHub Actions version updates are
+proposed monthly. All changes
 require the existing runtime and packaging checks before merging.
 
 CodeQL is configured with the extended query suite and the remote-and-local
