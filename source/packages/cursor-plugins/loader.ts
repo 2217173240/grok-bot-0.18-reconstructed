@@ -1,4 +1,5 @@
-import { lstat, mkdir, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import grayMatter from "gray-matter";
 import { detectHooksSchema, transformClaudeHooksToConfig, type CursorHooksConfig } from "../hooks/claude-code-mapper.js";
@@ -28,9 +29,27 @@ export interface LoadedPlugin {
 type PluginHooksCoreResult = { config: CursorHooksConfig } | { error: { source: "claude-plugin"; message: string } };
 export type PluginHooksResult = { config: CursorHooksConfig; sourcePath?: string | undefined } | { error: { source: "claude-plugin"; message: string } };
 
-async function isSymlink(filePath: string): Promise<boolean> { try { return (await lstat(filePath)).isSymbolicLink(); } catch { return false; } }
-async function readFileNoSymlink(filePath: string): Promise<string> { if (await isSymlink(filePath)) throw new Error(`Refusing to read symlink: ${filePath}`); return readFile(filePath, "utf-8"); }
-async function checkFileSize(filePath: string): Promise<void> { const stats = await stat(filePath); if (stats.size > MAX_FILE_SIZE) throw new Error(`File ${filePath} exceeds maximum size of ${MAX_FILE_SIZE} bytes`); }
+async function readFileNoSymlink(filePath: string): Promise<string> {
+  const before = await lstat(filePath);
+  if (before.isSymbolicLink()) throw new Error(`Refusing to read symlink: ${filePath}`);
+  // 末级文件的类型、大小检查和读取使用同一 FD；不保证祖先目录不会并发替换。
+  // Windows 没有原子的 O_NOFOLLOW，仅拒绝身份检查观察到的替换。
+  const handle = await open(filePath, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+  try {
+    const info = await handle.stat(), current = await lstat(filePath);
+    if (!info.isFile() || current.isSymbolicLink() || info.dev !== before.dev || info.ino !== before.ino || current.dev !== info.dev || current.ino !== info.ino) throw new Error(`Plugin file changed during open: ${filePath}`);
+    if (info.size > MAX_FILE_SIZE) throw new Error(`File ${filePath} exceeds maximum size of ${MAX_FILE_SIZE} bytes`);
+    // 即使打开后文件继续增长，也限制分配和读取范围。
+    const buffer = Buffer.alloc(info.size);
+    let used = 0;
+    while (used < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, used, buffer.length - used, used);
+      if (bytesRead === 0) break;
+      used += bytesRead;
+    }
+    return buffer.subarray(0, used).toString("utf8");
+  } finally { await handle.close(); }
+}
 function classifyLoadError(error: unknown): "timeout" | "clone" | "manifest" | "parse" | "install" | "unknown" { const message = error instanceof Error ? error.message : String(error); if (/timed?\s*out/i.test(message)) return "timeout"; if (/clone|fetch|git/i.test(message)) return "clone"; if (/manifest|marketplace\.json/i.test(message)) return "manifest"; if (/parse|invalid|malformed/i.test(message)) return "parse"; if (/install|download|copy/i.test(message)) return "install"; return "unknown"; }
 
 export function createLocalPluginFileFetcher(basePath: string, options?: { symlinkTargetRoot?: string | undefined }): PluginFileFetcher {
@@ -45,7 +64,7 @@ export function createLocalPluginFileFetcher(basePath: string, options?: { symli
         return results;
       } catch { return []; }
     },
-    async fetchFile(filePath: string) { const cached = fileContentCache.get(filePath); if (cached !== undefined) return { content: cached }; const fullPath = await assertContainedRealPath(assertContained(join(basePath, filePath))); await checkFileSize(fullPath); const content = await readFile(fullPath, "utf-8"); fileContentCache.set(filePath, content); return { content }; },
+    async fetchFile(filePath: string) { const cached = fileContentCache.get(filePath); if (cached !== undefined) return { content: cached }; const fullPath = await assertContainedRealPath(assertContained(join(basePath, filePath))); const content = await readFileNoSymlink(fullPath); fileContentCache.set(filePath, content); return { content }; },
     async fileExists(filePath: string) { try { const fullPath = await assertContainedRealPath(assertContained(join(basePath, filePath))); return (await stat(fullPath)).isFile(); } catch { return false; } },
   };
 }
@@ -58,7 +77,7 @@ interface ManifestData {
 async function readLocalPluginManifestData(installPath: string, pluginDisplayName: string, pluginLogger: PluginMetricsLogger): Promise<ManifestData | undefined> {
   for (const manifestPath of PLUGIN_MANIFEST_PATHS) {
     const fullPath = join(installPath, manifestPath); let content: string;
-    try { if (await isSymlink(fullPath)) continue; const stats = await stat(fullPath); if (!stats.isFile()) continue; await checkFileSize(fullPath); content = await readFileNoSymlink(fullPath); } catch { continue; }
+    try { content = await readFileNoSymlink(fullPath); } catch { continue; }
     const parsed = parsePluginManifest(content); if (!parsed.success) continue; const manifest = parsed.data;
     const { commands, agents, skills, rules, hooks, mcpServers } = manifest, hasOptions = commands !== undefined || agents !== undefined || skills !== undefined || rules !== undefined || hooks !== undefined || mcpServers !== undefined;
     const displayName = typeof manifest.displayName === "string" ? manifest.displayName : undefined, description = typeof manifest.description === "string" ? manifest.description : undefined, authorName = manifest.author?.name, variables = manifest.variables, capabilities = manifest.capabilities;
@@ -81,7 +100,7 @@ async function loadDiscovered<T>(fetcher: PluginFileFetcher, descriptors: Plugin
 async function discoverAndLoadComponents(installPath: string, manifest?: ManifestData["manifestOptions"]): Promise<Pick<LoadedPlugin, "skills" | "agents" | "commands" | "rules">> { const fetcher = createLocalPluginFileFetcher(installPath), discovered = await new PluginComponentDiscovery(fetcher).discoverComponents({ manifest }); const [skills, agents, commands, rules] = await Promise.all([loadDiscovered(fetcher, discovered.skills, installPath, parseSkillContent), loadDiscovered(fetcher, discovered.agents, installPath, parseAgentContent), loadDiscovered(fetcher, discovered.commands, installPath, parseCommandContent), loadDiscovered(fetcher, discovered.rules, installPath, (args) => { const skill = parseSkillContent(args); return skill ? { ...skill, name: discovered.rules.find(rule => rule.path === args.relativePath)?.name ?? skill.name } : null; })]); return { skills, agents, commands, rules }; }
 
 function mcpParseOptionsFromPluginSource(sourceInfo?: MarketplacePluginSourceInfo): McpParserOptions | undefined { return sourceInfo === undefined ? undefined : { configuredVariables: sourceInfo.configuredVariables as Readonly<Record<string, unknown>> | undefined }; }
-function createSafeFsPluginMcpFileReader(installPath: string) { return async (relativePath: string): Promise<string | null> => { if (!isPathSafe(relativePath)) return null; const fullPath = join(installPath, relativePath); try { if (await isSymlink(fullPath)) return null; if (!(await stat(fullPath)).isFile()) return null; await checkFileSize(fullPath); return await readFileNoSymlink(fullPath); } catch { return null; } }; }
+function createSafeFsPluginMcpFileReader(installPath: string) { return async (relativePath: string): Promise<string | null> => { if (!isPathSafe(relativePath)) return null; const fullPath = join(installPath, relativePath); try { return await readFileNoSymlink(fullPath); } catch { return null; } }; }
 async function readPluginMcpConfigSimple(installPath: string, sourceInfo: MarketplacePluginSourceInfo | undefined, explicit?: McpParserOptions): Promise<ResolvedMcpConfig | null> { const parserOptions = explicit ?? mcpParseOptionsFromPluginSource(sourceInfo); return resolvePluginMcpConfigWithManifestLookup(createSafeFsPluginMcpFileReader(installPath), { fallbackFileNames: resolvePluginMcpConfigPaths(), manifestPrecedence: "override", toSourcePath: relative => join(installPath, relative), installPathForExpansion: installPath, parserOptions }); }
 
 function expandHooksConfigVariables(config: CursorHooksConfig, installPath: string): CursorHooksConfig { const hooks: Record<string, CursorHooksConfig["hooks"][string]> = {}; for (const [step, scripts] of Object.entries(config.hooks)) { if (!Array.isArray(scripts)) continue; hooks[step] = scripts.map(script => "command" in script && typeof script.command === "string" ? { ...script, command: expandPluginVariables(script.command, installPath) } : "prompt" in script && typeof script.prompt === "string" ? { ...script, prompt: expandPluginVariables(script.prompt, installPath) } : script); } return { ...config, hooks }; }
@@ -89,8 +108,7 @@ function validateAndTransformHooks(parsed: unknown, pluginDisplayName: string): 
 async function loadPluginHooksInternal(installPath: string, pluginDisplayName: string, manifestHooks: unknown, manifestSourcePath?: string): Promise<PluginHooksResult | undefined> {
   if (typeof manifestHooks === "object" && manifestHooks !== null) { const result = validateAndTransformHooks(manifestHooks, pluginDisplayName); if (result && "config" in result) return { config: expandHooksConfigVariables(result.config, installPath), ...(manifestSourcePath !== undefined ? { sourcePath: manifestSourcePath } : {}) }; return result; }
   let hooksPath: string; if (typeof manifestHooks === "string") { const relative = manifestHooks.replace(/^\.\//, ""); if (!isPathSafe(relative)) return undefined; hooksPath = relative.endsWith(".json") ? join(installPath, relative) : join(installPath, relative, "hooks.json"); } else hooksPath = join(installPath, "hooks", "hooks.json");
-  try { if (await isSymlink(hooksPath) || !(await stat(hooksPath)).isFile()) return undefined; } catch { return undefined; }
-  let raw: string; try { await checkFileSize(hooksPath); raw = await readFile(hooksPath, "utf-8"); } catch { return undefined; }
+  let raw: string; try { raw = await readFileNoSymlink(hooksPath); } catch { return undefined; }
   let parsed: unknown; try { parsed = JSON.parse(raw); } catch { return { error: { source: "claude-plugin", message: `Plugin ${pluginDisplayName} ${hooksPath}: invalid JSON` } }; }
   const result = validateAndTransformHooks(parsed, pluginDisplayName); return result && "config" in result ? { config: expandHooksConfigVariables(result.config, installPath), sourcePath: hooksPath } : result;
 }

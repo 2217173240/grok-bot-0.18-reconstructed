@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { openCanonicalAttachmentFile, readAttachmentBytes } from "../attachments/attachment-file.js";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { extensionFromImageMime } from "../../../shared/media/image-mime.js";
@@ -22,9 +23,18 @@ export async function materializeInlineImages(
       const hash = createHash("sha256").update(bytes).digest("hex"),
         extension = extensionFromImageMime(image.mediaType) ?? ".png",
         filePath = join(dir, `${hash}${extension}`);
-      if (!existsSync(filePath)) {
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(filePath, bytes);
+      mkdirSync(dir, { recursive: true });
+      try { writeFileSync(filePath, bytes, { flag: "wx", mode: 0o600 }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        // 仅复用内容完整一致的普通文件；POSIX 打开时额外拒绝末级符号链接。
+        const handle = await openCanonicalAttachmentFile(filePath);
+        try {
+          const info = await handle.stat();
+          if (!info.isFile() || info.size !== bytes.length) continue;
+          const existing = await readAttachmentBytes(handle, info.size, bytes.length);
+          if (existing == null || !existing.equals(bytes)) continue;
+        } finally { await handle.close(); }
       }
       materialized.push({
         url: pathToFileURL(filePath).toString(),

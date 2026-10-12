@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, stat, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, unlink } from "node:fs/promises";
 import { parseJwtPayload } from "../../shared/node/cursor-token.js";
 import { writeFileAtomic } from "../../shared/node/atomic-write.js";
 
@@ -22,6 +23,24 @@ export const DESKTOP_STRUCTURED_LOG_SPILL_EVENTS = [
   "sand.access_blocked", "sand.agent_load", "sand.agents_unreachable", "sand.attachment.edge_failed", "sand.box_dns_diagnostic", "sand.box_reachability", "sand.box_migration_watch", "sand.box_rebuild_escalation", "sand.box_rebuild_pending_stall", "sand.box_rebuild_stage", "sand.box_recreate_visible", "sand.box_secrets.push", "sand.box_setup_visible", "sand.connector_auth", "sand.desktop.coordinator_lifecycle", "sand.desktop.edge_failed", "sand.desktop.event_loop", "sand.desktop.startup", "sand.desktop.process_crash", "sand.desktop.renderer_lifecycle", "sand.desktop.coordinator_handoff", "sand.desktop.local_exec_lifecycle", "sand.desktop.session", "sand.desktop.unclean_exit", "sand.image.edge_failed", "sand.mcp.desktop_edge_failed", "sand.reaction.ack", "sand.recovery_action", "sand.render_stream", "sand.render_ttfr", "sand.replica.resync", "sand.resync.completed", "sand.send_ack", "sand.send", "sand.send_journal.restore", "sand.telemetry.sink_edge_failed", "sand.transport.stream_down", "sand.update.apply", "sand.update.check", "sand.update.outcome", "sand.update.prompt", "sand.vnc_liveness",
 ] as const;
 const spillEventSet = new Set<string>(DESKTOP_STRUCTURED_LOG_SPILL_EVENTS);
+
+// 按实际读取字节限制大小，覆盖打开后增长；句柄绑定读取对象。
+// O_NOFOLLOW 只限制末级符号链接，不限制有权限替换祖先目录的同 UID 进程。
+async function readSpill(path: string): Promise<string> {
+  const handle = await open(path, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error("SpillFileNotRegular");
+    const bytes = Buffer.alloc(DESKTOP_STRUCTURED_LOG_SPILL_MAX_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > DESKTOP_STRUCTURED_LOG_SPILL_MAX_BYTES) throw new RangeError("SpillFileOversize");
+    return bytes.subarray(0, length).toString("utf8");
+  } finally { await handle.close(); }
+}
 
 const safeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const errorCode = (error: unknown): string | undefined => typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : undefined;
@@ -66,7 +85,7 @@ class FileDesktopStructuredLogSpill implements DesktopStructuredLogSpill {
   clear(): Promise<SpillResult> { return this.enqueue(() => this.clearNow()); }
   private enqueue(operation: () => Promise<SpillResult>): Promise<SpillResult> { const result = this.chain.then(operation); this.chain = result.then(() => undefined, () => undefined); return result; }
   private failed(operation: SpillFailure["operation"], klass: string, preservesFile?: boolean): SpillResult { const failure = { operation, errorClass: klass }; this.options.onFailure?.(failure); return { kind: "failed", failure, ...(preservesFile === undefined ? {} : { preservesFile }) }; }
-  private async loadNow(accountSlot: string): Promise<SpillResult> { let size: number; try { size = (await stat(this.options.path)).size; } catch (error) { return errorCode(error) === "ENOENT" ? { kind: "empty" } : this.failed("load", errorClass(error), true); } if (size > DESKTOP_STRUCTURED_LOG_SPILL_MAX_BYTES) { await this.discard(); return this.failed("load", "SpillFileOversize", false); } let raw: string; try { raw = await readFile(this.options.path, "utf8"); } catch (error) { return this.failed("load", errorClass(error), true); } let decoded: unknown; try { decoded = JSON.parse(raw); } catch (error) { await this.discard(); return this.failed("load", errorClass(error), false); } const intake = parseState(decoded); if (intake === undefined) { await this.discard(); return this.failed("load", "SpillFileInvalid", false); } if (intake.accountSlot !== accountSlot) return this.clearAfterLoad(); const normalized = normalizeDesktopStructuredLogSpill(intake, (this.options.now ?? Date.now)()); if (normalized.state.checkpoint.records.length === 0 && !pendingDrops(normalized.state.checkpoint.counters)) return this.clearAfterLoad(); if (normalized.encoded !== raw) await this.write(normalized); return { kind: "loaded", state: normalized.state }; }
+  private async loadNow(accountSlot: string): Promise<SpillResult> { let raw: string; try { raw = await readSpill(this.options.path); } catch (error) { if (errorCode(error) === "ENOENT") return { kind: "empty" }; if (error instanceof RangeError && error.message === "SpillFileOversize") { await this.discard(); return this.failed("load", "SpillFileOversize", false); } return this.failed("load", errorClass(error), true); } let decoded: unknown; try { decoded = JSON.parse(raw); } catch (error) { await this.discard(); return this.failed("load", errorClass(error), false); } const intake = parseState(decoded); if (intake === undefined) { await this.discard(); return this.failed("load", "SpillFileInvalid", false); } if (intake.accountSlot !== accountSlot) return this.clearAfterLoad(); const normalized = normalizeDesktopStructuredLogSpill(intake, (this.options.now ?? Date.now)()); if (normalized.state.checkpoint.records.length === 0 && !pendingDrops(normalized.state.checkpoint.counters)) return this.clearAfterLoad(); if (normalized.encoded !== raw) await this.write(normalized); return { kind: "loaded", state: normalized.state }; }
   private async clearAfterLoad(): Promise<SpillResult> { const result = await this.clearNow(); return result.kind === "failed" ? { ...result, preservesFile: false } : result; }
   private async replaceNow(state: DesktopStructuredLogSpillState): Promise<SpillResult> { const normalized = normalizeDesktopStructuredLogSpill(state, (this.options.now ?? Date.now)()); return normalized.state.checkpoint.records.length === 0 && !pendingDrops(normalized.state.checkpoint.counters) ? this.clearNow() : this.write(normalized); }
   private async write(normalized: { state: DesktopStructuredLogSpillState; encoded: string }): Promise<SpillResult> { try { await writeFileAtomic(this.options.path, Buffer.from(normalized.encoded), { mode: 0o600 }); return { kind: "stored", state: normalized.state }; } catch (error) { return this.failed("replace", errorClass(error)); } }

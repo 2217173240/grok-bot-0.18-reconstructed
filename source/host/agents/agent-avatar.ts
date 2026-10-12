@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants, copyFileSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { constants, closeSync, fstatSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { readAttachmentBytes, withAttachmentFile } from "../extensions/attachments/attachment-file.js";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { reanchorSandPath } from "../host-paths.js";
 
@@ -35,25 +35,39 @@ export function resolveAvatarPathWithinDir(agentDir: string, candidate: string |
 export function resolveDerivedAvatarFilename(agentDir: string, legacyFieldValue: string | null): string | null {
   const conventional = listConventionalAvatarFilenames(agentDir); if (conventional[0] != null) return conventional[0];
   const source = resolveAvatarPathWithinDir(agentDir, legacyFieldValue); if (source == null) return null;
+  let fd: number | undefined;
   try {
-    if (!statSync(source).isFile()) return null;
+    fd = openSync(source, constants.O_RDONLY | (process.platform === "win32" ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK));
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size === 0 || info.size > AVATAR_MAX_BYTES) return null;
+    const buffer = Buffer.alloc(info.size);
+    let used = 0;
+    while (used < buffer.length) { const count = readSync(fd, buffer, used, buffer.length - used, used); if (count === 0) break; used += count; }
+    const bytes = buffer.subarray(0, used);
     const sourceExt = extname(source).slice(1).toLowerCase();
     const mimeExt: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg" };
-    const extension = CONVENTIONAL_AVATAR_EXTENSIONS.includes(sourceExt as never) ? sourceExt : mimeExt[sniffAvatarMimeType(readFileSync(source)) ?? ""];
+    const extension = CONVENTIONAL_AVATAR_EXTENSIONS.includes(sourceExt as never) ? sourceExt : mimeExt[sniffAvatarMimeType(bytes) ?? ""];
     if (extension == null) return legacyFieldValue;
-    const name = `avatar.${extension}`; copyFileSync(source, join(agentDir, name), constants.COPYFILE_EXCL); return name;
-  } catch { return legacyFieldValue; }
+    const name = `avatar.${extension}`; writeFileSync(join(agentDir, name), bytes, { flag: "wx", mode: 0o600 }); return name;
+  } catch { return legacyFieldValue; } finally { if (fd !== undefined) closeSync(fd); }
 }
 
-async function resolveAndStatAvatar(agentDir: string, candidate: string): Promise<{ path: string; mtimeMs: number; size: number } | null> { const path = resolveAvatarPathWithinDir(agentDir, candidate); if (path == null) return null; try { const info = await stat(path); return info.isFile() && info.size > 0 && info.size <= AVATAR_MAX_BYTES ? { path, mtimeMs: info.mtimeMs, size: info.size } : null; } catch { return null; } }
-export async function readValidatedAvatar(agentDir: string, candidate: string): Promise<{ bytes: Buffer; mime: string } | null> { const meta = await resolveAndStatAvatar(agentDir, candidate); if (meta == null) return null; try { const bytes = await readFile(meta.path); const mime = sniffAvatarMimeType(bytes); return mime == null ? null : { bytes, mime }; } catch { return null; } }
+export async function readValidatedAvatar(agentDir: string, candidate: string): Promise<{ bytes: Buffer; mime: string } | null> {
+  const path = resolveAvatarPathWithinDir(agentDir, candidate); if (path == null) return null;
+  try { return await withAttachmentFile(path, [realpathSync(agentDir)], async (handle, info) => {
+    if (info.size === 0) return null;
+    const bytes = await readAttachmentBytes(handle, info.size, AVATAR_MAX_BYTES); if (bytes == null) return null;
+    const mime = sniffAvatarMimeType(bytes); return mime == null ? null : { bytes, mime };
+  }); } catch { return null; }
+}
 export async function readAvatarBytesWithinDir(agentDir: string, candidate: string): Promise<Buffer | null> { return (await readValidatedAvatar(agentDir, candidate))?.bytes ?? null; }
 
 const avatarDataUrlCache = new Map<string, { fingerprint: string; dataUrl: string; version: string }>();
 export async function readAvatarWithinDir(agentDir: string, candidate: string): Promise<{ dataUrl: string; version: string } | null> {
-  const meta = await resolveAndStatAvatar(agentDir, candidate); if (meta == null) return null;
-  const key = `${agentDir}\0${meta.path}`; const fingerprint = `${meta.mtimeMs}:${meta.size}`; const cached = avatarDataUrlCache.get(key);
+  const avatar = await readValidatedAvatar(agentDir, candidate); if (avatar == null) return null;
+  const { bytes, mime } = avatar;
+  const key = `${agentDir}\0${candidate}`; const fingerprint = createHash("sha256").update(bytes).digest("hex"); const cached = avatarDataUrlCache.get(key);
   if (cached?.fingerprint === fingerprint) { avatarDataUrlCache.delete(key); avatarDataUrlCache.set(key, cached); return { dataUrl: cached.dataUrl, version: cached.version }; }
-  try { const bytes = await readFile(meta.path); const mime = sniffAvatarMimeType(bytes); if (mime == null) return null; const value = { fingerprint, dataUrl: `data:${mime};base64,${bytes.toString("base64")}`, version: createHash("sha256").update(bytes).digest("hex").slice(0, 16) }; avatarDataUrlCache.set(key, value); if (avatarDataUrlCache.size > 128) { const oldest = avatarDataUrlCache.keys().next().value; if (oldest != null && oldest !== key) avatarDataUrlCache.delete(oldest); } return { dataUrl: value.dataUrl, version: value.version }; } catch { return null; }
+  const value = { fingerprint, dataUrl: `data:${mime};base64,${bytes.toString("base64")}`, version: fingerprint.slice(0, 16) }; avatarDataUrlCache.set(key, value); if (avatarDataUrlCache.size > 128) { const oldest = avatarDataUrlCache.keys().next().value; if (oldest != null && oldest !== key) avatarDataUrlCache.delete(oldest); } return { dataUrl: value.dataUrl, version: value.version };
 }
 export function invalidateAvatarDataUrlCache(agentDir: string): void { const prefix = `${agentDir}\0`; for (const key of avatarDataUrlCache.keys()) if (key.startsWith(prefix)) avatarDataUrlCache.delete(key); }
