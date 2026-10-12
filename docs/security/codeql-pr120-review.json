@@ -1,0 +1,28 @@
+{
+  "repository": "2217173240/grok-bot-0.18-reconstructed",
+  "reviewedCommit": "4f85bd0045fb71e7e983c20107e99213ebe0cddc",
+  "analysisId": 1935363465,
+  "groups": [
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "JSON.stringify quotes a private test path as a Node string literal; no HTML context or unquoted code input exists.",
+      "evidence": "tests/round2-storage-races.test.mjs:82 uses JSON.stringify(gate) in a standalone Node 26 .cjs expression. gate is the test's mkdtemp directory plus the fixed name continue. The SARIF result has no external-source flow. Quotes, backslashes and control characters remain inside the generated string literal. This conclusion is specific to JavaScript source written to disk, not HTML script embedding.",
+      "findings": [{ "id": 297, "rule": "js/bad-code-sanitization", "path": "tests/round2-storage-races.test.mjs" }]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "Read-only open is followed by descriptor type and three-way file identity checks before bounded reads from that same descriptor.",
+      "evidence": "The reported edge is loader.ts:33 lstat to :37 open. open is read-only. Before any read, handle.stat validates a regular file, current lstat rejects a leaf symlink, and before/current/descriptor dev and ino must agree. Size checking and all reads use the same descriptor. POSIX additionally uses O_NOFOLLOW. The exact reported check/open substitution cannot bypass subsequent validation. This does not guarantee atomic ancestor containment, Windows no-follow semantics, or immutable contents on the same inode.",
+      "findings": [{ "id": 298, "rule": "js/file-system-race", "path": "source/packages/cursor-plugins/loader.ts" }]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "false positive",
+      "comment": "The opened descriptor is revalidated as a regular file and fchmod uses that descriptor; the earlier path stat is not trusted for chmod.",
+      "evidence": "The reported edge is local-mcp-servers.ts:44 lstat(target) to :74 read-only open(target). Lines 76-77 validate fstat(descriptor).isFile and change permissions using fchmodSync on that descriptor. POSIX rejects leaf symlinks with O_NOFOLLOW. prepareLocalMcpPluginsDir creates the host-owned 0700 parent; source/electron-main/box/local-docker-host-connector.ts:191 binds the shared configuration read-only to the box and :641 prepares that host directory. The finding overlooks descriptor revalidation for the reported regular-file check. Windows permission bits do not provide a POSIX directory ACL guarantee, and Windows symlink or ancestor replacement isolation is not claimed.",
+      "findings": [{ "id": 299, "rule": "js/file-system-race", "path": "source/shared/node/mcp/local-mcp-servers.ts" }]
+    }
+  ]
+}
