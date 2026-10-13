@@ -107,7 +107,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 | 外发拦截记录 | 已验证路线中，Mac 与容器的拦截记录都没有 Cursor/xAI 外发 |
 | Renderer | 保留通过哈希校验的 0.18.0 renderer，其扩展哈希链由测试覆盖 |
 
-逐条证据与仍需用户提供的账号条件记录在 [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md)。
+逐条证据与验收收口后的账号范围记录在 [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md)，收口声明见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 已知限制
 
@@ -115,7 +115,7 @@ chmod 600 "$HOME/.grokbot-local/anthropic-token"
 2. **打包使用的 renderer 是固定的原版产物。** 原版 0.18.0 renderer 是优化后的产物，不含作者源码与 source map；`frontend/` 只是基于证据的部分重建，打包时保留原版 renderer，只做一处有记录的设置页面改动。
 3. **只构建 macOS arm64。** 仓库为研究连续性保存了 Windows x64 安装包，但不产出 Windows 构建。
 4. **原版 0.18.0 应用是构建输入。** `npm run bootstrap` 负责获取与校验，`npm run package` 与 `npm run verify` 都依赖它；测试套件本身在没有它的全新检出上可以直接运行，CI 就是这么做的。
-5. **需要账号的 provider 只有部分经过验证。** OpenRouter 与 Command Code 当时没有本地密钥，因此没有真实账号调用；passkey 与真人接管流程需要测试账号与用户操作。
+5. **需要账号的 provider 只有部分经过验证。** OpenRouter 与 Command Code 当时没有本地密钥，因此没有真实账号调用；passkey 与真人接管流程需要测试账号与用户操作。按 2026-10-13 验收收口，这些路径由最终用户使用自己的账号行使，不再作为待办（见 [docs/ROADMAP.md](docs/ROADMAP.md)）。
 6. **应用使用临时签名与不同的 bundle 标识。** 没有公证，也不携带上游签名，macOS 会给出 Gatekeeper 提示。
 7. **只针对一个固定发布版本。** 更换模型服务、更换 macOS 版本或换用更新版本的 Grok Bot 都未经验证。
 

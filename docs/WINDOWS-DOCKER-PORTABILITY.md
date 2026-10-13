@@ -200,4 +200,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 stop -Stop
 
 ## 保留的验收与发布边界
 
-Windows 实机证据覆盖上述 Windows 10 22H2 x64 + Docker Desktop/WSL2 环境，升级构件验证与实机升级结果分别记录。Windows 11 与 Windows ARM64 没有本轮实机验收记录。公开签名发行另需发布者证书，当前 portable ZIP 为未签名开发测试包。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。
+Windows 实机证据覆盖上述 Windows 10 22H2 x64 + Docker Desktop/WSL2 环境，升级构件验证与实机升级结果分别记录。Windows 11 与 Windows ARM64 没有本轮实机验收记录；按 2026-10-13 验收收口，不再为其他平台建立验收要求（见 [ROADMAP.md](ROADMAP.md) 的「验收范围收口」）。公开签名发行另需发布者证书，当前 portable ZIP 为未签名开发测试包。仅使用已有授权账号，Codex 凭据继续只限隔离容器只读；公开原版资源仍受 PROVENANCE.md 约束。

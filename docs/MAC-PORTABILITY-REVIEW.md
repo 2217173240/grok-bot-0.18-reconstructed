@@ -4,6 +4,8 @@
 
 目标是普通项目的独立安装体验：新机器无需开发者的用户名、目录、缓存、凭据或旧容器。当前已验证范围为 macOS Apple Silicon；Intel Mac 尚未建立对应应用构件、基础镜像和实际验收。本页记录部署评审与共用启动配置；现有 Mac 安装、虚拟机和数据保留，未新增安装器。
 
+2026-10-13 验收收口：第二台全新 Mac 的独立安装记录、完整发布清单与预构建执行镜像分发、发布者签名/公证不再作为必须完成的验收事项（见 [ROADMAP.md](ROADMAP.md) 的「验收范围收口」）；需要正式对外分发时再行启动。本页其余内容继续作为部署评审依据保留。
+
 Windows 已由用户确认为正式交付目标，实施状态与真实机器验收边界见 [Windows Docker 适配计划](WINDOWS-DOCKER-PORTABILITY.md)。该实现同时完成 Mac 的 `GROKBOT_APP_PATH` 路径配置、App/build stamp 统一定位、共享 provider 校验与 Docker context 传递；本页其余事项继续作为独立 Mac 部署的评审依据。
 
 ## 推荐部署方式
@@ -16,7 +18,7 @@ Windows 已由用户确认为正式交付目标，实施状态与真实机器验
 
 目前可执行的路径是[源码构建部署手册](DEPLOY-HANDBOOK.md)。推荐的分发目标是维护者构建一次，用户下载匹配的 App、执行镜像和启动工具，在本机校验并初始化。执行镜像与基础镜像构件继续统一由 `grok-bot-box-image` 仓库管理；应用源码与运行代码版本由本仓库管理。
 
-建议一次发布用同一份清单关联：App SHA-256、源码 revision、执行镜像 digest、基础镜像 digest、deps pin、平台、所需 macOS 范围和数据格式版本。用户安装时校验清单及发布者身份，再启动本机实例。该完整发布清单与预构建执行镜像分发流程属于待实施事项；现有基础镜像 manifest、fetch 工具、build stamp 和 deps pin 可以复用。
+建议一次发布用同一份清单关联：App SHA-256、源码 revision、执行镜像 digest、基础镜像 digest、deps pin、平台、所需 macOS 范围和数据格式版本。用户安装时校验清单及发布者身份，再启动本机实例。该完整发布清单与预构建执行镜像分发流程已按验收收口列为按需启动事项；现有基础镜像 manifest、fetch 工具、build stamp 和 deps pin 可以复用。
 
 ## 已具备的可移植能力
 
@@ -38,7 +40,7 @@ Windows 已由用户确认为正式交付目标，实施状态与真实机器验
 | P1 | `GROKBOT_APP_PATH` 与 App/build stamp 统一定位已实现 | 支持标准目录之外的安装位置 | 独立新 Mac 继续验收含空格目录、不同安装位置 |
 | P1 | 共享 `local-launch-config.mjs` 按 provider 校验凭据 | Claude Code 使用 token 文件；其他 provider 使用各自配置 | 账号范围按授权分别验收 |
 | P1 | 启动入口共用配置解析与 runtime profile | 配置错误明确报告，Docker 目标明确选择 | 独立新 Mac 验收首次启动、重启与升级 |
-| P1 | 已有 macOS 与 Windows 构建检查，以及 Linux 容器检查 | 平台 CI 验证对应构建和运行路径 | 第二台全新 Mac 的安装记录仍待补充 |
+| P1 | 已有 macOS 与 Windows 构建检查，以及 Linux 容器检查 | 平台 CI 验证对应构建和运行路径 | 第二台全新 Mac 的安装记录已按验收收口不再作为必须事项 |
 | P2 | 容器门禁共用 runtime profile 与数据根解析 | 自定义数据根和 daemon 与应用使用相同选择规则 | 用对应数据根检查实际鉴权 |
 | P2 | `start-local.sh` 的 stop 保留容器和 local-exec；VM 继续运行 | 用户退出窗口后仍可能占用内存 | 提供明确的“退出应用”和“停止本项目全部运行资源”；验证只停止本项目进程、容器及专用 VM，保留镜像、数据与其他项目 |
 

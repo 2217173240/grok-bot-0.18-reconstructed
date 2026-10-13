@@ -1,6 +1,6 @@
 # 本地运行维护计划
 
-更新日期：2026-10-05。环境识别、平台适配和当前验证记录见 [环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)，当前 Windows 构件的物理机器端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
+更新日期：2026-10-13。环境识别、平台适配和当前验证记录见 [环境识别与平台适配](PLATFORM-RUNTIME-PLAN.md)，当前 Windows 构件的物理机器端到端步骤见 [Windows Docker 部署](WINDOWS-DOCKER-PORTABILITY.md)。架构与实际验收范围见 [LOCAL-SANDBOX-ARCHITECTURE.md](LOCAL-SANDBOX-ARCHITECTURE.md)。
 
 ## 已交付能力
 
@@ -87,14 +87,18 @@ Mac 与 Windows 共用运行配置、Docker 校验、初始化、工具和审批
 - 开发构建使用 Node 26.5.0；容器 Node 22.23.2 的兼容范围由实际容器门禁验证。版本差异与 experimental 警告单独记录，不能直接当作运行失败。
 - 模型默认值可覆盖；配置可读性错误必须在请求 API 前报告。模型可用性仍由具体 provider 与账号决定。
 
-## 保留的验收条件
+## 验收范围收口
 
-- Settings 通用密钥已用无效测试标记完成实际桌面重启、增删与读取错误验证；测试标记已全部删除。本轮未新增有效 OpenRouter 或 Command Code API key。
+2026-10-13 由维护者决定，验收到此收口：以下能力的自动化路径维持既有验证范围，正常路径由最终用户使用自己的账号与设备自行行使，不再安排专项人工或实机验收。项目按开源项目方式维护，CI、容器门禁与真实回合证据继续覆盖协议、生命周期与安全边界；平台范围以 macOS arm64 与 Windows 10 22H2 x64 实机记录为准，不再为其他平台建立验收要求。
+
+- OpenRouter、Command Code：Settings 通用密钥已用无效测试标记完成实际桌面重启、增删与读取错误验证（标记已删除），真实无效密钥的错误传播路径已验证；有效账号的文本、图片、工具调用、取消和转录回合不再安排验收，由使用者在 Settings → Router 配置各自密钥后自行行使。
+- Codex：保持隔离容器只读凭据的已验证范围（真实 gpt-6-astra 与生产 MCP 工具装配）；完整 Codex UI、host 初始化与生产容器凭据挂载明确不做。
+- passkey 与真人接管：保持自动化路径的已验证范围（noVNC 正反 token 的真实 WebSocket 核对、Computer 桌面操作）；真人输入凭据、交还控制权与会话恢复由用户在实际使用中自行完成。
+- Archive 复用范围之外的两项明确不做：服务端敏感节点硬闸门（当前保持快照脱敏与提示词契约，见架构文档）、《确定-计算环境-*》观察文档并入本仓库。
+- 公开分发原版资源继续遵循 PROVENANCE.md；是否再分发由后续单独决定，不作为当前待办。
+
+长期保留的边界声明（非待办）：
+
 - 运行凭据、浏览器 cookie/profile、用户数据卷不得进入 Git 或构建上下文。两个仓库分别执行历史秘密扫描，报告全量遮蔽匹配内容；源码发布检查拒绝已跟踪的凭据与会话路径。扫描通过只覆盖对应规则与输入，不能作为任意内容安全的证明。
-
-- OpenRouter、Command Code 有效账号回合仍需用户提供已配置账号；Command Code 的真实无效密钥路径已验证。
-- Codex 仅在隔离容器只读使用现有凭据；已验证真实 gpt-6-astra 与生产 MCP 工具装配，完整 Codex UI 和 host 初始化仍未覆盖。本轮不将账号目录挂入生产容器。
-- passkey、真人登录与交回需用户提供测试站点并参与；自动化路径的通过不覆盖这些操作。
-- 公开分发原版资源继续遵循 PROVENANCE.md；当前复用固定构件的目标保持不变。
 - 桌面模式的容器隔离、浏览器自身沙箱、workspace bind 与出口控制分别审查。应用层网络 guard 无法替代出口防火墙。
 - 历史改动与原始验证记录保存在 Git 历史及对应专题文档；当前工作状态以本页和架构文档为准。
