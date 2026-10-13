@@ -112,7 +112,7 @@ To add a local MCP server, create `~/.grokbot-local/mcp-config/shared/mcp-server
 | Egress ledger | no Cursor/xAI egress recorded during the verified path, in both the Mac and container intercept ledgers |
 | Renderer | the checksum-pinned 0.18.0 renderer is preserved, and its extension hash chain is covered by tests |
 
-The exact scope, per-flow evidence, and the account-specific items still open are in [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md).
+The exact scope, per-flow evidence, and the account-specific scope closed by the 2026-10-13 acceptance close-out are in [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md).
 
 ## Known limitations
 
@@ -120,7 +120,7 @@ The exact scope, per-flow evidence, and the account-specific items still open ar
 2. **The packaged renderer is the pinned original.** The shipped 0.18.0 renderer contains optimized bundles without authored source or source maps, so `frontend/` is a partial evidence-backed reconstruction and packaged builds keep the original renderer with a narrow settings transform.
 3. **Platform scope.** Builds target macOS arm64 and Windows x64. Physical Windows evidence covers Windows 10 22H2 with Docker Desktop/WSL2; Windows 11 and ARM64 have no physical-machine acceptance record in this round. The Windows portable package is unsigned.
 4. **The original 0.18.0 app is a build input.** Platform bootstrap obtains and verifies the matching original package. On macOS, bootstrap also installs and verifies the complete Electron runtime before parallel tests.
-5. **Account-specific providers are partly unverified.** OpenRouter and Command Code had no local keys, so no live account call was made; passkey and human-takeover flows need a user-controlled account and manual interaction.
+5. **Account-specific providers are partly unverified.** OpenRouter and Command Code had no local keys, so no live account call was made; passkey and human-takeover flows need a user-controlled account and manual interaction. Following the 2026-10-13 acceptance close-out, these paths are exercised by end users with their own accounts rather than tracked as open acceptance work (see [docs/ROADMAP.md](docs/ROADMAP.md)).
 6. **The app is ad-hoc signed with a different bundle ID.** It is not notarized, does not carry the upstream signature, and macOS will show Gatekeeper prompts.
 7. **One pinned release.** Behaviour against other model services, other macOS versions, or a newer Grok Bot release is untested.
 
@@ -142,7 +142,7 @@ A: The published renderer shipped as optimized bundles with no source or source 
 A: The verified local path recorded no Cursor/xAI egress in the Mac and container intercept ledgers. Tasks still reach the model service you configure and any site or remote MCP server they use; see [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md).
 
 **Q: How do I see what was actually verified?**
-A: The [Verified scope](#verified-scope) table above lists the exact flows, and [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md) records per-flow evidence and the items that remain open.
+A: The [Verified scope](#verified-scope) table above lists the exact flows, and [docs/LOCAL-SANDBOX-ARCHITECTURE.md](docs/LOCAL-SANDBOX-ARCHITECTURE.md) records per-flow evidence and the 2026-10-13 acceptance close-out.
 
 ## For AI readers
 
