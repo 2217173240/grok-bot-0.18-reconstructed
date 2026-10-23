@@ -47,7 +47,7 @@
     "resedit": "2.0.3",
     "sirv": "3.0.2",
     "typescript": "7.0.2",
-    "vite": "8.2.1"
+    "vite": "8.3.5"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.99",
@@ -62,7 +62,7 @@
     "@jimp/js-png": "1.6.0",
     "@jimp/js-tiff": "1.6.0",
     "@jimp/plugin-resize": "1.6.0",
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@opentelemetry/api": "1.9.0",
     "@opentelemetry/context-async-hooks": "2.8.0",
     "@opentelemetry/core": "2.8.0",
@@ -115,7 +115,7 @@
     "js-yaml": "3.15.2",
     "jschardet": "3.1.4",
     "jsonc-parser": "3.3.1",
-    "katex": "0.18.3",
+    "katex": "0.18.4",
     "mermaid": "11.16.1",
     "mime-types": "3.0.1",
     "minimatch": "10.2.6",
