@@ -1,0 +1,24 @@
+{
+  "repository": "2217173240/grok-bot-0.18-reconstructed",
+  "reviewedCommit": "eb6cafbeb69ba7edbbc95cb7fbc6428a0514aba1",
+  "analysisId": 2010177410,
+  "groups": [
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "comment": "The test parent supplies its own freshly compiled production module to a dedicated child fixture through argv.",
+      "evidence": "Alert 300 marks require(process.argv[2]) in undici-proxy-client.cjs. Its sole test caller uses execFile(process.execPath, [fixedFixture, compiled, loopbackOrigin]). compiled is the fixed name proxy-fetch.cjs inside a new repository-local mkdtemp directory, written by esbuild from the fixed production proxy-fetch.ts entrypoint. HTTP response data never selects the module. This is a deliberate test executable input, with the same authority as the parent process; the fixture is not a production request handler.",
+      "findings": [{ "id": 300, "rule": "js/path-injection", "path": "tests/fixtures/undici-proxy-client.cjs" }]
+    },
+    {
+      "disposition": "dismiss",
+      "reason": "used in tests",
+      "comment": "ProgramFiles locates the operator-installed Git OpenSSL in a test; execFile passes fixed arguments without a shell.",
+      "evidence": "Alerts 301 and 302 follow the test process ProgramFiles environment value through fixed Git/usr/bin or Git/mingw64/bin/openssl.exe suffixes. The test checks candidate existence and invokes the selected executable with a separate fixed argument array. Certificate output paths belong to its new temporary directory. Local and CI test operators control the executable environment; network requests and model output cannot supply this value. TLS verification remains enabled through NODE_EXTRA_CA_CERTS, and generated test keys are removed with the temporary directory. This disposition applies only to these two test flows.",
+      "findings": [
+        { "id": 301, "rule": "js/path-injection", "path": "tests/undici-proxy-runtime.test.mjs" },
+        { "id": 302, "rule": "js/command-line-injection", "path": "tests/undici-proxy-runtime.test.mjs" }
+      ]
+    }
+  ]
+}

@@ -3,11 +3,11 @@ import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { build } from "esbuild";
 import { createOpenAI } from "@ai-sdk/openai";
-import { streamText } from "ai";
 
 const root = resolve(import.meta.dirname, "..");
 await mkdir(join(root, ".cache"), { recursive: true });
@@ -20,8 +20,9 @@ export { runTurnMemory } from "./source/host/runner/turn-memory.ts";
 export { getEpisodeInterval } from "./source/host/runner/sand-memory.ts";
 export { BasePromptExecutor, BasePromptBuilder } from "./source/packages/chat-inference/base.ts";
 export { createRealDebouncePolicy } from "./source/internal/scheduling.ts";
+export { chatCompletionsExecutor } from "./source/host/extensions/inference/provider-session.ts";
 `, resolveDir: root }, outfile: bundle, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
-const { SandAgentDb, FileMemoryStore, runTurnMemory, getEpisodeInterval, BasePromptExecutor, BasePromptBuilder, createRealDebouncePolicy } = await import(bundle);
+const { SandAgentDb, FileMemoryStore, runTurnMemory, getEpisodeInterval, BasePromptExecutor, BasePromptBuilder, createRealDebouncePolicy, chatCompletionsExecutor } = await import(pathToFileURL(bundle).href);
 test.after(() => rm(buildDir, { recursive: true, force: true }));
 
 test("Episode interval 完整校验整数范围", () => {
@@ -137,10 +138,10 @@ test("真实HTTP SSE与文件写入：失败保留并追加，成功和NONE只�
     response.end("data: [DONE]\n\n");
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const model = createOpenAI({ apiKey: "local-test", baseURL: `http://127.0.0.1:${server.address().port}/v1`, compatibility: "compatible" }).chat("local");
+  const model = createOpenAI({ apiKey: "local-test", baseURL: `http://127.0.0.1:${server.address().port}/v1` }).chat("local");
   class HttpTextExecutor extends BasePromptExecutor {
     constructor() { super(new BasePromptBuilder()); }
-    stream() { return streamText({ model, messages: this.getMessages(), maxRetries: 0 }); }
+    stream() { return chatCompletionsExecutor("openrouter", model, this.getMessages(), "episode-http"); }
   }
   const session = { getExecutor: () => new HttpTextExecutor() };
   const previousInterval = process.env.SAND_MEMORY_EPISODE_INTERVAL;

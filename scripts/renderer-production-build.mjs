@@ -16,10 +16,10 @@ export const rendererProductionOutput = "dist/renderer";
 export const rendererProductionProvenance = `${rendererProductionOutput}/renderer-source-provenance.json`;
 const deterministicBanner = `"Deterministic clean-source renderer: ${rendererProductionEntrypoint}";`;
 
-const KATEX_VERSION = "0.18.2";
+const KATEX_VERSION = "0.18.3";
 const KATEX_CSS_FILES = Object.freeze([
-  { file: "katex.css", sha256: "c217ea7f595f1f30a5e3fcc8dc5c6662c153b173f2be45208f1beb510eb77fe4" },
-  { file: "katex.min.css", sha256: "7dc91b92608db5f3523cfda520df36307b2b389e1725d71ace6e4ef8dee066c7" },
+  { file: "katex.css", sha256: "89a724d43882bce8007841a738bf64fe8eabd997627ce3e6a806c82ad5f13d20" },
+  { file: "katex.min.css", sha256: "7993c99e764314d0d6ee0a926c3ac0a75a89182ff58493f9d40310c5e932003f" },
 ]);
 const KATEX_FONT_HASHES = Object.freeze({
   "KaTeX_AMS-Regular.woff2": "0cdd387c9590a1a9f9794560022dbb59654a7d86f187aa0c81495ad42d3a7308",

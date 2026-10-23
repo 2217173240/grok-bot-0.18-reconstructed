@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { query as queryClaude, type PermissionResult, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
-import { APICallError, jsonSchema, zodSchema, streamText, tool, type CoreMessage, type LanguageModelV1, type ToolSet } from "ai";
+import { APICallError, jsonSchema, zodSchema, streamText, stepCountIs, tool, type ModelMessage, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { BasePromptBuilder, BasePromptExecutor } from "../../../packages/chat-inference/base.js";
@@ -52,7 +52,7 @@ export function createProviderPerformance(provider: RoutedProvider, invocationId
     mark,
     cleanupFailed() { cleanupFailed = true; },
     timing(key: "cleanupMs" | "processCloseMs" | "bridgeCloseMs", start: number) { metrics[key] = performance.now() - start; },
-    usage(usage: UsageRecord, basis: "exclusive-input" | "inclusive-input") {
+    usage(usage: { [K in keyof UsageRecord]?: number | undefined }, basis: "exclusive-input" | "inclusive-input") {
       for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
         const value = usage[key];
         if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) metrics[key] = value;
@@ -765,7 +765,7 @@ function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefin
     if (parameters == null) continue;
     const routedTool: any = {
       ...(typeof definition.description === "string" ? { description: definition.description } : {}),
-      parameters: jsonSchema(parameters),
+      inputSchema: jsonSchema(parameters),
     };
     tools[definition.name] = tool(routedTool);
   }
@@ -774,12 +774,12 @@ function toToolSet(definitions: readonly Loose[] | undefined): ToolSet | undefin
 
 function openRouterExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const id = process.env.SAND_OPENROUTER_MODEL?.trim() || "openai/gpt-5.2";
-  const model: LanguageModelV1 = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", compatibility: "compatible", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id as any);
+  const model: LanguageModel = createOpenAI({ apiKey: openRouterCredential(), baseURL: "https://openrouter.ai/api/v1", name: "openrouter", headers: { "HTTP-Referer": "https://github.com/grok-bot-reconstructed", "X-Title": "Grok Bot Reconstructed" } }).chat(id);
   return chatCompletionsExecutor("openrouter", model, messages, invocationId, definitions, onUsage, signal, instructions);
 }
 
 function commandCodeExecutor(messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
-  const model: LanguageModelV1 = createOpenAI({ apiKey: commandCodeCredential(), baseURL: COMMAND_CODE_BASE_URL, compatibility: "compatible", name: "command-code" }).chat(commandCodeModel() as any);
+  const model: LanguageModel = createOpenAI({ apiKey: commandCodeCredential(), baseURL: COMMAND_CODE_BASE_URL, name: "command-code" }).chat(commandCodeModel());
   return chatCompletionsExecutor("command-code", model, messages, invocationId, definitions, onUsage, signal, instructions);
 }
 
@@ -794,30 +794,90 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
   return new Error(`${name} request failed (HTTP ${status ?? "unknown"}).`);
 }
 
-export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModelV1, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
+function sdkMessages(messages: readonly ProviderMessage[]): ModelMessage[] {
+  return messages.map(message => ({ ...message, content: typeof message.content === "string" ? message.content : message.content.map(value => {
+    const part = value as Loose;
+    if (part.type === "redacted-reasoning") {
+      const { data, ...rest } = part;
+      return { ...rest, type: "reasoning", text: "", providerOptions: { ...part.providerOptions, anthropic: { ...part.providerOptions?.anthropic, redactedData: data } } };
+    }
+    if (part.type === "reasoning" && part.signature !== undefined) {
+      const { signature, ...rest } = part;
+      return { ...rest, providerOptions: { ...part.providerOptions, anthropic: { ...part.providerOptions?.anthropic, signature } } };
+    }
+    if (part.type === "tool-call") {
+      const { args, ...rest } = part;
+      return { ...rest, input: args };
+    }
+    if (part.type === "tool-result") {
+      const { result, isError, experimental_content, ...rest } = part;
+      if (Array.isArray(experimental_content) && experimental_content.length > 0) {
+        const content = experimental_content.map((item: Loose) => {
+          if (item.type === "image") {
+            const { mimeType, data, ...properties } = item;
+            return { ...properties, type: "file", mediaType: mimeType ?? "image", data: { type: "data", data } };
+          }
+          return item;
+        });
+        return { ...rest, output: { type: isError ? "error-json" : "content", value: content } };
+      }
+      if (result === undefined) return { ...rest, output: { type: isError ? "error-text" : "text", value: "" } };
+      return { ...rest, output: { type: typeof result === "string" ? isError ? "error-text" : "text" : isError ? "error-json" : "json", value: result } };
+    }
+    if (part.type === "image") {
+      const { image, mimeType, ...rest } = part;
+      return { ...rest, type: "file", data: image, mediaType: mimeType ?? "image/*" };
+    }
+    if (part.type === "file") {
+      const { mimeType, ...rest } = part;
+      return { ...rest, ...(mimeType === undefined ? {} : { mediaType: mimeType }) };
+    }
+    return part;
+  }) })) as ModelMessage[];
+}
+
+export function chatCompletionsExecutor(provider: RoutedProvider, model: LanguageModel, messages: readonly ProviderMessage[], invocationId: string, definitions?: readonly Loose[], onUsage?: (usage: UsageRecord) => void, signal?: AbortSignal, instructions?: string) {
   const tools = toToolSet(definitions);
   const requestController = new AbortController();
   const requestSignal = signal === undefined ? requestController.signal : AbortSignal.any([signal, requestController.signal]);
   const measured = createProviderPerformance(provider, invocationId, instructions !== undefined ? "text-only" : tools !== undefined ? "hosted" : "unhosted", signal);
   measured.mark("dispatchMs");
-  const result = streamText({ model, system: instructions ?? GROK_ROUTER_SYSTEM_PROMPT, messages: messages as CoreMessage[], ...(tools === undefined ? {} : { tools }), toolCallStreaming: true, maxSteps: 1, maxRetries: 0, abortSignal: requestSignal });
+  const result = streamText({ model, instructions: instructions ?? GROK_ROUTER_SYSTEM_PROMPT, allowSystemInMessages: true, messages: sdkMessages(messages), ...(tools === undefined ? {} : { tools }), stopWhen: stepCountIs(1), maxRetries: 0, abortSignal: requestSignal });
   const streamFailure = Promise.withResolvers<never>();
   void streamFailure.promise.catch(() => {});
   const fullStream = (async function* () {
     const reader = result.fullStream.getReader();
     let complete = false;
     let streamError: unknown;
+    const toolNames = new Map<string, string>();
     try {
       while (true) {
         const next = await reader.read();
         if (next.done) { complete = true; break; }
         const chunk = next.value;
         if (chunk.type === "error") throw chunk.error;
-        if (chunk.type === "finish") {
-          const cached = chunk.providerMetadata?.openai?.cachedPromptTokens;
-          measured.usage({ inputTokens: chunk.usage.promptTokens, outputTokens: chunk.usage.completionTokens, ...(typeof cached === "number" ? { cacheReadTokens: cached } : {}) }, "inclusive-input");
+        if (chunk.type === "abort") throw requestSignal.reason ?? new Error("Provider stream aborted.");
+        if (chunk.type === "finish-step") {
+          measured.usage({ inputTokens: chunk.usage.inputTokens, outputTokens: chunk.usage.outputTokens, cacheReadTokens: chunk.usage.inputTokenDetails.cacheReadTokens, cacheWriteTokens: chunk.usage.inputTokenDetails.cacheWriteTokens }, "inclusive-input");
         }
-        yield chunk;
+        if (chunk.type === "text-delta") yield { ...chunk, textDelta: chunk.text };
+        else if (chunk.type === "reasoning-delta") yield { ...chunk, type: "reasoning" as const, textDelta: chunk.text };
+        else if (chunk.type === "tool-input-start") {
+          toolNames.set(chunk.id, chunk.toolName);
+          yield { type: "tool-call-streaming-start" as const, toolCallId: chunk.id, toolName: chunk.toolName };
+        } else if (chunk.type === "tool-input-delta") {
+          const toolName = toolNames.get(chunk.id);
+          if (toolName === undefined) throw new Error(`Tool input arrived before its definition: ${chunk.id}`);
+          yield { type: "tool-call-delta" as const, toolCallId: chunk.id, toolName, argsTextDelta: chunk.delta };
+        } else if (chunk.type === "tool-call") {
+          if (chunk.invalid) throw chunk.error;
+          const { input, ...rest } = chunk;
+          yield { ...rest, args: input };
+        } else if (chunk.type === "finish") {
+          yield { ...chunk, usage: { promptTokens: chunk.totalUsage.inputTokens ?? 0, completionTokens: chunk.totalUsage.outputTokens ?? 0, totalTokens: chunk.totalUsage.totalTokens ?? 0 } };
+        } else if (chunk.type === "finish-step") {
+          yield { ...chunk, usage: { promptTokens: chunk.usage.inputTokens ?? 0, completionTokens: chunk.usage.outputTokens ?? 0, totalTokens: chunk.usage.totalTokens ?? 0 } };
+        } else yield chunk;
       }
     } catch (error) {
       streamError = error;
@@ -846,17 +906,25 @@ export function chatCompletionsExecutor(provider: RoutedProvider, model: Languag
       }
     }
   })();
-  const response = Promise.race([result.response, streamFailure.promise]);
-  const usage = Promise.race([result.usage, streamFailure.promise]);
-  const providerMetadata = Promise.race([result.providerMetadata, streamFailure.promise]);
-  // Chat-completions providers count cached prompt tokens inside
-  // prompt_tokens and report them separately as cached_tokens (the AI SDK
-  // surfaces that as openai.cachedPromptTokens). Split them out so input
-  // means the same as for Claude Code: uncached input, cache reads apart.
-  const extendedUsage = Promise.all([usage, providerMetadata.catch(() => undefined)]).then(([value, metadata]) => {
-    const reported = Number(metadata?.openai?.cachedPromptTokens);
-    const cacheReadTokens = Number.isFinite(reported) && reported > 0 ? Math.min(reported, value.promptTokens) : 0;
-    return { inputTokens: value.promptTokens - cacheReadTokens, outputTokens: value.completionTokens, cacheReadTokens, cacheWriteTokens: 0, maxTokens: 0 };
+  const response = Promise.race([Promise.all([result.response, result.responseMessages]).then(([value, messages]) => ({ ...value, messages: messages.map(message => ({ ...message, content: typeof message.content === "string" ? message.content : message.content.map(part => {
+    if (part.type === "tool-call") { const { input, ...rest } = part; return { ...rest, args: input }; }
+    return part;
+  }) })) })), streamFailure.promise]);
+  const sdkUsage = Promise.race([result.usage, streamFailure.promise]);
+  const usage = sdkUsage.then(value => ({ promptTokens: value.inputTokens ?? 0, completionTokens: value.outputTokens ?? 0, totalTokens: value.totalTokens ?? 0 }));
+  const providerMetadata = Promise.race([Promise.all([result.providerMetadata, sdkUsage]).then(([value, usage]) => {
+    const details = usage.raw?.prompt_tokens_details;
+    const cached = details != null && typeof details === "object" && "cached_tokens" in details ? details.cached_tokens : undefined;
+    return { ...value, openai: { ...value?.openai, ...(typeof cached === "number" ? { cachedPromptTokens: cached } : {}) } };
+  }), streamFailure.promise]);
+  // 内部用量将缓存读取与普通输入分别记录。
+  const extendedUsage = sdkUsage.then(value => {
+    const inputTokens = value.inputTokens ?? 0;
+    const reported = value.inputTokenDetails.cacheReadTokens;
+    const cacheReadTokens = typeof reported === "number" && Number.isFinite(reported) && reported > 0 ? Math.min(reported, inputTokens) : 0;
+    const written = value.inputTokenDetails.cacheWriteTokens;
+    const cacheWriteTokens = typeof written === "number" && Number.isFinite(written) && written > 0 ? Math.min(written, inputTokens - cacheReadTokens) : 0;
+    return { inputTokens: inputTokens - cacheReadTokens - cacheWriteTokens, outputTokens: value.outputTokens ?? 0, cacheReadTokens, cacheWriteTokens, maxTokens: 0 };
   });
   void response.catch(() => {});
   void usage.catch(() => {});
