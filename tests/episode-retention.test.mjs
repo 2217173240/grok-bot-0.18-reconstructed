@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { build } from "esbuild";
@@ -21,7 +22,7 @@ export { BasePromptExecutor, BasePromptBuilder } from "./source/packages/chat-in
 export { createRealDebouncePolicy } from "./source/internal/scheduling.ts";
 export { chatCompletionsExecutor } from "./source/host/extensions/inference/provider-session.ts";
 `, resolveDir: root }, outfile: bundle, bundle: true, format: "esm", platform: "node", packages: "external", logLevel: "silent" });
-const { SandAgentDb, FileMemoryStore, runTurnMemory, getEpisodeInterval, BasePromptExecutor, BasePromptBuilder, createRealDebouncePolicy, chatCompletionsExecutor } = await import(bundle);
+const { SandAgentDb, FileMemoryStore, runTurnMemory, getEpisodeInterval, BasePromptExecutor, BasePromptBuilder, createRealDebouncePolicy, chatCompletionsExecutor } = await import(pathToFileURL(bundle).href);
 test.after(() => rm(buildDir, { recursive: true, force: true }));
 
 test("Episode interval 完整校验整数范围", () => {

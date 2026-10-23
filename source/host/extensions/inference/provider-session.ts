@@ -797,12 +797,31 @@ function providerApiError(provider: RoutedProvider, error: unknown): Error {
 function sdkMessages(messages: readonly ProviderMessage[]): ModelMessage[] {
   return messages.map(message => ({ ...message, content: typeof message.content === "string" ? message.content : message.content.map(value => {
     const part = value as Loose;
+    if (part.type === "redacted-reasoning") {
+      const { data, ...rest } = part;
+      return { ...rest, type: "reasoning", text: "", providerOptions: { ...part.providerOptions, anthropic: { ...part.providerOptions?.anthropic, redactedData: data } } };
+    }
+    if (part.type === "reasoning" && part.signature !== undefined) {
+      const { signature, ...rest } = part;
+      return { ...rest, providerOptions: { ...part.providerOptions, anthropic: { ...part.providerOptions?.anthropic, signature } } };
+    }
     if (part.type === "tool-call") {
       const { args, ...rest } = part;
       return { ...rest, input: args };
     }
     if (part.type === "tool-result") {
-      const { result, isError, ...rest } = part;
+      const { result, isError, experimental_content, ...rest } = part;
+      if (Array.isArray(experimental_content) && experimental_content.length > 0) {
+        const content = experimental_content.map((item: Loose) => {
+          if (item.type === "image") {
+            const { mimeType, data, ...properties } = item;
+            return { ...properties, type: "file", mediaType: mimeType ?? "image", data: { type: "data", data } };
+          }
+          return item;
+        });
+        return { ...rest, output: { type: isError ? "error-json" : "content", value: content } };
+      }
+      if (result === undefined) return { ...rest, output: { type: isError ? "error-text" : "text", value: "" } };
       return { ...rest, output: { type: typeof result === "string" ? isError ? "error-text" : "text" : isError ? "error-json" : "json", value: result } };
     }
     if (part.type === "image") {

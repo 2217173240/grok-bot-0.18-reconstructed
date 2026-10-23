@@ -21,3 +21,5 @@
 ## 告警范围
 
 当前根目录 `npm audit` 中 AI、provider-utils、Undici、busboy 对应条目已消除。本轮没有将这些实际可达问题作为误报关闭。其余依赖告警继续保留；独立的原版清单告警需要结合固定资源的使用范围评估。CodeQL 和 Dependabot 的查询范围保持启用。
+
+PR 增量 CodeQL 的 300、301、302 对应测试父进程指定的编译模块和本机 OpenSSL 路径。逐项调用来源、参数分离和权限依据见[测试入口审查](codeql-pr122-review.json)，按 `used in tests` 降噪。
