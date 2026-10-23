@@ -13,10 +13,18 @@ base images remain preserved reconstruction inputs.
 
 OpenTelemetry packages use the compatible 2.8.0 / OTLP 0.219.0 release family,
 including nested exporter dependencies. Tiptap core and its exact ProseMirror
-peer use 3.31.4. Direct math rendering uses KaTeX 0.18.2, including verified
+peer use 3.31.4. Direct math rendering uses KaTeX 0.18.3, including verified
 production CSS and font assets; Mermaid 11.16.1 still
 resolves a separate KaTeX 0.16 dependency. A patched direct dependency does not
 prove that all nested copies are patched.
+
+OpenRouter and Command Code use AI SDK 7.0.148 and OpenAI provider 4.0.99.
+The provider boundary preserves the application's message, streamed tool-call,
+usage-accounting, and cancellation interfaces. Electron's external HTTP runtime
+uses checksum-pinned Undici 8.12.3. Connect 1.6.1 retains its protobuf 1 API and
+reviewed transport patch; its Headers polyfill dependency is explicitly resolved
+to Undici 6.28.1. The supported Node 22 and Electron Node 24 runtimes satisfy
+these dependencies' engine requirements. See the [dependency review](docs/security/dependency-pr122-review.md).
 
 The following upgrades need separate compatibility work. Their advisories remain
 open; passing repository and packaging checks does not mean an empty security
@@ -25,8 +33,7 @@ report.
 | Component | Required work |
 | --- | --- |
 | Electron 42.1.0 | Update the archived shell, checksums, build stamps, and native-module acceptance together. |
-| Undici 5 / Connect 1 | Update the packaged CJS dependency closure, proxy fetch behavior, and Connect/protobuf interfaces together. |
-| AI SDK 4 / OpenAI provider 1 | Migrate provider types, streaming tool calls, usage accounting, and cancellation together. |
+| Connect 1 / protobuf 1 | Major migrations must update the generated RPC interfaces and reviewed transport patch together. |
 | Mermaid's nested KaTeX | Adopt a compatible upstream dependency update and verify diagram rendering. |
 | Other audit findings | Review each affected call path and available fix; `xlsx` currently has no npm audit fix. |
 

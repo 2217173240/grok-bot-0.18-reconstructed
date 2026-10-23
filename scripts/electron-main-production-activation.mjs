@@ -67,15 +67,9 @@ export const electronMainProductionBindingResidualPaths = Object.freeze(
 export const electronMainExternalRuntimePackageSpecs = Object.freeze([
   {
     name: "undici",
-    version: "5.29.0",
+    version: "8.12.3",
     lockPath: "node_modules/undici",
-    integrity: "sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==",
-  },
-  {
-    name: "@fastify/busboy",
-    version: "2.1.1",
-    lockPath: "node_modules/@fastify/busboy",
-    integrity: "sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==",
+    integrity: "sha512-+fdndUTwBP86cVjihTp21hZHo7d6oj1c/47XPA3lL8mM0XHs+C4EkcjmgRsFnFk2f/UONGDy9ItBItmXsLOQHw==",
   },
   {
     name: "ws",
@@ -118,7 +112,7 @@ async function materializeElectronMainRuntimePackages(outputRoot) {
     const source = path.join(repoRoot, spec.lockPath);
     const metadata = JSON.parse(await readFile(path.join(source, "package.json"), "utf8"));
     if (metadata.version !== spec.version) throw new Error(`Installed Electron runtime package drifted: ${spec.name}@${spec.version}.`);
-    if (spec.name === "undici" && (metadata.main !== "index.js" || metadata.types !== "index.d.ts" || metadata.engines?.node !== ">=14.0" || metadata.exports !== undefined)) {
+    if (spec.name === "undici" && (metadata.main !== "index.js" || metadata.types !== "index.d.ts" || metadata.engines?.node !== ">=22.19.0" || metadata.exports !== undefined || metadata.dependencies !== undefined)) {
       throw new Error("Clean Electron main requires undici's exact CJS main/types/engine surface with no conditional exports.");
     }
     if (spec.name === "ws" && (
